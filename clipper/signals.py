@@ -58,16 +58,17 @@ def norm(a):
 
 
 def hype_curve(n, audio=None, heatmap=None, chat=None, comments=None):
+    """-> (curve, parts). curve = weighted sum; parts = {name: 0..1 array} for each signal that had data."""
     curve = np.zeros(n)
-    used = []
+    parts = {}
     for name, sig in [("audio", smooth(_fit(audio, n), 3) if audio is not None else None),
                       ("heatmap", heatmap_curve(heatmap, n) if heatmap else None),
                       ("chat", smooth(counts(chat, n, CHAT_LAG), 10) if chat else None),
                       ("comments", smooth(counts(comments, n), 30) if comments else None)]:
         if sig is not None and sig.any():
-            curve += WEIGHTS[name] * norm(_fit(sig, n))
-            used.append(name)
-    return curve, used
+            parts[name] = norm(_fit(sig, n))
+            curve += WEIGHTS[name] * parts[name]
+    return curve, parts
 
 
 def _fit(a, n):
@@ -99,8 +100,8 @@ if __name__ == "__main__":
     assert w[0][0] <= 100 and w[0][1] >= 120, w
     assert w[1][0] <= 250 and w[1][1] >= 260, w
     assert counts([10, 10, 20], 30, shift=8)[2] == 2
-    curve, used = hype_curve(300, audio=c, chat=[110] * 50)
-    assert used == ["audio", "chat"] and curve[105:115].mean() > curve[:50].mean()
+    curve, parts = hype_curve(300, audio=c, chat=[110] * 50)
+    assert list(parts) == ["audio", "chat"] and curve[105:115].mean() > curve[:50].mean()
     from .download import comment_times
     assert comment_times([{"text": "1:02:03 and 4:05 lol"}]) == [3723, 245]
     print("signals ok")

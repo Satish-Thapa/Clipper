@@ -37,6 +37,24 @@ def merge(intervals):
     return out
 
 
+def snap(ws, start, end, reach=6.0):
+    """Nudge [start, end] out to sentence boundaries (at most `reach` s each way) so a clip never starts
+    or stops mid-sentence. The LLM only sees a marker every few seconds, so its times are guesses.
+    Uses Whisper's punctuation; ws must be sorted by time."""
+    ends = lambda w: w["w"].endswith((".", "?", "!"))
+    i = next((k for k, w in enumerate(ws) if w["s"] >= start), len(ws))  # first word inside the clip
+    while i > 0 and not ends(ws[i - 1]) and ws[i - 1]["s"] >= start - reach:  # walk back to sentence start
+        i -= 1
+    if i < len(ws) and ws[i]["s"] < start:
+        start = max(0.0, ws[i]["s"] - 0.2)
+    j = next((k for k in range(len(ws) - 1, -1, -1) if ws[k]["s"] < end), -1)  # last word inside the clip
+    while 0 <= j < len(ws) - 1 and not ends(ws[j]) and ws[j + 1]["e"] <= end + reach:  # walk on to sentence end
+        j += 1
+    if j >= 0:
+        end = max(end, ws[j]["e"] + 0.5)  # small tail so the last word/reaction isn't clipped
+    return start, end
+
+
 def text_with_times(ws, start, end, every=5.0):
     """'[12.0] hello there [17.1] next bit' — readable for the LLM, keeps timing info."""
     out, last = [], -1e9
@@ -47,3 +65,12 @@ def text_with_times(ws, start, end, every=5.0):
                 last = w["s"]
             out.append(w["w"])
     return " ".join(out)
+
+
+if __name__ == "__main__":
+    W = lambda t, w: {"w": w, "s": t, "e": t + 0.4}
+    ws = [W(0, "Hi."), W(1, "So"), W(2, "the"), W(3, "cops"), W(4, "came."), W(5, "Then"), W(6, "boom."), W(9, "Wow.")]
+    assert snap(ws, 2.5, 5.5) == (0.8, 6.9), snap(ws, 2.5, 5.5)       # mid-sentence both ends -> widened
+    assert snap(ws, 0.9, 4.6) == (0.9, 4.9), snap(ws, 0.9, 4.6)       # already clean: only the small tail
+    assert snap(ws, 2.5, 5.5, reach=1)[0] == 1.8                      # never walks back more than reach
+    print("transcribe ok")

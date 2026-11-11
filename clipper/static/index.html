@@ -14,7 +14,7 @@
   .panel { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:18px; }
   form { display:flex; gap:12px; flex-wrap:wrap; align-items:end; }
   label { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--dim); }
-  input { background:var(--bg); border:1px solid var(--line); color:var(--text); border-radius:8px; padding:10px; font:inherit; }
+  input, select, textarea { background:var(--bg); border:1px solid var(--line); color:var(--text); border-radius:8px; padding:10px; font:inherit; }
   input[type=url] { width:min(520px, 100%); } input[type=number] { width:90px; }
   label.check { flex-direction:row; align-items:center; font-size:14px; color:var(--text); }
   button { background:var(--hot); color:#fff; border:0; border-radius:8px; padding:10px 16px; font:inherit; font-weight:600; cursor:pointer; }
@@ -31,11 +31,20 @@
   .clips { display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:16px; }
   .clip { background:var(--bg); border:1px solid var(--line); border-radius:10px; overflow:hidden; display:flex; flex-direction:column; }
   .clip video { width:100%; background:#000; aspect-ratio:9/16; object-fit:contain; }
-  .clip.long video { aspect-ratio:16/9; }
   .clip .body { padding:10px 12px; display:grid; gap:6px; font-size:13px; }
   .clip .title { font-weight:600; font-size:14px; }
   .score { color:var(--hot); font-weight:700; }
   .dim { color:var(--dim); } a { color:var(--hot); }
+  textarea { width:100%; min-height:70px; font:12px/1.4 ui-monospace, monospace; }
+  .curves svg { width:100%; height:120px; background:var(--bg); border-radius:6px; display:block; }
+  .legend { display:flex; gap:12px; font-size:12px; margin:6px 0 2px; flex-wrap:wrap; align-items:center; }
+  .legend label.check { font-size:12px; gap:4px; }
+  .plot { position:relative; cursor:crosshair; }
+  .plot .cursor { position:absolute; top:0; bottom:0; width:1px; background:var(--text); opacity:.6; pointer-events:none; display:none; }
+  .plot .tip { position:absolute; top:4px; background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:6px 8px;
+    font-size:12px; pointer-events:none; display:none; white-space:nowrap; z-index:2; }
+  .axis { position:relative; height:16px; font-size:11px; color:var(--dim); }
+  .axis span { position:absolute; transform:translateX(-50%); }
   .empty { color:var(--dim); font-size:14px; }
 </style>
 </head>
@@ -47,9 +56,17 @@
 <main>
   <section class="panel">
     <form id="f">
-      <label>YouTube URL (video or live stream)<input type="url" name="url" required placeholder="https://www.youtube.com/watch?v=..."></label>
-      <label>Shorts<input type="number" name="shorts" value="3" min="0" max="20"></label>
-      <label>Long-form<input type="number" name="longs" value="1" min="0" max="10"></label>
+      <label>YouTube URL (video or live stream)<input type="url" name="url" placeholder="https://www.youtube.com/watch?v=..."></label>
+      <label>…or upload a video file<input type="file" name="file" accept="video/*"></label>
+      <label>Shorts (≤1 min)<input type="number" name="shorts" value="3" min="0" max="20"></label>
+      <label>Long (≤3 min)<input type="number" name="longs" value="1" min="0" max="10"></label>
+      <label>Who picks the moments<select name="mode">
+        <option value="hype">AI picks from hype curves (fast)</option>
+        <option value="ai+hype">AI reads full transcript, curves as hints</option>
+        <option value="ai">AI reads full transcript only</option>
+        <option value="manual">I'll cut it myself</option>
+      </select></label>
+      <label class="check"><input type="checkbox" name="subtitles" checked> Headline + subtitles</label>
       <label class="check"><input type="checkbox" name="auto_upload" checked> Auto-upload (public)</label>
       <button>Start clipping</button>
     </form>
@@ -67,10 +84,19 @@ const post = (u, body) => fetch(u, {method:"POST", headers:{"Content-Type":"appl
 
 $("#f").onsubmit = async e => {
   e.preventDefault();
-  const f = new FormData(e.target);
-  const r = await post("/api/jobs", {url: f.get("url"), shorts: +f.get("shorts"), longs: +f.get("longs"), auto_upload: f.has("auto_upload")});
+  const f = new FormData(e.target), file = f.get("file");
+  const opts = {shorts: +f.get("shorts"), longs: +f.get("longs"), auto_upload: f.has("auto_upload"), mode: f.get("mode"), subtitles: f.has("subtitles")};
+  const btn = e.target.querySelector("button");
+  let r;
+  if (file && file.size) {
+    btn.disabled = true; btn.textContent = "Uploading file…";
+    r = await fetch("/api/jobs/file?" + new URLSearchParams({...opts, filename: file.name}), {method: "POST", body: file});
+    btn.disabled = false; btn.textContent = "Start clipping";
+  } else if (f.get("url")) {
+    r = await post("/api/jobs", {url: f.get("url"), ...opts});
+  } else return alertBox("Paste a URL or choose a file.");
   if (!r.ok) return alertBox(await r.text());
-  e.target.url.value = ""; refresh();
+  e.target.url.value = ""; e.target.file.value = ""; refresh();
 };
 const alertBox = msg => { $("#jobs").insertAdjacentHTML("afterbegin", `<p style="color:#f66">${esc(msg)}</p>`); };
 
@@ -87,6 +113,73 @@ async function deleteClip(id) {
   if (!r.ok) alertBox((await r.json()).detail);
   refresh();
 }
+// ---- signal curves graph ----
+const openCurves = new Set(), curveData = new Map(), drafts = new Map(), subsChoice = new Map();
+const hidden = new Set();  // signals unticked in the legend (applies to every graph)
+const COLORS = {hype: "#ececf1", audio: "#5ab0ff", heatmap: "#ffb020", chat: "#ff2e88", comments: "#3ddc97"};
+function toggleCurves(id, open) { open ? (openCurves.add(id), loadCurves(id)) : openCurves.delete(id); }
+async function loadCurves(id) {
+  const list = await (await fetch(`/api/jobs/${id}/curves`)).json();
+  const key = JSON.stringify(list);
+  if (curveData.get(id)?.key === key) return;  // unchanged: don't redraw (keeps hover/cursor steady)
+  curveData.set(id, {key, list});
+  paintCurves(id);
+}
+const curvesHtml = id => !curveData.has(id) ? "loading…" : curveData.get(id).list.map((c, i) => drawCurves(c, id, i)).join("")
+  || `<p class="dim">No curves yet (they appear after audio analysis).</p>`;
+function paintCurves(id) { const el = $(`#curves-${id}`); if (el) el.innerHTML = curvesHtml(id); }
+function toggleSignal(k, on) { on ? hidden.delete(k) : hidden.add(k); curveData.forEach((_, id) => paintCurves(id)); }
+
+function drawCurves(c, id, i) {
+  const W = 1000, H = 120, n = c.n || 1, x = t => t / n * W;
+  // Time axis: the first "nice" step that gives at most 8 ticks.
+  const step = [10, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200].find(s => n / s <= 8) || 7200;
+  const ticks = Array.from({length: Math.floor(n / step) + 1}, (_, k) => k * step);
+  const grid = ticks.map(t => `<line x1="${x(t)}" x2="${x(t)}" y1="0" y2="${H}" stroke="#2a2a36" vector-effect="non-scaling-stroke"/>`).join("");
+  const lines = Object.entries(c.signals).filter(([k]) => !hidden.has(k)).map(([k, v]) =>
+    `<polyline fill="none" stroke="${COLORS[k] || "#999"}" stroke-width="${k === "hype" ? 2 : 1}" opacity="${k === "hype" ? 1 : .6}"
+      vector-effect="non-scaling-stroke" points="${v.map((y, t) => `${x(t).toFixed(1)},${(H - y * H).toFixed(1)}`).join(" ")}"/>`).join("");
+  const spans = c.chosen.map(s => `<rect x="${x(s.start)}" width="${x(s.end) - x(s.start)}" y="0" height="${H}"
+      fill="${s.kind === "short" ? "#ff2e88" : "#5ab0ff"}" opacity=".2"/>`).join("");
+  const legend = Object.keys(c.signals).map(k => `<label class="check"><input type="checkbox" ${hidden.has(k) ? "" : "checked"}
+      onchange="toggleSignal('${k}', this.checked)"><span style="color:${COLORS[k] || "#999"}">■ ${k}</span></label>`).join("");
+  return `<div class="legend"><b>${esc(c.name)}</b>${legend}<span class="dim">shaded = picked clips · length ${fmt(n)}</span></div>
+    <div class="plot" onmousemove="hoverCurve(event, ${id}, ${i})" onmouseleave="this.querySelectorAll('.cursor,.tip').forEach(e => e.style.display = 'none')">
+      <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${grid}${spans}${lines}</svg><div class="cursor"></div><div class="tip"></div></div>
+    <div class="axis">${ticks.map((t, k) => `<span style="left:${t / n * 100}%;${k ? "" : "transform:none"}">${fmt(t)}</span>`).join("")}</div>`;
+}
+
+// Hover: vertical cursor + tooltip with the time and each visible signal's value at that second.
+function hoverCurve(e, id, i) {
+  const box = e.currentTarget, r = box.getBoundingClientRect(), c = curveData.get(id).list[i];
+  const f = Math.min(Math.max((e.clientX - r.left) / r.width, 0), 1), t = Math.min(Math.floor(f * c.n), c.n - 1);
+  const clip = c.chosen.find(s => t >= s.start && t < s.end);
+  const cur = box.querySelector(".cursor"), tip = box.querySelector(".tip");
+  cur.style.display = tip.style.display = "block";
+  cur.style.left = f * 100 + "%";
+  Object.assign(tip.style, f > .7 ? {left: "", right: (1 - f) * 100 + 1 + "%"} : {right: "", left: f * 100 + 1 + "%"});
+  tip.innerHTML = `<b>${fmt(t)}</b>` + Object.entries(c.signals).filter(([k]) => !hidden.has(k))
+    .map(([k, v]) => `<div><span style="color:${COLORS[k] || "#999"}">■</span> ${k} ${(v[t] ?? 0).toFixed(2)}</div>`).join("")
+    + (clip ? `<div>✂ ${esc(clip.kind)} ${fmt(clip.start)}–${fmt(clip.end)}: ${esc(clip.title)}</div>` : "");
+}
+
+// ---- manual cuts: one per line "short 1:23 1:58 Title" ----
+const secs = v => v.split(":").reduce((a, p) => a * 60 + +p, 0);
+async function submitCuts(id, btn) {
+  const cuts = [];
+  for (const line of $(`#cuts-${id}`).value.split("\n").map(l => l.trim()).filter(Boolean)) {
+    const [kind, a, b, ...t] = line.split(/\s+/);
+    if (!["short", "long"].includes(kind) || isNaN(secs(a)) || isNaN(secs(b))) return alertBox(`Bad line: "${line}"`);
+    const [title, headline = ""] = t.join(" ").split("|").map(x => x.trim());  // "Title | HEADLINE"
+    cuts.push({kind, start: secs(a), end: secs(b), title, headline});
+  }
+  if (!cuts.length) return alertBox("Add at least one cut line.");
+  btn.disabled = true;
+  const r = await post(`/api/jobs/${id}/cuts?subtitles=${$(`#subs-${id}`).checked}`, cuts);
+  if (!r.ok) return btn.disabled = false, alertBox((await r.json()).detail);
+  drafts.delete(id); $(`#cuts-${id}`).value = ""; btn.disabled = false; refresh();
+}
+
 async function stopJob(id) { await post(`/api/jobs/${id}/stop`); refresh(); }
 
 let clipKey = "";
@@ -95,19 +188,32 @@ async function refresh() {
   $("#yt").innerHTML = s.youtube_connected ? `<span style="color:var(--ok)">● YouTube connected</span>`
     : `<span>YouTube not connected</span><button class="ghost" onclick="connectYT(this)">Connect YouTube</button>`;
 
-  $("#jobs").innerHTML = s.jobs.length ? s.jobs.map(j => {
+  // Don't wipe the jobs list while you're typing cuts into it or hovering a graph.
+  const typing = $("#jobs").contains(document.activeElement) && document.activeElement.matches("textarea");
+  if (!typing && !$("#jobs .plot:hover")) $("#jobs").innerHTML = s.jobs.length ? s.jobs.map(j => {
     const running = !["done","failed","stopped","interrupted"].includes(j.status);
     const cls = j.status === "done" ? "done" : j.status === "failed" ? "failed" : "";
     return `<div class="job"><div class="row">
       <b>#${j.id}</b> ${j.is_live ? '<span class="badge live">LIVE</span>' : ""}
       <span>${esc(j.title || j.url)}</span>
       <span class="badge ${cls}">${esc(j.status)}</span>
-      <span class="dim">${j.shorts} shorts · ${j.longs} long</span>
+      <span class="dim">${j.mode === "manual" ? "manual cuts" : `${j.shorts} shorts · ${j.longs} long · ${esc(j.mode || "hype")}`}</span>
       ${running ? `<button class="ghost" onclick="stopJob(${j.id})">Stop</button>` : ""}
     </div>
     <details ${openLogs.has(j.id) ? "open" : ""} ontoggle="this.open ? openLogs.add(${j.id}) : openLogs.delete(${j.id})">
-      <summary>log</summary><pre>${esc(j.log)}</pre></details></div>`;
+      <summary>log</summary><pre>${esc(j.log)}</pre></details>
+    <details class="curves" ${openCurves.has(j.id) ? "open" : ""} ontoggle="toggleCurves(${j.id}, this.open)">
+      <summary>loudness / hype curves</summary><div id="curves-${j.id}">${curvesHtml(j.id)}</div></details>
+    ${!j.is_live && !running ? `<details ${j.mode === "manual" ? "open" : ""}><summary>cut it yourself</summary>
+      <textarea id="cuts-${j.id}" placeholder="one cut per line: kind start end title | headline (3-4 words on top, optional)&#10;short 1:23 2:10 Cops were NOT ready | COPS REMEMBER YOU&#10;long 10:00 12:55 The full heist"
+        oninput="drafts.set(${j.id}, this.value)">${esc(drafts.get(j.id) || "")}</textarea>
+      <div class="row"><label class="check"><input type="checkbox" id="subs-${j.id}" ${(subsChoice.has(j.id) ? subsChoice.get(j.id) : j.subtitles) ? "checked" : ""}
+        onchange="subsChoice.set(${j.id}, this.checked)"> Headline + subtitles</label>
+      <button class="ghost" onclick="submitCuts(${j.id}, this)">Render cuts</button></div>
+      <span class="dim" style="font-size:12px">Uses the auto-upload setting from when the job was created; otherwise upload from the clip card.</span></details>` : ""}</div>`;
   }).join("") : `<p class="empty">No jobs yet. Paste a link above.</p>`;
+
+  openCurves.forEach(loadCurves);
 
   // Only re-render clips when something changed, so playing videos don't restart.
   const key = JSON.stringify(s.clips.map(c => [c.id, c.status, c.path]));
@@ -117,11 +223,12 @@ async function refresh() {
     const tags = JSON.parse(c.tags || "[]").map(t => "#" + t).join(" ");
     const canUpload = c.path && !["uploaded","uploading"].includes(c.status);
     return `<div class="clip ${c.kind}">
-      ${c.path ? `<video src="/media/${esc(c.path)}" controls preload="metadata"></video>` : `<div style="aspect-ratio:${c.kind==="short"?"9/16":"16/9"};display:grid;place-items:center" class="dim">${esc(c.status)}…</div>`}
+      ${c.path ? `<video src="/media/${esc(c.path)}" controls preload="metadata"></video>` : `<div style="aspect-ratio:9/16;display:grid;place-items:center" class="dim">${esc(c.status)}…</div>`}
       <div class="body">
         <div class="row"><span class="score">${Math.round(c.score)}</span><span class="badge">${c.kind}</span>
           <span class="dim">job #${c.job_id} · ${fmt(c.start)}–${fmt(c.end)}</span></div>
         <div class="title">${esc(c.title)}</div>
+        ${c.headline ? `<div><span class="badge">${esc(c.headline)}</span></div>` : ""}
         <div class="dim">${esc(c.reason)}</div>
         <div class="dim">${esc(tags)}</div>
         <div class="row">
