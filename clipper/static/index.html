@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clipper</title>
+<style>
+  :root { --bg:#0d0d12; --panel:#17171f; --line:#2a2a36; --text:#ececf1; --dim:#8b8b9a; --hot:#ff2e88; --ok:#3ddc97; --warn:#ffb020; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.45 system-ui, sans-serif; }
+  header { padding:20px 24px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+  h1 { margin:0; font-size:22px; letter-spacing:.5px; } h1 span { color:var(--hot); }
+  main { padding:24px; max-width:1300px; margin:auto; display:grid; gap:24px; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:18px; }
+  form { display:flex; gap:12px; flex-wrap:wrap; align-items:end; }
+  label { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--dim); }
+  input { background:var(--bg); border:1px solid var(--line); color:var(--text); border-radius:8px; padding:10px; font:inherit; }
+  input[type=url] { width:min(520px, 100%); } input[type=number] { width:90px; }
+  label.check { flex-direction:row; align-items:center; font-size:14px; color:var(--text); }
+  button { background:var(--hot); color:#fff; border:0; border-radius:8px; padding:10px 16px; font:inherit; font-weight:600; cursor:pointer; }
+  button.ghost { background:transparent; border:1px solid var(--line); color:var(--text); }
+  button.danger { color:#f66; border-color:#5a2a2a; }
+  .yt { margin-left:auto; font-size:13px; color:var(--dim); display:flex; gap:10px; align-items:center; }
+  .job { border-top:1px solid var(--line); padding:12px 0; }
+  .job:first-child { border-top:0; }
+  .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .badge { font-size:12px; padding:2px 8px; border-radius:99px; background:var(--line); }
+  .badge.live { background:var(--hot); } .badge.done { background:var(--ok); color:#000; } .badge.failed { background:#c33; }
+  details summary { cursor:pointer; color:var(--dim); font-size:13px; margin-top:6px; }
+  pre { white-space:pre-wrap; font-size:12px; color:var(--dim); max-height:260px; overflow:auto; margin:6px 0 0; }
+  .clips { display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:16px; }
+  .clip { background:var(--bg); border:1px solid var(--line); border-radius:10px; overflow:hidden; display:flex; flex-direction:column; }
+  .clip video { width:100%; background:#000; aspect-ratio:9/16; object-fit:contain; }
+  .clip.long video { aspect-ratio:16/9; }
+  .clip .body { padding:10px 12px; display:grid; gap:6px; font-size:13px; }
+  .clip .title { font-weight:600; font-size:14px; }
+  .score { color:var(--hot); font-weight:700; }
+  .dim { color:var(--dim); } a { color:var(--hot); }
+  .empty { color:var(--dim); font-size:14px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>CLIP<span>PER</span></h1>
+  <div class="yt" id="yt"></div>
+</header>
+<main>
+  <section class="panel">
+    <form id="f">
+      <label>YouTube URL (video or live stream)<input type="url" name="url" required placeholder="https://www.youtube.com/watch?v=..."></label>
+      <label>Shorts<input type="number" name="shorts" value="3" min="0" max="20"></label>
+      <label>Long-form<input type="number" name="longs" value="1" min="0" max="10"></label>
+      <label class="check"><input type="checkbox" name="auto_upload" checked> Auto-upload (public)</label>
+      <button>Start clipping</button>
+    </form>
+    <p class="dim" style="margin:10px 0 0;font-size:12px">Live streams: counts are per recorded chunk (default 10 min).</p>
+  </section>
+
+  <section class="panel"><h3 style="margin-top:0">Jobs</h3><div id="jobs"></div></section>
+  <section class="panel"><h3 style="margin-top:0">Clips</h3><div class="clips" id="clips"></div></section>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const openLogs = new Set();
+const post = (u, body) => fetch(u, {method:"POST", headers:{"Content-Type":"application/json"}, body: body && JSON.stringify(body)});
+
+$("#f").onsubmit = async e => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  const r = await post("/api/jobs", {url: f.get("url"), shorts: +f.get("shorts"), longs: +f.get("longs"), auto_upload: f.has("auto_upload")});
+  if (!r.ok) return alertBox(await r.text());
+  e.target.url.value = ""; refresh();
+};
+const alertBox = msg => { $("#jobs").insertAdjacentHTML("afterbegin", `<p style="color:#f66">${esc(msg)}</p>`); };
+
+async function connectYT(btn) {
+  btn.disabled = true; btn.textContent = "Finish sign-in in the new browser tab…";
+  const r = await post("/api/youtube/connect");
+  if (!r.ok) alertBox((await r.json()).detail);
+  refresh();
+}
+async function uploadClip(id, btn) { btn.disabled = true; btn.textContent = "Uploading…"; await post(`/api/clips/${id}/upload`); refresh(); }
+async function deleteClip(id) {
+  if (!confirm("Delete this clip file? (A YouTube copy, if any, stays up.)")) return;
+  const r = await fetch(`/api/clips/${id}`, {method: "DELETE"});
+  if (!r.ok) alertBox((await r.json()).detail);
+  refresh();
+}
+async function stopJob(id) { await post(`/api/jobs/${id}/stop`); refresh(); }
+
+let clipKey = "";
+async function refresh() {
+  const s = await (await fetch("/api/state")).json();
+  $("#yt").innerHTML = s.youtube_connected ? `<span style="color:var(--ok)">● YouTube connected</span>`
+    : `<span>YouTube not connected</span><button class="ghost" onclick="connectYT(this)">Connect YouTube</button>`;
+
+  $("#jobs").innerHTML = s.jobs.length ? s.jobs.map(j => {
+    const running = !["done","failed","stopped","interrupted"].includes(j.status);
+    const cls = j.status === "done" ? "done" : j.status === "failed" ? "failed" : "";
+    return `<div class="job"><div class="row">
+      <b>#${j.id}</b> ${j.is_live ? '<span class="badge live">LIVE</span>' : ""}
+      <span>${esc(j.title || j.url)}</span>
+      <span class="badge ${cls}">${esc(j.status)}</span>
+      <span class="dim">${j.shorts} shorts · ${j.longs} long</span>
+      ${running ? `<button class="ghost" onclick="stopJob(${j.id})">Stop</button>` : ""}
+    </div>
+    <details ${openLogs.has(j.id) ? "open" : ""} ontoggle="this.open ? openLogs.add(${j.id}) : openLogs.delete(${j.id})">
+      <summary>log</summary><pre>${esc(j.log)}</pre></details></div>`;
+  }).join("") : `<p class="empty">No jobs yet. Paste a link above.</p>`;
+
+  // Only re-render clips when something changed, so playing videos don't restart.
+  const key = JSON.stringify(s.clips.map(c => [c.id, c.status, c.path]));
+  if (key === clipKey) return;
+  clipKey = key;
+  $("#clips").innerHTML = s.clips.length ? s.clips.map(c => {
+    const tags = JSON.parse(c.tags || "[]").map(t => "#" + t).join(" ");
+    const canUpload = c.path && !["uploaded","uploading"].includes(c.status);
+    return `<div class="clip ${c.kind}">
+      ${c.path ? `<video src="/media/${esc(c.path)}" controls preload="metadata"></video>` : `<div style="aspect-ratio:${c.kind==="short"?"9/16":"16/9"};display:grid;place-items:center" class="dim">${esc(c.status)}…</div>`}
+      <div class="body">
+        <div class="row"><span class="score">${Math.round(c.score)}</span><span class="badge">${c.kind}</span>
+          <span class="dim">job #${c.job_id} · ${fmt(c.start)}–${fmt(c.end)}</span></div>
+        <div class="title">${esc(c.title)}</div>
+        <div class="dim">${esc(c.reason)}</div>
+        <div class="dim">${esc(tags)}</div>
+        <div class="row">
+          ${c.youtube_id ? `<a href="https://youtu.be/${esc(c.youtube_id)}" target="_blank">▶ on YouTube</a>` : `<span class="dim">${esc(c.status)}</span>`}
+          ${canUpload ? `<button class="ghost" onclick="uploadClip(${c.id}, this)">Upload to YouTube</button>` : ""}
+          ${c.path ? `<a href="/media/${esc(c.path)}" target="_blank">Open</a>` : ""}
+          ${!["rendering","uploading"].includes(c.status) ? `<button class="ghost danger" onclick="deleteClip(${c.id})">Delete</button>` : ""}
+        </div>
+      </div></div>`;
+  }).join("") : `<p class="empty">Clips will appear here as they render.</p>`;
+}
+const fmt = s => `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;
+refresh(); setInterval(refresh, 2000);
+</script>
+</body>
+</html>

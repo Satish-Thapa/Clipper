@@ -1,0 +1,25 @@
+[project]
+name = "clipper"
+version = "0.1.0"
+description = "Turn YouTube videos and live streams into viral Shorts and long-form clips, then auto-upload."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = [
+  "fastapi",
+  "uvicorn",
+  "yt-dlp[default]",
+  "faster-whisper",
+  "openai",
+  "python-dotenv",
+  "numpy",
+  "chat-downloader",
+  "google-api-python-client",
+  "google-auth-oauthlib",
+]
+
+[tool.setuptools]
+packages = ["clipper"]
+
+[tool.setuptools.package-data]
+clipper = ["static/*"]

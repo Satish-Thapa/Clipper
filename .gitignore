@@ -1,0 +1,8 @@
+.env
+.venv/
+data/
+client_secret*.json
+__pycache__/
+*.pyc
+.DS_Store
+*.egg-info/
