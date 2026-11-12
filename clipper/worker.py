@@ -8,6 +8,7 @@ from . import db, download, pick, render, signals, transcribe, upload
 from .config import DATA, LIVE_CHUNK_SECONDS, SHORT_HARD_MAX
 
 STOPS = {}  # job_id -> threading.Event
+RENDER_JOBS = 2  # clips rendered at once (GPU encoder + CPU side by side)
 WINDOW = {"short": (60, 40), "long": (120, 40)}  # (candidate length, transcript padding each side), seconds
 
 
@@ -185,7 +186,7 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None):
             db.log(jid, "video too short for requested clips")
             return
 
-        # STEP 4: Transcribe with Whisper (word-level timestamps, CPU).
+        # STEP 4: Transcribe with Whisper (word-level timestamps, GPU if available, else CPU).
         # "hype": only the candidate windows (overlaps merged so nothing is transcribed twice), fast.
         # "ai" modes: the whole video, so DeepSeek can find moments the curves missed. Slow on long videos.
         spans = [[0, n]] if mode != "hype" else transcribe.merge([(c["start"], c["end"]) for c in cands])
@@ -225,32 +226,38 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None):
 
 def _render_clips(job, src, d, chosen, words, subtitles):
     """subtitles: burn the headline (top) and word captions (bottom) into the video."""
+    # Two clips at a time: while one is in the GPU encoder, the other uses the CPU (decode, captions, voice-over).
+    with ThreadPoolExecutor(RENDER_JOBS) as ex:
+        for f in [ex.submit(_render_one, job, src, d, c, words, subtitles) for c in chosen]:
+            f.result()  # re-raise the first failure so _process logs it
+
+
+def _render_one(job, src, d, c, words, subtitles):
     jid = job["id"]
-    for c in chosen:
-        cid = db.insert("clips", job_id=jid, kind=c["kind"], start=c["start"], end=c["end"], score=c["score"],
-                        title=c["title"], description=c["description"], tags=json.dumps(c["tags"]),
-                        reason=c["reason"], headline=c.get("headline", ""), status="rendering")
-        out = d / "clips" / f"{cid}.mp4"
-        voice = _voiceover(job, c, words, out) if job.get("voiceover") else []
-        db.log(jid, f"rendering {c['kind']} #{cid}: {c['title']}")
-        try:
-            render.cut(src, out, c["start"], c["end"], True, words if subtitles else (),
-                       c.get("headline", "") if subtitles else "", voice)
-        finally:
-            for wav, _ in voice:
-                wav.unlink(missing_ok=True)  # voice lines are baked into the mp4 now
-        db.update("clips", cid, path=str(out.relative_to(DATA)), status="rendered")
-        if job["auto_upload"]:
-            upload_clip(cid)
+    cid = db.insert("clips", job_id=jid, kind=c["kind"], start=c["start"], end=c["end"], score=c["score"],
+                    title=c["title"], description=c["description"], tags=json.dumps(c["tags"]),
+                    reason=c["reason"], headline=c.get("headline", ""), status="rendering")
+    out = d / "clips" / f"{cid}.mp4"
+    voice = _voiceover(job, c, words, out) if job.get("voiceover") else []
+    db.log(jid, f"rendering {c['kind']} #{cid}: {c['title']}")
+    try:
+        render.cut(src, out, c["start"], c["end"], True, words if subtitles else (),
+                   c.get("headline", "") if subtitles else "", voice)
+    finally:
+        for wav, _ in voice:
+            wav.unlink(missing_ok=True)  # voice lines are baked into the mp4 now
+    db.update("clips", cid, path=str(out.relative_to(DATA)), status="rendered")
+    if job["auto_upload"]:
+        upload_clip(cid)
 
 
 def _voiceover(job, c, words, out):
-    """AI voice-over for one clip: DeepSeek writes the lines, macOS `say` speaks them.
+    """AI voice-over for one clip: DeepSeek writes the lines, render.tts speaks them.
     -> [(wav, seconds into clip)], pushed later where needed so lines never talk over each other.
     Any failure just means no voice-over; the clip still renders."""
     jid = job["id"]
     if not render.can_speak():
-        db.log(jid, "voice-over skipped: macOS 'say' not found")
+        db.log(jid, "voice-over skipped: no text-to-speech (macOS 'say' / Windows PowerShell) found")
         return []
     s, e = c["start"], c["end"]
     rel = [{**w, "s": w["s"] - s, "e": w["e"] - s} for w in words if s <= w["s"] < e]  # times from clip start

@@ -2,12 +2,27 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "Python Debugger: FastAPI",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": [
+        "clipper.app:app",
+        "--reload"
+      ],
+      "jinja": true
+    },
+    {
       "name": "Clipper server",
       "type": "debugpy",
       "request": "launch",
       "module": "uvicorn",
-      "args": ["clipper.app:app", "--port", "8000"],
-      "python": "${workspaceFolder}/.venv/bin/python",
+      "args": [
+        "clipper.app:app",
+        "--port",
+        "8000"
+      ],
+      "python": "${workspaceFolder}/.venv/Scripts/python.exe",
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "justMyCode": true

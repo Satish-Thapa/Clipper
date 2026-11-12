@@ -29,7 +29,8 @@ cp .env.example .env                        # fill DEEPSEEK_API_KEY, FFMPEG path
    comments ×1.5, audio ×1. Saved to `data/jobs/<id>/curves_<file>.json` for the UI graph.
    The name must NOT start with `source.`, because `glob("source.*")` finds the video.
 3. **Clip counts are capped by video length** (`pick.fit_counts`): a 1-min video gives 1 short and 0 long.
-4. **Candidate windows** from the curve (`WINDOW` in worker.py), transcribed with faster-whisper.
+4. **Candidate windows** from the curve (`WINDOW` in worker.py), transcribed with faster-whisper
+   (CUDA float16 on the NVIDIA GPU via `pip install -e .[gpu]`, else CPU int8 on all cores).
 5. **DeepSeek picks** (`pick.py`). Job `mode`:
    - `hype`: chooses among the candidate windows.
    - `ai+hype`: reads the FULL transcript, with the curves as hints it may override.
@@ -40,6 +41,7 @@ cp .env.example .env                        # fill DEEPSEEK_API_KEY, FFMPEG path
 6. **Render** (`render.cut`): a centred `CROP_ASPECT` slice (default 1 = square) on a 1080×1920 black canvas.
    The headline (3-4 words, yellow box) goes in the top bar, captions in the bottom bar, and the logo
    (`clipper/assets/logo.png`) top-right just above the video. Optional voice-over is mixed in with ducking.
+   Encodes with `h264_nvenc` (GPU) if a test encode works, else `libx264`; `RENDER_JOBS` (2) clips at once.
 7. **Upload** (`upload.py`): every clip is ≤180s and vertical, so it is a Short.
 
 ## Decisions the user made (don't undo without asking)

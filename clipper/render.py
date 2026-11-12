@@ -1,6 +1,8 @@
+import os
 import shutil
 import subprocess
 import wave
+from functools import lru_cache
 
 from .config import CROP_ASPECT, FFMPEG, LOGO, VOICE
 
@@ -51,16 +53,44 @@ def ass(words, start, end, vertical=True, headline="", per_line=3, aspect=CROP_A
     return ASS_HEAD.format(**size) + "\n".join(lines) + "\n"
 
 
+# Windows built-in SAPI voice via PowerShell. Text and paths go in as env vars, so quotes can't break the script.
+SAPI_PS = """Add-Type -AssemblyName System.Speech
+$s = New-Object System.Speech.Synthesis.SpeechSynthesizer
+if ($env:TTS_VOICE) { $s.SelectVoice($env:TTS_VOICE) }
+$f = New-Object System.Speech.AudioFormat.SpeechAudioFormatInfo 22050, ([System.Speech.AudioFormat.AudioBitsPerSample]::Sixteen), ([System.Speech.AudioFormat.AudioChannel]::Mono)
+$s.SetOutputToWaveFile($env:TTS_OUT, $f); $s.Speak($env:TTS_TEXT); $s.Dispose()"""
+
+
 def can_speak():
-    return shutil.which("say") is not None  # macOS built-in text-to-speech
+    return shutil.which("say") is not None or shutil.which("powershell") is not None  # macOS say / Windows SAPI
 
 
 def tts(text, out):
-    """Speak `text` with macOS `say` into a 22kHz mono WAV; returns its length in seconds."""
-    subprocess.run(["say", *(["-v", VOICE] if VOICE else []), "-o", str(out), "--data-format=LEI16@22050", text],
-                   check=True)
+    """Speak `text` (macOS `say`, else Windows SAPI) into a 22kHz mono WAV; returns its length in seconds."""
+    if shutil.which("say"):
+        subprocess.run(["say", *(["-v", VOICE] if VOICE else []), "-o", str(out), "--data-format=LEI16@22050", text],
+                       check=True)
+    else:
+        env = {**os.environ, "TTS_TEXT": text, "TTS_OUT": str(out), "TTS_VOICE": VOICE}
+        subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", SAPI_PS], env=env, check=True,
+                       capture_output=True)
     with wave.open(str(out)) as w:
         return w.getnframes() / w.getframerate()
+
+
+@lru_cache(maxsize=1)
+def encoder():
+    """NVIDIA GPU encoder (NVENC) if a 1-frame test encode works, else x264 on the CPU."""
+    test = [FFMPEG, "-loglevel", "error", "-f", "lavfi", "-i", "color=black:s=256x256:d=0.1",
+            "-frames:v", "1", "-c:v", "h264_nvenc", "-f", "null", "-"]
+    try:
+        if subprocess.run(test, capture_output=True, timeout=30).returncode == 0:
+            print("render: GPU encoder (h264_nvenc)")
+            return ["-c:v", "h264_nvenc", "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", "21", "-b:v", "0"]
+    except (OSError, subprocess.SubprocessError):
+        pass
+    print("render: CPU encoder (libx264)")
+    return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20"]
 
 
 def cut(src, out, start, end, vertical, words=(), headline="", voice=()):
@@ -101,7 +131,7 @@ def cut(src, out, start, end, vertical, words=(), headline="", voice=()):
         amap = ["-map", "[a]"]
     subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-ss", str(start), "-t", str(end - start),
                     "-i", str(src.resolve()), *logo_in, *vo_in, "-filter_complex", graph, "-map", "[o]", *amap,
-                    "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-b:a", "160k",
+                    *encoder(), "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k",
                     "-movflags", "+faststart", out.name],
                    check=True, cwd=out.parent)
 

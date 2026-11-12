@@ -17,7 +17,7 @@ SHORT_MIN, SHORT_MAX = int(os.getenv("SHORT_MIN", "15")), min(int(os.getenv("SHO
 LONG_MIN, LONG_MAX = int(os.getenv("LONG_MIN", "60")), min(int(os.getenv("LONG_MAX", "180")), SHORT_HARD_MAX)
 _logo = os.getenv("LOGO", str(ROOT / "clipper" / "assets" / "logo.png"))
 LOGO = Path(_logo) if _logo else None  # watermark on every clip; LOGO= (empty) in .env turns it off
-VOICE = os.getenv("VOICE", "")  # macOS voice for AI voice-overs (`say -v '?'` lists them); empty = system default
+VOICE = os.getenv("VOICE", "")  # voice-over voice (macOS 'say' / Windows SAPI name); empty = system default
 CROP_ASPECT = min(max(float(os.getenv("CROP_ASPECT", "1")), 9 / 16), 16 / 9)  # kept part of the frame, w/h
 STRETCH_SHORT, STRETCH_LONG = int(os.getenv("STRETCH_SHORT", "10")), int(os.getenv("STRETCH_LONG", "10"))
 

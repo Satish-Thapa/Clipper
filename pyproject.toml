@@ -18,6 +18,10 @@ dependencies = [
   "google-auth-oauthlib",
 ]
 
+[project.optional-dependencies]
+# NVIDIA GPU for Whisper: pip install -e .[gpu]. Without it Whisper falls back to the CPU.
+gpu = ["nvidia-cublas-cu12", "nvidia-cudnn-cu12==9.*"]
+
 [tool.setuptools]
 packages = ["clipper"]
 

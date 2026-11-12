@@ -1,18 +1,39 @@
+import os
 import subprocess
+import sys
 import threading
 from functools import lru_cache
+from pathlib import Path
 
 import numpy as np
 
 from .config import FFMPEG, WHISPER_MODEL
 
-_lock = threading.Lock()  # ponytail: one transcription at a time; CPU-bound anyway
+_lock = threading.Lock()  # ponytail: one transcription at a time; one model, one GPU
+
+
+def _cuda_dlls():
+    """Windows: make the pip-installed NVIDIA DLLs (pip install -e .[gpu]) findable by ctranslate2."""
+    nv = Path(sys.prefix) / "Lib" / "site-packages" / "nvidia"
+    for b in nv.glob("*/bin") if os.name == "nt" else ():
+        os.add_dll_directory(str(b))
+        os.environ["PATH"] = f"{b}{os.pathsep}{os.environ['PATH']}"
 
 
 @lru_cache(maxsize=1)
 def _model():
+    """GPU (CUDA float16) if it works, else CPU int8 on every core. The warm-up catches missing CUDA/cuDNN,
+    which otherwise only fails on the first real transcription."""
+    _cuda_dlls()
     from faster_whisper import WhisperModel
-    return WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8")
+    try:
+        m = WhisperModel(WHISPER_MODEL, device="cuda", compute_type="float16")
+        list(m.transcribe(np.zeros(16000, np.float32))[0])
+        print(f"whisper: {WHISPER_MODEL} on GPU (cuda float16)")
+        return m
+    except Exception as e:
+        print(f"whisper: GPU unavailable ({e!r}), using CPU")
+    return WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8", cpu_threads=os.cpu_count() or 4)
 
 
 def words(path, start, end):
