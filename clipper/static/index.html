@@ -420,7 +420,7 @@ async function refresh() {
     <div class="social"><h3><span class="dot ${s.whatsapp ? "ok" : ""}"></span>WhatsApp report</h3>
       <div class="${s.whatsapp ? "" : "dim"}">${s.whatsapp ? `Every ${s.report_minutes} min: views per platform, best platform, top clips`
         : "Not set up"}</div>
-      ${s.whatsapp ? "" : `<div class="dim" style="font-size:13px"><code>WHATSAPP_PHONE</code> and <code>WHATSAPP_APIKEY</code> in .env (README: WhatsApp report, free via CallMeBot).</div>`}
+      ${s.whatsapp ? "" : `<div class="dim" style="font-size:13px"><code>WA_PHONE_NUMBER_ID</code>, <code>WA_TOKEN</code>, <code>WA_TO</code> (+ <code>WA_TEMPLATE</code>) in .env. Free via Meta's WhatsApp Cloud API: see SOCIALS.md.</div>`}
       <div class="row"><button class="ghost" onclick="refreshViews(this)">Refresh views</button>
         ${s.whatsapp ? `<button class="ghost" onclick="sendReport(this)">Send report now</button>` : ""}</div>
       ${lastReport ? `<pre>${esc(lastReport)}</pre>` : ""}

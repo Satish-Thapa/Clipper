@@ -11,7 +11,7 @@ then you **restart the server**. The **Socials** page shows a green dot for each
 | Facebook | A Facebook **Page** + a Meta developer app | 20 min | `FB_PAGE_ID`, `FB_PAGE_TOKEN` |
 | Instagram | A **Business/Creator** Instagram linked to that Page | +5 min | `IG_USER_ID` |
 | TikTok | A TikTok developer app | 30 min + review | `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`, `TIKTOK_REFRESH_TOKEN` |
-| WhatsApp report | Your phone | 2 min | `WHATSAPP_PHONE`, `WHATSAPP_APIKEY` |
+| WhatsApp report | The Meta app from Facebook + your phone | 20 min + template approval | `WA_PHONE_NUMBER_ID`, `WA_TOKEN`, `WA_TO`, `WA_TEMPLATE` |
 
 > Developer portals change their menus often. If a button has a slightly different name, look for the closest match.
 
@@ -49,7 +49,6 @@ You can leave the app in **Development** mode. As the app's admin you can post t
    | `pages_show_list` | find your Page |
    | `pages_read_engagement` | read the Page |
    | `pages_manage_posts` | post Reels / videos |
-   | `publish_video` | upload videos |
    | `read_insights` | view counts for the WhatsApp report |
    | `instagram_basic` | Instagram (skip if no Instagram) |
    | `instagram_content_publish` | post Instagram Reels |
@@ -57,6 +56,28 @@ You can leave the app in **Development** mode. As the app's admin you can post t
    | `business_management` | linked business accounts |
 
 4. Click **Generate Access Token** and accept everything in the popup (choose your Page and Instagram account when asked).
+
+**A permission isn't in the list (e.g. `pages_manage_posts`)?** The Explorer only offers permissions your app has
+been given. Fix it in the app dashboard (developers.facebook.com → your app), then reload the Explorer:
+- **The left menu has "Use cases"** (newer apps): **Use cases** → **Add use case** → **Manage everything on your Page**
+  → then **Customize** on it and click **Add** next to `pages_manage_posts`, `pages_read_engagement`,
+  `pages_show_list`, `read_insights`. For Instagram also add the use case **Manage messaging & content on Instagram**
+  (with `instagram_basic`, `instagram_content_publish`, `instagram_manage_insights`).
+- **The left menu has "App Review → Permissions and features"** (older/Business apps): find `pages_manage_posts`
+  there and click **Get** / **Request** for Standard Access. You don't need App Review to post to your own Page.
+- **No Page use case is offered at all:** the app was created with a type that has no Page access (e.g. only
+  "Authenticate with Facebook Login"). Create a new app and choose the Page use case, or **Other → Business**.
+- In the Explorer, `pages_*` permissions are under the **Pages** group; typing the name in the search box also works.
+
+### Shortcut: let the script do steps 3-4 and the Instagram ID
+With the token from step 2 still on screen, run this in the project folder:
+```powershell
+.venv\Scripts\python -m clipper.meta_setup
+```
+It asks for your **App ID** and **App Secret** (developers.facebook.com → your app → **App settings → Basic**), and for
+the **User Token** from Graph API Explorer. These go in hidden prompts. It then checks the permissions, makes the token
+long-lived, finds your Page and its never-expiring Page token, finds the linked Instagram account, and writes
+`FB_PAGE_ID`, `FB_PAGE_TOKEN` and `IG_USER_ID` into `.env`. If that works, skip to restarting the server.
 
 ### 3. Make it long-lived
 The token from the Explorer dies in about an hour.
@@ -169,23 +190,66 @@ TikTok doesn't report view counts for private posts, so the WhatsApp report show
 
 ## WhatsApp report (hourly views)
 
-Sent through [CallMeBot](https://www.callmebot.com/blog/free-api-whatsapp-messages/), which is free. CallMeBot is a
-third-party service, so it sees the report text (titles and view counts).
+Sent with Meta's official **WhatsApp Cloud API**, from the same Meta app you made for Facebook. Do the Facebook
+"Create a Meta app" step first.
 
-1. Open the [CallMeBot WhatsApp page](https://www.callmebot.com/blog/free-api-whatsapp-messages/) and save **their
-   current bot number** in your phone's contacts. The number changes now and then, so always copy it from that page.
-2. Send that contact this WhatsApp message:
+### 1. Add WhatsApp to your Meta app
+1. [developers.facebook.com](https://developers.facebook.com/) → **My Apps** → your app → **Add product** → **WhatsApp** → **Set up**.
+2. It asks for a **Meta Business portfolio**. Pick yours or create one (just a name).
+3. Open **WhatsApp → API Setup**. Meta gives you a free **test phone number** to send from.
+4. Copy the **Phone number ID** shown under the "From" number (not the phone number itself):
    ```
-   I allow callmebot to send me messages
+   WA_PHONE_NUMBER_ID=123456789012345
    ```
-3. Within a minute or two it replies with your **API key**.
-4. Put your own number (with country code, no spaces) and the key in `.env`:
+
+### 2. Allow your own number to receive
+1. Still on **API Setup**, under **To**, click **Manage phone number list** → **Add phone number**.
+2. Enter your WhatsApp number and type in the code WhatsApp sends you. A test number can message up to 5 numbers.
+3. Put your number in `.env`, country code first, no `+`, no spaces:
    ```
-   WHATSAPP_PHONE=+9779800000000
-   WHATSAPP_APIKEY=1234567
-   REPORT_MINUTES=60
+   WA_TO=9779800000000
    ```
-5. Restart the server. On the **Socials** page click **Send report now** to test it.
+
+### 3. Get a token that doesn't expire
+The token shown on API Setup expires after 24 hours. It's fine for a first test, but for the hourly report make a permanent one:
+1. [business.facebook.com](https://business.facebook.com/) → **Settings** → **Users** → **System users** → **Add**,
+   with the **Admin** role.
+2. Select the new system user → **Assign assets**. Pick your **app** (full control) and your **WhatsApp account**
+   (full control).
+3. **Generate new token**: choose your app, expiry **Never**, and tick `whatsapp_business_messaging` and
+   `whatsapp_business_management`.
+4. Copy it into `.env`:
+   ```
+   WA_TOKEN=EAAG...
+   ```
+
+### 4. Create the message template (so every hourly report arrives)
+WhatsApp only lets a business send free text to you within **24 hours of you messaging it**. Outside that window only
+**approved templates** arrive, and an hourly report is almost always outside that window. So create one template, once:
+
+1. **WhatsApp Manager** (API Setup page → link, or business.facebook.com → WhatsApp accounts) → **Message templates** → **Create template**.
+2. Category **Utility**, name `clipper_report`, language **English (US)**.
+3. Body text (the `{{1}}` is where Clipper puts the report):
+   ```
+   Clipper views update: {{1}}
+   ```
+   Give the sample value something like `YouTube: 1,200 views | Best platform: YouTube`.
+4. Submit. Approval usually takes minutes to a few hours. Then in `.env`:
+   ```
+   WA_TEMPLATE=clipper_report
+   WA_TEMPLATE_LANG=en_US
+   ```
+
+Template variables can't contain line breaks, so the report arrives as one line with `|` between parts. Without
+`WA_TEMPLATE` it's sent as normal multi-line text, which only arrives if you messaged the test number in the last 24h.
+
+### 5. Test it
+Restart the server. On the **Socials** page, the WhatsApp card should have a green dot. Click **Send report now**.
+`REPORT_MINUTES=60` in `.env` sets how often it's sent.
+
+**Cost:** Meta may charge a small fee per template message, depending on your country and their current pricing
+(check *WhatsApp Business Platform pricing*). Hourly is about 720 messages a month. If that matters, raise
+`REPORT_MINUTES` (e.g. 240 = every 4 hours).
 
 ---
 
@@ -208,4 +272,7 @@ third-party service, so it sees the report text (titles and view counts).
 | TikTok `unaudited_client_can_only_post_to_private_accounts` | Normal before approval: keep `TIKTOK_PRIVACY=SELF_ONLY`. |
 | TikTok `invalid_grant` / token errors | Refresh token expired or used up: redo TikTok step 2. |
 | `uploadLimitExceeded` (YouTube) | YouTube's daily per-channel limit. The banner shows a 24h countdown. |
-| WhatsApp `APIKey is invalid` | Wrong key or phone format: use `+` and country code, no spaces. |
+| WhatsApp `(#131030) Recipient phone number not in allowed list` | Add and verify your number under API Setup → To (WhatsApp step 2). |
+| WhatsApp `(#132001) Template name does not exist` | Template not approved yet, or `WA_TEMPLATE` / `WA_TEMPLATE_LANG` don't match it exactly. |
+| WhatsApp `Invalid OAuth access token` / `Session has expired` | The 24h token expired: make the system-user token (WhatsApp step 3). |
+| WhatsApp "sent" but nothing arrives | No `WA_TEMPLATE` and you haven't messaged the number in 24h: set up the template (step 4). |

@@ -1,17 +1,18 @@
-"""View counts for uploaded clips + an hourly WhatsApp report (via CallMeBot, free: see README).
+"""View counts for uploaded clips + an hourly WhatsApp report (Meta WhatsApp Cloud API, free: see SOCIALS.md).
 
 refresh() asks each platform for the views of every clip we uploaded and stores them in clips.views (JSON
 {platform: views}). report() turns that into a short message: totals per platform, the change since the last
 report, the best platform and the top clips. loop() does both every REPORT_MINUTES."""
 import json
+import re
 import threading
 import time
-import urllib.parse
 
 import httpx
 
 from . import db, upload as youtube
-from .config import FB_PAGE_TOKEN, GRAPH_VERSION, IG_TOKEN, REPORT_MINUTES, WHATSAPP_APIKEY, WHATSAPP_PHONE
+from .config import (FB_PAGE_TOKEN, GRAPH_VERSION, IG_TOKEN, REPORT_MINUTES, WA_PHONE_NUMBER_ID, WA_TEMPLATE,
+                     WA_TEMPLATE_LANG, WA_TO, WA_TOKEN)
 
 GRAPH = f"https://graph.facebook.com/{GRAPH_VERSION}"
 NAMES = {"youtube": "YouTube", "facebook": "Facebook", "instagram": "Instagram", "tiktok": "TikTok"}
@@ -19,7 +20,32 @@ LAST = {"totals": None, "at": 0, "errors": {}}  # totals at the previous report,
 
 
 def whatsapp_ready():
-    return bool(WHATSAPP_PHONE and WHATSAPP_APIKEY)
+    return bool(WA_PHONE_NUMBER_ID and WA_TOKEN and WA_TO)
+
+
+def _wa(payload):
+    r = httpx.post(f"{GRAPH}/{WA_PHONE_NUMBER_ID}/messages", timeout=30, headers={"Authorization": f"Bearer {WA_TOKEN}"},
+                   json={"messaging_product": "whatsapp", "to": WA_TO, **payload})
+    return r, (r.json() if r.headers.get("content-type", "").startswith("application/json") else {})
+
+
+def send_whatsapp(text):
+    """WhatsApp only delivers free text within 24h of YOU messaging the sender number, and when that window is closed
+    the API still answers 200 (the failure only shows up later, in a webhook we don't have). So:
+    - WA_TEMPLATE set (recommended): always send that approved template; its one {{1}} variable gets the report on
+      one line, " | " between lines (template variables can't contain line breaks). Always delivered.
+    - no template: plain text with line breaks, only delivered inside the 24h window."""
+    if WA_TEMPLATE:
+        one_line = re.sub(r" {4,}", "   ", re.sub(r"\s*\n+\s*", " | ", text).replace("\t", " "))[:1000]
+        r, j = _wa({"type": "template", "template": {"name": WA_TEMPLATE, "language": {"code": WA_TEMPLATE_LANG},
+                    "components": [{"type": "body", "parameters": [{"type": "text", "text": one_line}]}]}})
+        how = "template"
+    else:
+        r, j = _wa({"type": "text", "text": {"body": text, "preview_url": False}})
+        how = "text (only delivered within 24h of you messaging the number; set WA_TEMPLATE)"
+    if r.is_error:
+        raise RuntimeError(f"WhatsApp: HTTP {r.status_code} {(j.get('error') or {}).get('message') or r.text[:300]}")
+    return how
 
 
 def start_loop():
@@ -125,17 +151,14 @@ def report_text(clips, now_totals, before, errors, top=5):
 def send_report():
     """Refresh views, build the message, send it on WhatsApp. Returns the text that was sent."""
     if not whatsapp_ready():
-        raise RuntimeError("set WHATSAPP_PHONE and WHATSAPP_APIKEY in .env (README: WhatsApp report)")
+        raise RuntimeError("set WA_PHONE_NUMBER_ID, WA_TOKEN and WA_TO in .env (SOCIALS.md: WhatsApp report)")
     errors = refresh()
     clips = db.all("clips")
     now = totals(clips)
     text = report_text(clips, now, LAST["totals"], errors)
     LAST.update(totals=now, at=time.time())
-    r = httpx.get("https://api.callmebot.com/whatsapp.php?" + urllib.parse.urlencode(
-        {"phone": WHATSAPP_PHONE, "text": text, "apikey": WHATSAPP_APIKEY}), timeout=30)
-    if r.is_error or "error" in r.text.lower()[:300]:
-        raise RuntimeError(f"CallMeBot: HTTP {r.status_code} {r.text[:200]}")
-    db.syslog(f"WhatsApp report sent ({len(text)} chars)")
+    how = send_whatsapp(text)
+    db.syslog(f"WhatsApp report sent as {how} ({len(text)} chars)")
     return text
 
 

@@ -38,8 +38,10 @@ TIKTOK_TOKEN = DATA / "tiktok_token.json"
 # Topic search: only videos this long (minutes) are clipped. Too short = nothing to clip, too long = slow.
 TOPIC_MIN_MINUTES = float(os.getenv("TOPIC_MIN_MINUTES", "3"))
 TOPIC_MAX_MINUTES = float(os.getenv("TOPIC_MAX_MINUTES", "90"))
-# Hourly WhatsApp report of views per clip/platform, sent through CallMeBot (free; see README).
-WHATSAPP_PHONE, WHATSAPP_APIKEY = os.getenv("WHATSAPP_PHONE", ""), os.getenv("WHATSAPP_APIKEY", "")
+# Hourly WhatsApp report of views per clip/platform, via Meta's WhatsApp Cloud API (free; see SOCIALS.md).
+WA_PHONE_NUMBER_ID, WA_TOKEN = os.getenv("WA_PHONE_NUMBER_ID", ""), os.getenv("WA_TOKEN", "")  # the sender
+WA_TO = os.getenv("WA_TO", "").lstrip("+").replace(" ", "")  # your own WhatsApp number, country code first
+WA_TEMPLATE, WA_TEMPLATE_LANG = os.getenv("WA_TEMPLATE", ""), os.getenv("WA_TEMPLATE_LANG", "en_US")
 REPORT_MINUTES = float(os.getenv("REPORT_MINUTES", "60"))
 SEARCH_REGION = os.getenv("SEARCH_REGION", "US")  # country whose YouTube results topics search (trending there)
 

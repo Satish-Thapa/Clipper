@@ -15,7 +15,7 @@ app = FastAPI(title="Clipper")
 db.init()
 db.syslog(f"server started, data in {DATA}")
 topics.start_loop()  # picks up topics still queued from before a restart
-stats.start_loop()  # hourly WhatsApp report, if WHATSAPP_PHONE/WHATSAPP_APIKEY are set
+stats.start_loop()  # hourly WhatsApp report, if WA_PHONE_NUMBER_ID/WA_TOKEN/WA_TO are set
 social.backfill_times()  # give old uploads a time so the 24h upload counter includes them
 social.backfill_limit_hits()  # start the 24h timer of a limit error logged before timers existed
 app.mount("/media", StaticFiles(directory=DATA), name="media")

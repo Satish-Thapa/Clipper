@@ -55,7 +55,9 @@ cp .env.example .env                        # fill DEEPSEEK_API_KEY, FFMPEG path
 Then `vision.py` checks ~30 YouTube storyboard frames per candidate with OpenCV YuNet: skipped if a person fills the
 screen (`MAX_PERSON`) or the picture is static (`MAX_STATIC`); a small corner facecam passes. Searches use
 `SEARCH_REGION` (US). **Stats** (`stats.py`): views per platform into `clips.views`, hourly WhatsApp report via
-CallMeBot (`WHATSAPP_PHONE`/`WHATSAPP_APIKEY`). YouTube views need the readonly scope (reconnect).
+Meta's WhatsApp Cloud API (`WA_PHONE_NUMBER_ID`/`WA_TOKEN`/`WA_TO`; `WA_TEMPLATE` = approved template,
+always used when set, because free text only arrives within 24h of the user messaging the number). CallMeBot was
+dropped: its bot was full. YouTube views need the readonly scope (reconnect).
 **UI** is one page with hash tabs: #create #topics #jobs #clips #socials #logs.
 **Logging**: `db.log(id, msg, table, exc=)` writes the job/topic log, the terminal AND `data/logs/clipper.log`
 (rotating, tracebacks when `exc=True`); `db.syslog` for non-job events; `db.step(...)` logs a step with its duration.

@@ -97,12 +97,7 @@ banner and on the **Socials** page. The header shows how many clips went up to Y
 
 Every `REPORT_MINUTES` (default 60), Clipper checks the views of every uploaded clip on each platform and sends you a
 WhatsApp message with views per platform (and the change since the last report), the best platform, and the top clips.
-It's free and sent through [CallMeBot](https://www.callmebot.com/blog/free-api-whatsapp-messages/), a third-party service that sees the message text.
-
-1. Add **+34 644 66 32 62** to your phone contacts (check CallMeBot's page for their current number).
-2. Send it the WhatsApp message `I allow callmebot to send me messages`. It replies with your API key.
-3. In `.env`, set `WHATSAPP_PHONE=+<country code><number>` and `WHATSAPP_APIKEY=<key>`, then restart the server.
-4. On the **Socials** page, **Send report now** sends one straight away.
+It's sent with Meta's official **WhatsApp Cloud API**, from the Meta app you use for Facebook. Setup (test number, permanent token, one message template): see [SOCIALS.md](SOCIALS.md#whatsapp-report-hourly-views). On the **Socials** page, **Send report now** sends one straight away.
 
 YouTube views need read access: click **Reconnect YouTube** once (older logins could only upload).
 TikTok doesn't give view counts for private app posts, so it's listed as unavailable until your TikTok app is audited.
