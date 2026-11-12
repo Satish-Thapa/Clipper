@@ -3,10 +3,25 @@ import re
 import subprocess
 import threading
 import time
+import urllib.parse
 
 import yt_dlp
 
-from .config import FFMPEG
+from .config import FFMPEG, SEARCH_REGION
+
+
+FRAGMENTS = 8  # YouTube throttles each connection; fetching 8 chunks at once is several times faster
+
+
+def height_for(hq):
+    """Source quality: up to 1080p by default (fast), up to 4K when the job asks for it ("4K quality" box).
+    4K is ~10x the data but sharper for full-screen 9:16, where a 1080p source's slice is only 608px wide."""
+    return 2160 if hq else 1080
+
+
+def fmt(height):
+    """yt-dlp format + sort: best video up to `height` (highest fps first) + best audio."""
+    return f"bv*[height<={height}]+ba/b[height<={height}]/b", [f"res:{height}", "fps", "vbr", "abr"]
 
 
 def info(url, comments=False):
@@ -16,17 +31,33 @@ def info(url, comments=False):
         return y.extract_info(url, download=False)
 
 
-def download_vod(url, out_path):
-    opts = {"quiet": True, "outtmpl": str(out_path), "merge_output_format": "mp4",
-            "format": "bv*[height<=1080]+ba/b[height<=1080]/b", "ffmpeg_location": FFMPEG}
+# YouTube search filters ("sp" in the results URL): uploaded this week, then this month, then any time.
+RECENT = ("EgIIAw%3D%3D", "EgIIBA%3D%3D", "")
+
+
+def search(query, n=20, recent=RECENT[0]):
+    """YouTube search results (flat: id, title, duration, view_count, live_status...), no download."""
+    # gl/hl = the country and language YouTube ranks results for (US English by default: US-trending videos).
+    url = (f"https://www.youtube.com/results?search_query={urllib.parse.quote(query)}&gl={SEARCH_REGION}&hl=en"
+           + (f"&sp={recent}" if recent else ""))
+    with yt_dlp.YoutubeDL({"quiet": True, "extract_flat": True, "playlistend": n, "skip_download": True}) as y:
+        es = y.extract_info(url, download=False).get("entries") or []
+    return [e for e in es if e and e.get("id") and e.get("ie_key") == "Youtube"]  # videos only, no channels/playlists
+
+
+def download_vod(url, out_path, height=1080):
+    form, sort = fmt(height)
+    opts = {"quiet": True, "noprogress": True, "outtmpl": str(out_path), "merge_output_format": "mp4", "format": form,
+            "format_sort": sort, "concurrent_fragment_downloads": FRAGMENTS, "ffmpeg_location": FFMPEG}
     with yt_dlp.YoutubeDL(opts) as y:
         y.download([url])
 
 
-def record_live_chunk(url, out_path, seconds, stop):
+def record_live_chunk(url, out_path, seconds, stop, height=1080):
     """Record `seconds` of a live stream from the live edge. Returns False if the stream is over.
     If `stop` is set mid-chunk, ffmpeg is told to quit and the partial chunk is kept."""
-    with yt_dlp.YoutubeDL({"quiet": True, "format": "bv*[height<=1080]+ba/b[height<=1080]/b"}) as y:
+    form, sort = fmt(height)
+    with yt_dlp.YoutubeDL({"quiet": True, "format": form, "format_sort": sort}) as y:
         i = y.extract_info(url, download=False)  # re-extract each chunk: HLS URLs expire
     if not i.get("is_live"):
         return False

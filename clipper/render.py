@@ -4,7 +4,8 @@ import subprocess
 import wave
 from functools import lru_cache
 
-from .config import CROP_ASPECT, FFMPEG, LOGO, VOICE
+from . import db
+from .config import CROP_ASPECT, END_CARD, FFMPEG, LOGO, VOICE
 
 ASS_HEAD = """[Script Info]
 ScriptType: v4.00+
@@ -15,6 +16,8 @@ PlayResY: {h}
 Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, BorderStyle, Outline, Shadow, Alignment, MarginV
 Style: Cap,Arial Black,{size},&H00FFFFFF,&H00000000,&H80000000,1,1,6,2,2,{margin}
 Style: Top,Arial Black,{top_size},&H00000000,&H0000E5FF,&H0000E5FF,1,3,14,0,8,{top_margin}
+Style: EndBox,Arial Black,{end_size},&H00FFFFFF,&H002E2EFF,&H002E2EFF,1,3,22,0,5,0
+Style: End,Arial Black,{end_sub},&H00FFFFFF,&H00000000,&H80000000,1,1,7,3,5,0
 
 [Events]
 Format: Layer, Start, End, Style, Text
@@ -32,6 +35,25 @@ def bar_height(aspect=CROP_ASPECT):
     return max(0, (1920 - round(1080 / aspect)) // 2)
 
 
+END_SECONDS = 2.6  # end card length; only on clips of at least 3x this
+
+
+def end_card(length, text=END_CARD, w=1080, h=1920):
+    """Animated call to action for the last END_SECONDS: the first word ("FOLLOW") pops in on a red box with an
+    overshoot and then pulses; the rest ("FOR MORE") slides up and fades in under it."""
+    if not text.strip() or length < END_SECONDS * 3:
+        return []
+    first, _, rest = text.upper().replace("{", "").replace("}", "").strip().partition(" ")
+    a, b, cx, cy = _t(length - END_SECONDS), _t(length), w // 2, h // 2
+    pop = (rf"{{\an5\pos({cx},{cy - 70})\fad(100,180)\fscx20\fscy20\t(0,220,\fscx118\fscy118)\t(220,380,\fscx100\fscy100)"
+           r"\t(700,1000,\fscx108\fscy108)\t(1000,1300,\fscx100\fscy100)\t(1300,1600,\fscx108\fscy108)"
+           r"\t(1600,1900,\fscx100\fscy100)}")
+    out = [f"Dialogue: 2,{a},{b},EndBox,{pop}{first}"]
+    if rest:
+        out.append(f"Dialogue: 2,{a},{b},End," + rf"{{\an5\move({cx},{cy + 160},{cx},{cy + 90},250,550)\fad(450,180)}}" + rest)
+    return out
+
+
 def ass(words, start, end, vertical=True, headline="", per_line=3, aspect=CROP_ASPECT):
     """Headline in a yellow box in the top black bar for the whole clip + big captions in the bottom black bar,
     a few words at a time. With no bars (aspect 9/16) they sit on the video instead."""
@@ -47,9 +69,11 @@ def ass(words, start, end, vertical=True, headline="", per_line=3, aspect=CROP_A
     # Headline: centred in the top bar (box is ~106px tall), but below YouTube's top icons (~120px).
     # Captions: just under the video, so they stay above YouTube's title/channel overlay at the very bottom.
     bar = bar_height(aspect)
-    size = (dict(w=1080, h=1920, size=86, margin=max(250, bar - 120), top_size=78, top_margin=max(120, (bar - 106) // 2))
+    size = (dict(w=1080, h=1920, size=86, margin=max(250, bar - 120), top_size=78, top_margin=max(120, (bar - 106) // 2),
+                 end_size=120, end_sub=84)
             if vertical
-            else dict(w=1920, h=1080, size=64, margin=70, top_size=60, top_margin=50))
+            else dict(w=1920, h=1080, size=64, margin=70, top_size=60, top_margin=50, end_size=90, end_sub=64))
+    lines += end_card(end - start, w=size["w"], h=size["h"])
     return ASS_HEAD.format(**size) + "\n".join(lines) + "\n"
 
 
@@ -85,32 +109,40 @@ def encoder():
             "-frames:v", "1", "-c:v", "h264_nvenc", "-f", "null", "-"]
     try:
         if subprocess.run(test, capture_output=True, timeout=30).returncode == 0:
-            print("render: GPU encoder (h264_nvenc)")
-            return ["-c:v", "h264_nvenc", "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", "21", "-b:v", "0"]
+            db.syslog("render: GPU encoder (h264_nvenc)")
+            return ["-c:v", "h264_nvenc", "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", "18", "-b:v", "0",
+                    "-maxrate", "25M", "-bufsize", "50M", "-profile:v", "high"]
     except (OSError, subprocess.SubprocessError):
         pass
-    print("render: CPU encoder (libx264)")
-    return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20"]
+    db.syslog("render: CPU encoder (libx264)")
+    return ["-c:v", "libx264", "-preset", "medium", "-crf", "18", "-profile:v", "high"]
 
 
-def cut(src, out, start, end, vertical, words=(), headline="", voice=()):
+def encoder_name():
+    return "GPU NVENC" if "h264_nvenc" in encoder() else "CPU x264"
+
+
+def cut(src, out, start, end, vertical, words=(), headline="", voice=(), aspect=CROP_ASPECT):
     """words: burn these as captions; headline: text at the top. Pass ()/"" for none.
-    voice: [(wav_path, seconds into clip)] voice-over lines; the original audio is ducked under them."""
-    # Vertical: keep a centred CROP_ASPECT slice of the frame (wider than a full 9:16 crop = more gameplay),
+    voice: [(wav_path, seconds into clip)] voice-over lines; the original audio is ducked under them.
+    aspect: w/h of the kept slice of the frame (9/16 = fills the phone ... 16/9 = whole frame with bars)."""
+    aspect = min(max(float(aspect or CROP_ASPECT), 9 / 16), 16 / 9)
+    # Vertical: keep a centred `aspect` slice of the frame (wider than a full 9:16 crop = more gameplay),
     # fit it to 1080 wide, and pad to 1080x1920 with black bars that hold the headline and captions.
     # ponytail: plain center crop; facecam/subject tracking is the upgrade if gameplay gets cut off
-    vf = (f"crop='min(iw,ih*{CROP_ASPECT})':ih,scale=1080:1920:force_original_aspect_ratio=decrease:force_divisible_by=2,"
+    vf = (f"crop='min(iw,ih*{aspect})':ih,scale=1080:1920:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos,"
           "pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,setsar=1" if vertical else "scale=-2:1080")
-    if words or headline:
+    if words or headline or END_CARD.strip():
         sub = out.with_suffix(".ass")
-        sub.write_text(ass(words, start, end, vertical, headline))
+        sub.write_text(ass(words, start, end, vertical, headline, aspect=aspect))
         vf += f",subtitles={sub.name}"  # relative name + cwd avoids ffmpeg path escaping
     graph, logo_in = f"[0:v]{vf}[o]", []
     if LOGO and LOGO.exists():
         # Small logo top-right. Vertical with bars: in the top bar just above the video (clear of the headline and
-        # YouTube's own top icons). No bars / 16:9: in the video's top-right corner.
-        bar = bar_height() if vertical else 0
-        y = f"{bar}-h-24" if bar >= 200 else f"{max(bar, 140) if vertical else 0}+24"  # h = logo height
+        # YouTube's own top icons). Vertical without bars: just under the headline box (which sits at y 120-226),
+        # so it never covers the headline. 16:9: in the video's top-right corner.
+        bar = bar_height(aspect) if vertical else 0
+        y = f"{bar}-h-24" if bar >= 200 else f"{max(bar, 230) if vertical else 0}+24"  # h = logo height
         logo_in = ["-i", str(LOGO.resolve())]
         graph = f"[0:v]{vf}[v];[1:v]scale={220 if vertical else 260}:-1[l];[v][l]overlay=W-w-24:{y}[o]"
     vo_in, amap = [], ["-map", "0:a?"]
@@ -131,7 +163,7 @@ def cut(src, out, start, end, vertical, words=(), headline="", voice=()):
         amap = ["-map", "[a]"]
     subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-ss", str(start), "-t", str(end - start),
                     "-i", str(src.resolve()), *logo_in, *vo_in, "-filter_complex", graph, "-map", "[o]", *amap,
-                    *encoder(), "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k",
+                    *encoder(), "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "256k", "-ar", "48000",
                     "-movflags", "+faststart", out.name],
                    check=True, cwd=out.parent)
 

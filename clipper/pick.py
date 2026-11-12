@@ -7,7 +7,9 @@ Two ways in:
 Both return the same list of clip dicts, always passed through validate() first.
 """
 import json
+import time
 
+import httpx
 from openai import OpenAI
 
 from .config import (DEEPSEEK_API_KEY, DEEPSEEK_MODEL, LONG_MAX, LONG_MIN, SHORT_HARD_MAX, SHORT_MAX, SHORT_MIN,
@@ -62,17 +64,25 @@ How to judge a clip:
   AND the reaction to it finish. Ending mid-thought or before the punchline is the worst mistake;
   when in doubt, start a sentence earlier and end a sentence later.
 - Start and end on sentence boundaries; never cut someone off mid-word.
+- Loop-friendly ending: end right after the payoff/reaction lands, not after a fade-out of chatter, so the
+  replay starts straight back on the hook (replays count heavily on Shorts/Reels/TikTok).
+- Formats that keep winning: "wait for it" build-ups with a clear payoff, fails and near-misses, clutch plays,
+  chaos escalating, a reaction bigger than the event, a one-liner roast, a story with a twist, "POV" moments.
 
 You only get the transcript (speech) and sometimes audience signals, not the picture. Infer the
 action from what people say and how they react: "WHAT", screaming, laughing, sudden silence,
 "no no no", "we're dead", panicked swearing.
 
-Titles: punchy, curiosity-driven, under 70 chars, in the style of that niche on YouTube
+Titles: punchy, curiosity-driven, under 60 chars, in the style of that niche on YouTube
 (gaming: "This Heist Went SO Wrong"; podcast: "He Didn't Expect This Question"), never lying about
-what happens. Headline: 3-4 words burned onto the top of the video for the whole clip, so a viewer instantly
-gets the topic (e.g. "HITLER'S SKULL TEST", "COPS REMEMBER YOU", "HEIST GONE WRONG"). Not the same as the title.
-Description: 1-2 lines. Hashtags: niche-specific (e.g. #gta5 #gtaonline, #gtarp only
-for roleplay; #podcast; the game or topic name) plus broad ones.
+what happens. Put the searchable keyword (game or topic name, e.g. "GTA 5") in the title naturally: on Shorts
+the title and description work as search signals more than hashtags do. Headline: 3-4 words burned onto the top
+of the video for the whole clip, so a viewer instantly gets the topic (e.g. "HITLER'S SKULL TEST",
+"COPS REMEMBER YOU", "HEIST GONE WRONG"). Not the same as the title.
+Description: 1-2 lines. First line keyword-rich (game/topic + what happens); end with a short question that makes
+people comment (e.g. "Would you have bailed?"). Hashtags: exactly 4-5, specific beats broad: the game or topic
+(#gta5, #gtaonline, #gtarp only for roleplay, #podcast), the moment type (#gtafails, #funnymoments, #clutch),
+one niche/community tag, and at most one broad tag (#gaming). No #shorts/#fyp/#viral (added per platform).
 
 Return JSON only:
 {"clips": [{"candidate": <id>, "kind": "short"|"long", "start": <sec>, "end": <sec>,
@@ -179,6 +189,56 @@ Rules:
 Return JSON only: {"lines": [{"at": <sec>, "text": "..."}]}"""
 
 
+QUERIES_SYSTEM = """You find source videos for a clip channel that cuts viral Shorts out of longer videos.
+Given a topic, write YouTube search queries that surface RECENT, POPULAR, clip-worthy videos about it:
+streams, gameplay, funny moments, reactions, podcasts, interviews, news breakdowns, whatever fits the topic.
+Mix angles (the main term, a reaction/funny-moments angle, a news/update angle, names of the big creators
+or events in that topic if you know them). Short queries, the way people actually type them; no hashtags,
+no quotes, no years unless the topic is about one. Reply as JSON: {"queries": ["...", "..."]} with 4-6 queries."""
+
+
+def search_queries(topic):
+    """DeepSeek: topic -> 4-6 YouTube search queries (just the topic itself if the answer is unusable)."""
+    qs = [str(q).strip()[:100] for q in _ask(f"Topic: {topic}", QUERIES_SYSTEM, "queries") if str(q).strip()]
+    return list(dict.fromkeys(qs))[:6] or [topic]
+
+
+CLIPPABLE_SYSTEM = """You decide which YouTube videos are worth cutting into short vertical clips (15s-3min)
+for a viral clip channel. You only see the title, channel, length, views and maybe a description snippet.
+
+Good sources (moments that stand on their own for a stranger scrolling):
+- streams and gameplay (a corner facecam is fine) full of reactions, chaos, fails, funny moments, clutch plays, RP drama
+- gameplay commentary and reactions where the game/scene fills the screen: hot takes, stories, punchlines
+- compilations and "funny moments" videos, challenge videos, events with big reveals
+
+Bad sources (people need the whole video for any part to make sense, or there is nothing to cut):
+- step-by-step tutorials, guides, walkthroughs where each part depends on the previous one
+- story-driven content: lore explanations, documentaries, a plot told from start to finish
+- trailers, music videos, official teasers, very short or already-edited highlight videos
+- slideshow/news-reading videos with no reactions, static "tier list" or ranking videos that need the full list
+- anything that is mostly menus, ads, or one long calm explanation
+- videos where the PICTURE is mostly a person: talking-head vlogs, "my thoughts on...", sit-down podcasts and
+  interviews, people reacting on camera with little of the thing they react to. The channel wants clips that are
+  mostly gameplay or real scenes; a small streamer facecam in the corner over gameplay is fine.
+
+Score every video 0-10 for how well it would clip (7+ = clearly good, 4 or less = needs the full context).
+Reply as JSON: {"videos": [{"id": "...", "score": 0-10, "reason": "short why"}]} with every id you were given."""
+
+
+def clippable(topic, videos):
+    """DeepSeek judges flat search results -> {id: (score 0-10, reason)}. Unscored ids are left out."""
+    rows = [{"id": v["id"], "title": v.get("title"), "channel": v.get("channel"),
+             "minutes": round((v.get("duration") or 0) / 60), "views": v.get("view_count"),
+             "description": (v.get("description") or "")[:200]} for v in videos]
+    out = {}
+    for r in _ask(f"Topic: {topic}\nVideos:\n{json.dumps(rows, indent=1)}", CLIPPABLE_SYSTEM, "videos"):
+        try:
+            out[str(r["id"])] = (min(max(float(r.get("score", 0)), 0), 10), str(r.get("reason", ""))[:150])
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
+
+
 def voice_script(video_title, clip_title, length, transcript):
     """AI commentary lines for one clip -> [{"at": sec from clip start, "text": str}], sorted, sane."""
     task = (f'Video: "{video_title}". Clip title: "{clip_title}". Clip length: {length:.0f}s.\n'
@@ -193,6 +253,30 @@ def voice_script(video_title, clip_title, length, transcript):
             continue
         out.append({"at": min(max(at, 0.0), max(length - 1, 0.0)), "text": str(ln["text"]).strip()[:120]})
     return sorted(out, key=lambda x: x["at"])[:6]
+
+
+_balance = {"at": 0, "value": None}
+
+
+def balance():
+    """DeepSeek credit left, e.g. {"available": True, "balances": [{"currency": "USD", "total": "10.59", ...}]}.
+    Cached 60s (the UI polls every 2s). Never raises: errors come back as {"error": ...}."""
+    if time.time() - _balance["at"] < 60:
+        return _balance["value"]
+    try:
+        if not DEEPSEEK_API_KEY:
+            raise RuntimeError("DEEPSEEK_API_KEY missing in .env")
+        r = httpx.get("https://api.deepseek.com/user/balance", timeout=10,
+                      headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}"})
+        r.raise_for_status()
+        d = r.json()
+        value = {"available": d.get("is_available", False),
+                 "balances": [{"currency": b["currency"], "total": b["total_balance"], "granted": b["granted_balance"],
+                               "topped_up": b["topped_up_balance"]} for b in d.get("balance_infos", [])]}
+    except Exception as e:
+        value = {"error": str(e)[:200]}
+    _balance.update(at=time.time(), value=value)
+    return value
 
 
 def _ask(task, system=SYSTEM, key="clips"):

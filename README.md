@@ -56,6 +56,65 @@ Open http://127.0.0.1:8000.
 
 **Quota:** the default quota is 10,000 units/day and each upload costs 1,600, so that's about **6 uploads/day**. You can request more quota from Google. Also, uploads from unverified API projects may be locked to private until Google audits your app.
 
+## Facebook / Instagram / TikTok setup (one time)
+
+Each platform is optional. One that isn't set up shows "(not set up)" in the UI, and uploads to it fail with that message.
+Put the keys in `.env`, then restart the server.
+
+**Facebook Page + Instagram** (one Meta app covers both; Instagram must be a Business/Creator account linked to the Page):
+
+1. At [developers.facebook.com](https://developers.facebook.com/), create an app (type **Business**) and add **Facebook Login for Business** and **Instagram Graph API**.
+2. In **Graph API Explorer**, pick the app, then **Get User Access Token** with: `pages_show_list`, `pages_read_engagement`,
+   `pages_manage_posts`, `publish_video`, `instagram_basic`, `instagram_content_publish`, `business_management`.
+3. Make it long-lived: **Access Token Debugger → Extend Access Token**.
+4. With that token, call `GET /me/accounts`. Copy your Page's `id` → `FB_PAGE_ID` and its `access_token` → `FB_PAGE_TOKEN`
+   (a Page token from a long-lived user token doesn't expire).
+5. Call `GET /<FB_PAGE_ID>?fields=instagram_business_account`. Copy that id → `IG_USER_ID`.
+
+Facebook clips up to 90s go up as Reels, and longer ones as normal Page videos. Instagram posts every clip as a Reel.
+While the Meta app is in Development mode, only you (the app admin) can post, which is fine for your own Page.
+
+**TikTok** (Content Posting API):
+
+1. At [developers.tiktok.com](https://developers.tiktok.com/), create an app, add **Login Kit** and **Content Posting API**
+   (enable **Direct Post**), with scopes `video.publish` and `video.upload`.
+2. Copy `TIKTOK_CLIENT_KEY` and `TIKTOK_CLIENT_SECRET`.
+3. Authorize your account once with TikTok's OAuth flow and put the `refresh_token` in `TIKTOK_REFRESH_TOKEN`.
+   It rotates on every refresh, and the current one is kept in `data/tiktok_token.json`.
+4. Until TikTok audits the app, posts can only be **private** (`SELF_ONLY`). Make them public in the TikTok app.
+   After the audit, set `TIKTOK_PRIVACY=PUBLIC_TO_EVERYONE`.
+
+## Upload limits
+
+Platforms cap how many videos you can upload per 24 hours. YouTube allows about **10 per channel** for new or
+unverified channels (that's where `uploadLimitExceeded` comes from). Clipper counts its uploads per platform and shows
+them on the **Socials** page and in the header (e.g. "YouTube 10/10 today"). When a platform's limit is reached, its
+uploads pause, a red banner shows when they resume, and waiting clips upload automatically once a slot frees up
+(checked every 10 minutes). If you know your real limit, set it in `.env`: `UPLOAD_LIMIT_YOUTUBE=15`,
+`UPLOAD_LIMIT_INSTAGRAM=50`, `UPLOAD_LIMIT_TIKTOK=15`, `UPLOAD_LIMIT_FACEBOOK=0` (0 = no limit).
+
+## WhatsApp report (hourly views)
+
+Every `REPORT_MINUTES` (default 60), Clipper checks the views of every uploaded clip on each platform and sends you a
+WhatsApp message with views per platform (and the change since the last report), the best platform, and the top clips.
+It's free and sent through [CallMeBot](https://www.callmebot.com/blog/free-api-whatsapp-messages/), a third-party service that sees the message text.
+
+1. Add **+34 644 66 32 62** to your phone contacts (check CallMeBot's page for their current number).
+2. Send it the WhatsApp message `I allow callmebot to send me messages`. It replies with your API key.
+3. In `.env`, set `WHATSAPP_PHONE=+<country code><number>` and `WHATSAPP_APIKEY=<key>`, then restart the server.
+4. On the **Socials** page, **Send report now** sends one straight away.
+
+YouTube views need read access: click **Reconnect YouTube** once (older logins could only upload).
+TikTok doesn't give view counts for private app posts, so it's listed as unavailable until your TikTok app is audited.
+
+## Topics (auto-find videos)
+
+In the UI, **+ Add topic** takes a topic, how many videos to clip, shorts and long clips per video, and where to upload.
+DeepSeek writes 4-6 search queries, and the most-viewed videos from this week are clipped one after another (widening to this
+month or any time if there aren't enough). Only videos between `TOPIC_MIN_MINUTES` and `TOPIC_MAX_MINUTES` are used,
+live streams are skipped, and a video that was clipped before is never picked again. Topics run in queue order, and
+queued ones survive a server restart.
+
 ## Layout
 
 ```

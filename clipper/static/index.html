@@ -8,9 +8,33 @@
   :root { --bg:#0d0d12; --panel:#17171f; --line:#2a2a36; --text:#ececf1; --dim:#8b8b9a; --hot:#ff2e88; --ok:#3ddc97; --warn:#ffb020; }
   * { box-sizing: border-box; }
   body { margin:0; background:var(--bg); color:var(--text); font:15px/1.45 system-ui, sans-serif; }
-  header { padding:20px 24px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+  header { position:sticky; top:0; z-index:10; background:rgba(13,13,18,.92); backdrop-filter:blur(8px);
+    padding:12px 24px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:20px; flex-wrap:wrap; }
   h1 { margin:0; font-size:22px; letter-spacing:.5px; } h1 span { color:var(--hot); }
+  nav { display:flex; gap:4px; flex-wrap:wrap; }
+  nav a { color:var(--dim); text-decoration:none; padding:8px 14px; border-radius:8px; font-weight:600; font-size:14px; }
+  nav a:hover { color:var(--text); background:var(--panel); }
+  nav a.on { color:var(--text); background:var(--panel); box-shadow:inset 0 -2px 0 var(--hot); }
+  nav .n { font-size:11px; color:var(--dim); margin-left:4px; }
   main { padding:24px; max-width:1300px; margin:auto; display:grid; gap:24px; }
+  .page { display:none; gap:24px; } .page.on { display:grid; }
+  .page-head h2 { margin:0; font-size:26px; } .page-head p { margin:4px 0 0; color:var(--dim); font-size:14px; }
+  .socials { display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:16px; }
+  .social { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:18px; display:grid; gap:10px; align-content:start; }
+  .social h3 { margin:0; display:flex; align-items:center; gap:10px; }
+  .social .stat { font-size:28px; font-weight:800; } .social code { font-size:12px; color:var(--warn); }
+  .banner { background:#3a1414; border:1px solid #7a2a2a; color:#ffd0d0; border-radius:10px; padding:12px 16px; font-size:14px; }
+  .banner b { color:#fff; } .banner:empty { display:none; }
+  .meter { height:8px; background:var(--line); border-radius:99px; overflow:hidden; }
+  .meter > span { display:block; height:100%; background:var(--ok); }
+  .meter.warn > span { background:var(--warn); } .meter.full > span { background:#f44; }
+  .chip { font-size:12px; padding:3px 8px; border-radius:99px; border:1px solid var(--line); color:var(--dim); text-decoration:none; }
+  .chip.warn { color:var(--warn); border-color:#5a4410; } .chip.full { color:#f66; border-color:#5a2a2a; }
+  .ups .wait { color:var(--warn); cursor:help; }
+  #logbox { max-height:70vh; min-height:300px; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:10px;
+    font:12px/1.5 ui-monospace, monospace; color:var(--text); }
+  #logbox .err { color:#f88; } #logbox .sys { color:var(--dim); }
+  .dot { width:10px; height:10px; border-radius:50%; background:#555; display:inline-block; } .dot.ok { background:var(--ok); }
   .panel { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:18px; }
   form { display:flex; gap:12px; flex-wrap:wrap; align-items:end; }
   label { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--dim); }
@@ -20,7 +44,7 @@
   button { background:var(--hot); color:#fff; border:0; border-radius:8px; padding:10px 16px; font:inherit; font-weight:600; cursor:pointer; }
   button.ghost { background:transparent; border:1px solid var(--line); color:var(--text); }
   button.danger { color:#f66; border-color:#5a2a2a; }
-  .yt { margin-left:auto; font-size:13px; color:var(--dim); display:flex; gap:10px; align-items:center; }
+  .yt { margin-left:auto; font-size:13px; color:var(--dim); display:flex; gap:12px; align-items:center; }
   .job { border-top:1px solid var(--line); padding:12px 0; }
   .job:first-child { border-top:0; }
   .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
@@ -46,14 +70,33 @@
   .axis { position:relative; height:16px; font-size:11px; color:var(--dim); }
   .axis span { position:absolute; transform:translateX(-50%); }
   .empty { color:var(--dim); font-size:14px; }
+  fieldset.pf { border:1px solid var(--line); border-radius:8px; padding:6px 10px; display:flex; gap:12px; flex-wrap:wrap; margin:0; }
+  fieldset.pf legend { font-size:12px; color:var(--dim); padding:0 4px; }
+  fieldset.pf .off { color:var(--dim); font-size:11px; }
+  .panel h3 { margin-top:0; } .head { display:flex; align-items:center; gap:12px; }
+  #tf { margin-top:14px; padding-top:14px; border-top:1px solid var(--line); }
+  #tf[hidden] { display:none; }
+  input[name=topic] { width:min(420px, 100%); }
+  .ups { display:flex; gap:8px; flex-wrap:wrap; font-size:12px; } .ups .err { color:#f66; cursor:help; }
 </style>
 </head>
 <body>
 <header>
   <h1>CLIP<span>PER</span></h1>
-  <div class="yt" id="yt"></div>
+  <nav id="nav">
+    <a href="#create">Create</a>
+    <a href="#topics">Topics<span class="n" id="n-topics"></span></a>
+    <a href="#jobs">Jobs<span class="n" id="n-jobs"></span></a>
+    <a href="#clips">Clips<span class="n" id="n-clips"></span></a>
+    <a href="#socials">Socials<span class="n" id="n-socials"></span></a>
+    <a href="#logs">Logs</a>
+  </nav>
+  <div class="yt"><span id="quota"></span><span id="ds"></span><span id="yt"></span></div>
 </header>
 <main>
+ <div class="banner" id="banner"></div>
+ <div class="page" id="page-create">
+  <div class="page-head"><h2>Create clips</h2><p>Paste a YouTube link (video or live stream) or upload a file. The AI picks the best moments and renders vertical clips.</p></div>
   <section class="panel">
     <form id="f">
       <label>YouTube URL (video or live stream)<input type="url" name="url" placeholder="https://www.youtube.com/watch?v=..."></label>
@@ -66,39 +109,141 @@
         <option value="ai">AI reads full transcript only</option>
         <option value="manual">I'll cut it myself</option>
       </select></label>
+      <label>Framing<select name="aspect" class="aspect">
+        <option value="0.5625">Full screen 9:16 (fills the phone)</option>
+        <option value="0.8">4:5 (a bit wider, thin bars)</option>
+        <option value="1">Square 1:1 (more of the scene)</option>
+        <option value="1.7778">Whole frame 16:9 (nothing cut off)</option>
+      </select></label>
       <label class="check"><input type="checkbox" name="subtitles" checked> Headline + subtitles</label>
+      <label class="check" title="Downloads up to 4K instead of 1080p. Sharper, mostly for full-screen 9:16 framing, but about 10x the data, so slower."><input type="checkbox" name="hq"> 4K quality (slower download)</label>
       <label class="check"><input type="checkbox" name="voiceover"> AI voice-over</label>
-      <label class="check"><input type="checkbox" name="auto_upload" checked> Auto-upload (public)</label>
+      <fieldset class="pf" data-default="youtube"><legend>Upload to (none = don't upload)</legend></fieldset>
       <button>Start clipping</button>
     </form>
-    <p class="dim" style="margin:10px 0 0;font-size:12px">Live streams: counts are per recorded chunk (default 10 min).</p>
+    <p class="dim" style="margin:10px 0 0;font-size:12px">Live streams: counts are per recorded chunk (default 10 min). Progress shows under <a href="#jobs">Jobs</a>.</p>
   </section>
+ </div>
 
-  <section class="panel"><h3 style="margin-top:0">Jobs</h3><div id="jobs"></div></section>
-  <section class="panel"><h3 style="margin-top:0">Clips</h3><div class="clips" id="clips"></div></section>
+ <div class="page" id="page-topics">
+  <div class="page-head"><h2>Topic queue</h2><p>Give a topic: DeepSeek writes search queries, the most-viewed recent US videos that are mostly
+    gameplay/scenes (not a person talking) and clip well are found, then clipped one after another. Topics run in queue order.</p></div>
+  <section class="panel">
+    <div class="head"><h3 style="margin:0">Queue</h3>
+      <button class="ghost" id="addTopic" onclick="$('#tf').hidden = !$('#tf').hidden">+ Add topic</button></div>
+    <form id="tf" hidden>
+      <label>Topic<input name="topic" placeholder="e.g. GTA 6 trailer reactions" required></label>
+      <label>How many videos<input type="number" name="videos" value="3" min="1" max="20"></label>
+      <label>Shorts per video<input type="number" name="shorts" value="3" min="0" max="20"></label>
+      <label>Long per video<input type="number" name="longs" value="1" min="0" max="10"></label>
+      <label>Who picks the moments<select name="mode">
+        <option value="hype">AI picks from hype curves (fast)</option>
+        <option value="ai+hype">AI reads full transcript, curves as hints</option>
+        <option value="ai">AI reads full transcript only</option>
+      </select></label>
+      <label>Framing<select name="aspect" class="aspect">
+        <option value="0.5625">Full screen 9:16 (fills the phone)</option>
+        <option value="0.8">4:5 (a bit wider, thin bars)</option>
+        <option value="1">Square 1:1 (more of the scene)</option>
+        <option value="1.7778">Whole frame 16:9 (nothing cut off)</option>
+      </select></label>
+      <label class="check"><input type="checkbox" name="subtitles" checked> Headline + subtitles</label>
+      <label class="check" title="Downloads up to 4K instead of 1080p. Sharper, mostly for full-screen 9:16 framing, but about 10x the data, so slower."><input type="checkbox" name="hq"> 4K quality (slower download)</label>
+      <label class="check"><input type="checkbox" name="voiceover"> AI voice-over</label>
+      <label class="check" title="Checks ~30 preview frames per video. Skips videos where a face fills the screen for over 40% of the video (talking heads, close-up podcasts) or the picture is a still image. Small facecams, creators in a box and groups of people are fine."><input type="checkbox" name="face_check" checked> Skip videos that are mostly a person (face check)</label>
+      <fieldset class="pf" data-default=""><legend>Upload to (none = don't upload)</legend></fieldset>
+      <button>Add to queue</button>
+    </form>
+    <div id="topics" style="margin-top:12px"></div>
+  </section>
+ </div>
+
+ <div class="page" id="page-jobs">
+  <div class="page-head"><h2>Jobs</h2><p>Every video being clipped: logs, hype curves, and manual cuts.</p></div>
+  <section class="panel"><div id="jobs"></div></section>
+ </div>
+
+ <div class="page" id="page-clips">
+  <div class="page-head"><h2>Clips</h2><p>Rendered clips, newest first. Upload or retry from each card.</p></div>
+  <section class="panel"><div class="clips" id="clips"></div></section>
+ </div>
+
+ <div class="page" id="page-logs">
+  <div class="page-head"><h2>Logs</h2><p>Everything the app does: every job, topic, upload and error (with tracebacks).
+    Saved in <code id="logfile"></code>.</p></div>
+  <section class="panel">
+    <div class="row" style="margin-bottom:10px"><input id="logfilter" placeholder="filter, e.g. job 6, ERROR, upload, topic 2" style="flex:1">
+      <label>Lines<select id="loglines"><option>400</option><option>1000</option><option>3000</option></select></label></div>
+    <pre id="logbox" class="log" data-log="all"></pre>
+  </section>
+ </div>
+
+ <div class="page" id="page-socials">
+  <div class="page-head"><h2>Socials</h2><p>Where clips get uploaded. Pick platforms per job or topic when you create it.</p></div>
+  <div class="socials" id="socials"></div>
+ </div>
 </main>
 <script>
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const openLogs = new Set();
 const post = (u, body) => fetch(u, {method:"POST", headers:{"Content-Type":"application/json"}, body: body && JSON.stringify(body)});
+// Pages: #create #topics #jobs #clips #socials (the hash keeps the page on reload).
+function route() {
+  const page = (location.hash || "#create").slice(1);
+  document.querySelectorAll(".page").forEach(el => el.classList.toggle("on", el.id === "page-" + page));
+  document.querySelectorAll("#nav a").forEach(a => a.classList.toggle("on", a.getAttribute("href") === "#" + page));
+  if (!$("#page-" + page)) location.hash = "#create";
+}
+window.addEventListener("hashchange", route);
+route();
+const SETUP = {
+  youtube: "client_secret.json in the project folder, then Connect below (README: YouTube upload setup).",
+  facebook: "<code>FB_PAGE_ID</code> and <code>FB_PAGE_TOKEN</code> in .env (README).",
+  instagram: "<code>IG_USER_ID</code> in .env, uses the Facebook Page token (README).",
+  tiktok: "<code>TIKTOK_CLIENT_KEY</code>, <code>TIKTOK_CLIENT_SECRET</code>, <code>TIKTOK_REFRESH_TOKEN</code> in .env (README). Private posts until TikTok audits the app.",
+};
+const PLATFORMS = {youtube: "YouTube", facebook: "Facebook", instagram: "Instagram", tiktok: "TikTok"};
+// Platform checkboxes in both forms; data-default = which start ticked.
+document.querySelectorAll("fieldset.pf").forEach(fs => fs.insertAdjacentHTML("beforeend", Object.entries(PLATFORMS).map(([k, n]) =>
+  `<label class="check"><input type="checkbox" name="pf" value="${k}" ${fs.dataset.default.split(",").includes(k) ? "checked" : ""}> ${n}
+   <span class="off" data-p="${k}"></span></label>`).join("")));
+const picked = form => [...form.querySelectorAll("input[name=pf]:checked")].map(i => i.value);
 
 $("#f").onsubmit = async e => {
   e.preventDefault();
   const f = new FormData(e.target), file = f.get("file");
-  const opts = {shorts: +f.get("shorts"), longs: +f.get("longs"), auto_upload: f.has("auto_upload"), mode: f.get("mode"), subtitles: f.has("subtitles"), voiceover: f.has("voiceover")};
+  const opts = {shorts: +f.get("shorts"), longs: +f.get("longs"), aspect: +f.get("aspect"), hq: f.has("hq"), mode: f.get("mode"), subtitles: f.has("subtitles"), voiceover: f.has("voiceover")};
   const btn = e.target.querySelector("button");
   let r;
   if (file && file.size) {
     btn.disabled = true; btn.textContent = "Uploading file…";
-    r = await fetch("/api/jobs/file?" + new URLSearchParams({...opts, filename: file.name}), {method: "POST", body: file});
+    r = await fetch("/api/jobs/file?" + new URLSearchParams({...opts, platforms: picked(e.target).join(","), filename: file.name}), {method: "POST", body: file});
     btn.disabled = false; btn.textContent = "Start clipping";
   } else if (f.get("url")) {
-    r = await post("/api/jobs", {url: f.get("url"), ...opts});
+    r = await post("/api/jobs", {url: f.get("url"), ...opts, platforms: picked(e.target)});
   } else return alertBox("Paste a URL or choose a file.");
   if (!r.ok) return alertBox(await r.text());
-  e.target.url.value = ""; e.target.file.value = ""; refresh();
+  e.target.url.value = ""; e.target.file.value = ""; location.hash = "#jobs"; refresh();
 };
+$("#tf").onsubmit = async e => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  const r = await post("/api/topics", {topic: f.get("topic"), aspect: +f.get("aspect"), hq: f.has("hq"), videos: +f.get("videos"), shorts: +f.get("shorts"), longs: +f.get("longs"),
+    mode: f.get("mode"), subtitles: f.has("subtitles"), voiceover: f.has("voiceover"), face_check: f.has("face_check"), platforms: picked(e.target)});
+  if (!r.ok) return alertBox(await r.text());
+  e.target.topic.value = ""; refresh();
+};
+let lastReport = "";  // the last WhatsApp report sent from this page, shown on the Socials page
+async function refreshViews(btn) { btn.disabled = true; btn.textContent = "Refreshing…"; await post("/api/views/refresh"); clipKey = ""; refresh(); }
+async function sendReport(btn) {
+  btn.disabled = true; btn.textContent = "Sending…";
+  const r = await post("/api/report"), j = await r.json();
+  if (!r.ok) return alertBox(j.detail), refresh();
+  lastReport = j.text; refresh();
+}
+async function stopTopic(id) { await post(`/api/topics/${id}/stop`); refresh(); }
+async function removeTopic(id) { const r = await fetch(`/api/topics/${id}`, {method: "DELETE"}); if (!r.ok) alertBox((await r.json()).detail); refresh(); }
 const alertBox = msg => { $("#jobs").insertAdjacentHTML("afterbegin", `<p style="color:#f66">${esc(msg)}</p>`); };
 
 async function connectYT(btn) {
@@ -107,7 +252,7 @@ async function connectYT(btn) {
   if (!r.ok) alertBox((await r.json()).detail);
   refresh();
 }
-async function uploadClip(id, btn) { btn.disabled = true; btn.textContent = "Uploading…"; await post(`/api/clips/${id}/upload`); refresh(); }
+async function uploadClip(id, btn) { btn.disabled = true; btn.textContent = "Uploading…"; await post(`/api/clips/${id}/upload`); clipKey = ""; refresh(); }
 async function deleteClip(id) {
   if (!confirm("Delete this clip file? (A YouTube copy, if any, stays up.)")) return;
   const r = await fetch(`/api/clips/${id}`, {method: "DELETE"});
@@ -183,11 +328,112 @@ async function submitCuts(id, btn) {
 
 async function stopJob(id) { await post(`/api/jobs/${id}/stop`); refresh(); }
 
+// Logs follow the newest line. If you scrolled up to read, the 2s refresh keeps your place instead;
+// scroll back to the bottom and it follows again.
+const saveLogs = () => Object.fromEntries([...document.querySelectorAll("pre.log")].map(p =>
+  [p.dataset.log, {top: p.scrollTop, bottom: p.scrollHeight - p.scrollTop - p.clientHeight < 24}]));
+function restoreLogs(saved) {
+  document.querySelectorAll("pre.log").forEach(p => {
+    const was = saved[p.dataset.log];
+    p.scrollTop = !was || was.bottom ? p.scrollHeight : was.top;
+  });
+}
+const toBottom = details => { const p = details.querySelector("pre.log"); if (p) p.scrollTop = p.scrollHeight; };
+
+const ASPECTS = {0.5625: "9:16", 0.8: "4:5", 1: "1:1", 1.7778: "16:9"};
+const aspectName = a => a ? (ASPECTS[a] || `${(+a).toFixed(2)}:1`) : "";
+let aspectSet = false;
+function defaultAspect(a) {  // pick the option closest to .env CROP_ASPECT, once
+  if (aspectSet) return; aspectSet = true;
+  document.querySelectorAll("select.aspect").forEach(sel => sel.value = [...sel.options]
+    .reduce((b, o) => Math.abs(o.value - a) < Math.abs(b.value - a) ? o : b).value);
+}
+
+// ---- Logs page: tail of data/logs/clipper.log, refreshed with everything else while the page is open ----
+async function loadLogs() {
+  if (location.hash !== "#logs") return;
+  const j = await (await fetch(`/api/logs?lines=${$("#loglines").value}`)).json();
+  $("#logfile").textContent = j.file;
+  const f = $("#logfilter").value.trim().toLowerCase(), box = $("#logbox");
+  const saved = saveLogs();
+  box.innerHTML = j.text.split("\n").filter(l => !f || l.toLowerCase().includes(f)).map(l =>
+    `<span class="${/ ERROR |Traceback|^\s+File |Error:/.test(l) ? "err" : l.includes("[system]") ? "sys" : ""}">${esc(l)}</span>`).join("\n");
+  restoreLogs(saved);
+}
+$("#logfilter").oninput = () => { $("#logbox").scrollTop = 1e9; loadLogs(); };
+$("#loglines").onchange = loadLogs;
+window.addEventListener("hashchange", loadLogs);
+
 let clipKey = "";
 async function refresh() {
   const s = await (await fetch("/api/state")).json();
-  $("#yt").innerHTML = s.youtube_connected ? `<span style="color:var(--ok)">● YouTube connected</span>`
-    : `<span>YouTube not connected</span><button class="ghost" onclick="connectYT(this)">Connect YouTube</button>`;
+  const ds = s.deepseek || {}, b = (ds.balances || [])[0];
+  $("#ds").innerHTML = ds.error ? `<span style="color:#f66" title="${esc(ds.error)}">DeepSeek balance: error</span>`
+    : b ? `<span style="color:${!ds.available || +b.total < 1 ? "#f66" : +b.total < 3 ? "var(--warn)" : "var(--ok)"}"
+        title="topped up ${esc(b.topped_up)} + granted ${esc(b.granted)} ${esc(b.currency)}">DeepSeek left: ${b.currency === "USD" ? "$" : ""}${esc(b.total)} ${b.currency === "USD" ? "" : esc(b.currency)}${ds.available ? "" : " (empty)"}</span>` : "";
+  const lim = s.limits || {}, hhmm = t => new Date(t * 1000).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"});
+  const blockedNow = Object.entries(lim).filter(([, l]) => l.blocked);
+  $("#banner").innerHTML = blockedNow.map(([p, l]) => `⚠ <b>${PLATFORMS[p]} uploads paused</b>: ${esc(l.blocked.reason)}.
+    New clips wait and upload automatically after <b>${hhmm(l.blocked.until)}</b>.`).join("<br>");
+  const yt = lim.youtube;
+  $("#quota").innerHTML = yt && yt.limit && s.platforms.youtube ? `<a href="#socials" class="chip ${yt.blocked || yt.used >= yt.limit ? "full"
+    : yt.used >= yt.limit * 0.8 ? "warn" : ""}" title="YouTube uploads in the last 24 hours (daily limit ${yt.limit})">YouTube ${yt.used}/${yt.limit} today</a>` : "";
+  const meter = p => { const l = lim[p] || {}; if (!l.limit) return `<div class="dim" style="font-size:13px">${l.used || 0} uploads in the last 24h (no known daily limit)</div>`;
+    const pct = Math.min(100, l.used / l.limit * 100), cls = l.blocked || l.used >= l.limit ? "full" : pct >= 80 ? "warn" : "";
+    return `<div style="font-size:13px"><b>${l.used} / ${l.limit}</b> <span class="dim">uploads in the last 24h</span></div>
+      <div class="meter ${cls}"><span style="width:${pct}%"></span></div>
+      ${l.blocked ? `<div style="color:#f66;font-size:13px">Paused until ${hhmm(l.blocked.until)}: ${esc(l.blocked.reason)}. Waiting clips upload automatically.</div>`
+        : pct >= 80 ? `<div style="color:var(--warn);font-size:13px">Close to the daily limit.</div>` : ""}`; };
+  const nOn = Object.values(s.platforms).filter(Boolean).length;
+  $("#yt").innerHTML = `<a href="#socials" style="color:var(--dim);text-decoration:none">${Object.keys(PLATFORMS).map(k =>
+    `<span class="dot ${s.platforms[k] ? "ok" : ""}" title="${PLATFORMS[k]}"></span>`).join(" ")}</a>`;
+  const running = s.jobs.filter(j => !["done","failed","stopped","interrupted"].includes(j.status)).length;
+  const queued = s.topics.filter(t => !["done","failed","stopped","interrupted"].includes(t.status)).length;
+  $("#n-topics").textContent = queued ? queued : ""; $("#n-jobs").textContent = running ? running : "";
+  $("#n-clips").textContent = s.clips.length || ""; $("#n-socials").textContent = `${nOn}/4`;
+  const ups = Object.fromEntries(Object.keys(PLATFORMS).map(k => [k, 0])), views = {...ups};
+  s.clips.forEach(c => Object.entries(JSON.parse(c.uploads || "{}")).forEach(([p, u]) => u.id && (ups[p] = (ups[p] || 0) + 1)));
+  s.clips.forEach(c => Object.entries(JSON.parse(c.views || "{}")).forEach(([p, n]) => views[p] = (views[p] || 0) + n));
+  const best = Object.entries(views).sort((a, b) => b[1] - a[1])[0];
+  if (!$("#socials").contains(document.activeElement)) $("#socials").innerHTML = Object.entries(PLATFORMS).map(([k, n]) => `
+    <div class="social"><h3><span class="dot ${s.platforms[k] ? "ok" : ""}"></span>${n}</h3>
+      <div class="${s.platforms[k] ? "" : "dim"}">${s.platforms[k] ? "Connected" : "Not set up"}</div>
+      <div><span class="stat">${ups[k]}</span> <span class="dim">clips uploaded</span>
+        · <span class="stat">${views[k].toLocaleString()}</span> <span class="dim">views</span>
+        ${best && best[1] && best[0] === k ? `<span class="badge done">best</span>` : ""}</div>
+      ${s.view_errors[k] ? `<div style="color:var(--warn);font-size:12px">${esc(s.view_errors[k])}</div>` : ""}
+      ${meter(k)}
+      ${s.platforms[k] ? "" : `<div class="dim" style="font-size:13px">${SETUP[k]}</div>`}
+      ${k === "youtube" ? `<button class="ghost" onclick="connectYT(this)">${s.platforms[k] ? "Reconnect" : "Connect"} YouTube</button>` : ""}
+    </div>`).join("") + `
+    <div class="social"><h3><span class="dot ${s.whatsapp ? "ok" : ""}"></span>WhatsApp report</h3>
+      <div class="${s.whatsapp ? "" : "dim"}">${s.whatsapp ? `Every ${s.report_minutes} min: views per platform, best platform, top clips`
+        : "Not set up"}</div>
+      ${s.whatsapp ? "" : `<div class="dim" style="font-size:13px"><code>WHATSAPP_PHONE</code> and <code>WHATSAPP_APIKEY</code> in .env (README: WhatsApp report, free via CallMeBot).</div>`}
+      <div class="row"><button class="ghost" onclick="refreshViews(this)">Refresh views</button>
+        ${s.whatsapp ? `<button class="ghost" onclick="sendReport(this)">Send report now</button>` : ""}</div>
+      ${lastReport ? `<pre>${esc(lastReport)}</pre>` : ""}
+    </div>`;
+  document.querySelectorAll(".off[data-p]").forEach(el => el.textContent = s.platforms[el.dataset.p] ? "" : "(not set up)");
+
+  defaultAspect(s.crop_aspect);
+  loadLogs();
+  const logScroll = saveLogs();
+  $("#topics").innerHTML = s.topics.length ? s.topics.map(t => {
+    const running = !["done","failed","stopped","interrupted","queued"].includes(t.status);
+    const cls = t.status === "done" ? "done" : t.status === "failed" ? "failed" : "";
+    const plats = JSON.parse(t.platforms || "[]").map(p => PLATFORMS[p]).join(", ") || "no upload";
+    const jobs = s.jobs.filter(j => j.topic_id === t.id).map(j => `#${j.id}`).reverse().join(" ");
+    return `<div class="job"><div class="row">
+      <b>T${t.id}</b> <span>${esc(t.topic)}</span> <span class="badge ${cls}">${esc(t.status)}</span>
+      <span class="dim">${t.videos} videos × (${t.shorts} shorts + ${t.longs} long) · ${esc(t.mode)} · ${esc(plats)}${t.voiceover ? " · voice-over" : ""}${t.face_check ? " · face check" : " · no face check"}${t.aspect ? " · " + aspectName(t.aspect) : ""}${t.hq ? " · 4K" : ""}</span>
+      ${jobs ? `<span class="dim">jobs ${jobs}</span>` : ""}
+      ${running || t.status === "queued" ? `<button class="ghost" onclick="stopTopic(${t.id})">${running ? "Stop" : "Cancel"}</button>`
+        : `<button class="ghost danger" onclick="removeTopic(${t.id})">Remove</button>`}
+    </div>
+    <details ${openLogs.has("t" + t.id) ? "open" : ""} ontoggle="this.open ? (openLogs.add('t${t.id}'), toBottom(this)) : openLogs.delete('t${t.id}')">
+      <summary>queries + log</summary><pre class="log" data-log="t${t.id}">${esc(JSON.parse(t.queries || "[]").join("\n"))}\n\n${esc(t.log)}</pre></details></div>`;
+  }).join("") : `<p class="empty">No topics queued.</p>`;
 
   // Don't wipe the jobs list while you're typing cuts into it or hovering a graph.
   const typing = $("#jobs").contains(document.activeElement) && document.activeElement.matches("textarea");
@@ -198,11 +444,12 @@ async function refresh() {
       <b>#${j.id}</b> ${j.is_live ? '<span class="badge live">LIVE</span>' : ""}
       <span>${esc(j.title || j.url)}</span>
       <span class="badge ${cls}">${esc(j.status)}</span>
-      <span class="dim">${j.mode === "manual" ? "manual cuts" : `${j.shorts} shorts · ${j.longs} long · ${esc(j.mode || "hype")}`}${j.voiceover ? " · voice-over" : ""}</span>
+      <span class="dim">${j.mode === "manual" ? "manual cuts" : `${j.shorts} shorts · ${j.longs} long · ${esc(j.mode || "hype")}`}${j.voiceover ? " · voice-over" : ""}${j.aspect ? " · " + aspectName(j.aspect) : ""}${j.hq ? " · 4K" : ""}
+        · ${esc(j.auto_upload ? JSON.parse(j.platforms || '["youtube"]').map(p => PLATFORMS[p]).join(", ") : "no auto-upload")}${j.topic_id ? ` · topic T${j.topic_id}` : ""}</span>
       ${running ? `<button class="ghost" onclick="stopJob(${j.id})">Stop</button>` : ""}
     </div>
-    <details ${openLogs.has(j.id) ? "open" : ""} ontoggle="this.open ? openLogs.add(${j.id}) : openLogs.delete(${j.id})">
-      <summary>log</summary><pre>${esc(j.log)}</pre></details>
+    <details ${openLogs.has(j.id) ? "open" : ""} ontoggle="this.open ? (openLogs.add(${j.id}), toBottom(this)) : openLogs.delete(${j.id})">
+      <summary>log</summary><pre class="log" data-log="j${j.id}">${esc(j.log)}</pre></details>
     <details class="curves" ${openCurves.has(j.id) ? "open" : ""} ontoggle="toggleCurves(${j.id}, this.open)">
       <summary>loudness / hype curves</summary><div id="curves-${j.id}">${curvesHtml(j.id)}</div></details>
     ${!j.is_live && !running ? `<details ${j.mode === "manual" ? "open" : ""}><summary>cut it yourself</summary>
@@ -214,15 +461,19 @@ async function refresh() {
       <span class="dim" style="font-size:12px">Uses the auto-upload setting from when the job was created; otherwise upload from the clip card.</span></details>` : ""}</div>`;
   }).join("") : `<p class="empty">No jobs yet. Paste a link above.</p>`;
 
+  restoreLogs(logScroll);
   openCurves.forEach(loadCurves);
 
   // Only re-render clips when something changed, so playing videos don't restart.
-  const key = JSON.stringify(s.clips.map(c => [c.id, c.status, c.path]));
+  const key = JSON.stringify(s.clips.map(c => [c.id, c.status, c.path, c.uploads, c.views]));
   if (key === clipKey) return;
   clipKey = key;
   $("#clips").innerHTML = s.clips.length ? s.clips.map(c => {
     const tags = JSON.parse(c.tags || "[]").map(t => "#" + t).join(" ");
     const canUpload = c.path && !["uploaded","uploading"].includes(c.status);
+    const ups = Object.entries(JSON.parse(c.uploads || "{}")).map(([p, u]) => u.id
+      ? `<a href="${esc(u.url)}" target="_blank">▶ ${PLATFORMS[p] || p}${p in JSON.parse(c.views || "{}") ? ` · ${JSON.parse(c.views)[p].toLocaleString()} views` : ""}</a>` : u.waiting ? `<span class="wait" title="${esc(u.waiting)}; uploads automatically after ${new Date(u.until * 1000).toLocaleTimeString()}">⏳ ${PLATFORMS[p] || p}</span>`
+      : `<span class="err" title="${esc(u.error)}">✕ ${PLATFORMS[p] || p}</span>`).join("");
     return `<div class="clip ${c.kind}">
       ${c.path ? `<video src="/media/${esc(c.path)}" controls preload="metadata"></video>` : `<div style="aspect-ratio:9/16;display:grid;place-items:center" class="dim">${esc(c.status)}…</div>`}
       <div class="body">
@@ -233,8 +484,8 @@ async function refresh() {
         <div class="dim">${esc(c.reason)}</div>
         <div class="dim">${esc(tags)}</div>
         <div class="row">
-          ${c.youtube_id ? `<a href="https://youtu.be/${esc(c.youtube_id)}" target="_blank">▶ on YouTube</a>` : `<span class="dim">${esc(c.status)}</span>`}
-          ${canUpload ? `<button class="ghost" onclick="uploadClip(${c.id}, this)">Upload to YouTube</button>` : ""}
+          ${ups ? `<span class="ups">${ups}</span>` : c.youtube_id ? `<a href="https://youtu.be/${esc(c.youtube_id)}" target="_blank">▶ on YouTube</a>` : `<span class="dim">${esc(c.status)}</span>`}
+          ${canUpload ? `<button class="ghost" onclick="uploadClip(${c.id}, this)" title="to the job's platforms; only retries the ones not done yet">${ups ? "Retry upload" : "Upload"}</button>` : ""}
           ${c.path ? `<a href="/media/${esc(c.path)}" target="_blank">Open</a>` : ""}
           ${!["rendering","uploading"].includes(c.status) ? `<button class="ghost danger" onclick="deleteClip(${c.id})">Delete</button>` : ""}
         </div>

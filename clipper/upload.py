@@ -7,7 +7,8 @@ from googleapiclient.http import MediaFileUpload
 
 from .config import YT_CLIENT_SECRETS, YT_TOKEN
 
-SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+# upload = post videos; readonly = read view counts for the WhatsApp report (older tokens lack it: reconnect).
+SCOPES = ["https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube.readonly"]
 
 
 def connected():
@@ -23,7 +24,7 @@ def connect():
 
 
 def _creds():
-    creds = Credentials.from_authorized_user_file(str(YT_TOKEN), SCOPES)
+    creds = Credentials.from_authorized_user_file(str(YT_TOKEN))  # the scopes actually granted (saved in the token)
     if not creds.valid:
         creds.refresh(Request())
         YT_TOKEN.write_text(creds.to_json())
@@ -46,3 +47,15 @@ def upload(path, title, description, tags, short, privacy="public"):
     while resp is None:
         _, resp = req.next_chunk()
     return resp["id"]
+
+
+def views(ids):
+    """{video_id: view count} for our uploads (50 per API call). Needs the readonly scope."""
+    creds = _creds()
+    if "https://www.googleapis.com/auth/youtube.readonly" not in (creds.scopes or []):
+        raise RuntimeError("YouTube login can't read views yet: click Reconnect YouTube on the Socials page")
+    yt, out = build("youtube", "v3", credentials=creds, cache_discovery=False), {}
+    for i in range(0, len(ids), 50):
+        for v in yt.videos().list(part="statistics", id=",".join(ids[i:i + 50])).execute().get("items", []):
+            out[v["id"]] = int(v["statistics"].get("viewCount", 0))
+    return out

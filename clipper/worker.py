@@ -1,11 +1,12 @@
 """Background pipeline: download/record -> signals -> transcribe -> DeepSeek pick -> render -> upload."""
 import json
+from pathlib import Path
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from . import db, download, pick, render, signals, transcribe, upload
-from .config import DATA, LIVE_CHUNK_SECONDS, SHORT_HARD_MAX
+from . import db, download, pick, render, signals, social, transcribe
+from .config import DATA, LIVE_CHUNK_SECONDS
 
 STOPS = {}  # job_id -> threading.Event
 RENDER_JOBS = 2  # clips rendered at once (GPU encoder + CPU side by side)
@@ -15,6 +16,12 @@ WINDOW = {"short": (60, 40), "long": (120, 40)}  # (candidate length, transcript
 def start(job_id):
     STOPS[job_id] = threading.Event()
     threading.Thread(target=_run, args=(job_id,), daemon=True).start()
+
+
+def run(job_id):
+    """Same as start() but blocks until the job is finished (the topic queue clips one video at a time)."""
+    STOPS[job_id] = threading.Event()
+    _run(job_id)
 
 
 def stop(job_id):
@@ -27,21 +34,32 @@ def _run(job_id):
     job = db.get("jobs", job_id)
     d = DATA / "jobs" / str(job_id)
     (d / "clips").mkdir(parents=True, exist_ok=True)
+    t0 = time.time()
+    db.log(job_id, f"job started: {job['url']} | {job['shorts']} shorts, {job['longs']} long, mode {job.get('mode')}, "
+                   f"framing {job.get('aspect') or 'default'}, {'4K' if job.get('hq') else '1080p'}, "
+                   f"subtitles {'on' if job.get('subtitles') else 'off'}, voice-over {'on' if job.get('voiceover') else 'off'}, "
+                   f"upload to {job.get('platforms') if job.get('auto_upload') else 'nowhere'}"
+                   + (f", topic T{job['topic_id']}" if job.get("topic_id") else ""))
     try:
         if job["url"].startswith("file:"):  # uploaded from the UI: already at data/jobs/<id>/source.*
             src = next(d.glob("source.*"))
             db.log(job_id, f"local file: {job['title']}")
             _process(job, src, job["title"] or src.name, d)
             db.update("jobs", job_id, status="done")
+            db.log(job_id, f"job finished in {(time.time() - t0) / 60:.1f} min")
             return
         db.update("jobs", job_id, status="fetching info")
-        i = download.info(job["url"])
+        with db.step(job_id, "fetching video info"):
+            i = download.info(job["url"])
         db.update("jobs", job_id, title=i.get("title"), is_live=int(bool(i.get("is_live"))))
-        db.log(job_id, f"{'LIVE' if i.get('is_live') else 'video'}: {i.get('title')}")
+        db.log(job_id, f"{'LIVE' if i.get('is_live') else 'video'}: {i.get('title')} | channel {i.get('channel')}, "
+                       f"{(i.get('duration') or 0) / 60:.1f} min, {i.get('view_count') or 0:,} views")
         (_live if i.get("is_live") else _vod)(job, i, d)
-        db.update("jobs", job_id, status="stopped" if STOPS[job_id].is_set() else "done")
+        status = "stopped" if STOPS[job_id].is_set() else "done"
+        db.update("jobs", job_id, status=status)
+        db.log(job_id, f"job {status} in {(time.time() - t0) / 60:.1f} min")
     except Exception as e:
-        db.log(job_id, f"ERROR: {e!r}")
+        db.log(job_id, f"ERROR: {e!r}", exc=True)
         db.update("jobs", job_id, status="failed")
 
 
@@ -52,11 +70,15 @@ def _vod(job, i, d):
     with ThreadPoolExecutor(2) as ex:
         meta = ex.submit(download.info, url, True)
         chat = ex.submit(download.chat_replay_times, url)
-        download.download_vod(url, d / "source.%(ext)s")
-        comments = download.comment_times(meta.result().get("comments"))
-        chat = chat.result()
+        h = download.height_for(job.get("hq"))
+        with db.step(jid, f"downloading video (up to {h}p, {download.FRAGMENTS} chunks at once)"):
+            download.download_vod(url, d / "source.%(ext)s", h)
+        with db.step(jid, "waiting for comments + chat replay"):
+            comments = download.comment_times(meta.result().get("comments"))
+            chat = chat.result()
     db.log(jid, f"heatmap: {'yes' if i.get('heatmap') else 'no'}, chat msgs: {len(chat)}, timestamped comments: {len(comments)}")
     src = next(d.glob("source.*"))
+    db.log(jid, f"source file: {src.name}, {src.stat().st_size / 1e6:.0f} MB, {_describe(src)}")
     _process(job, src, i.get("title", ""), d, heatmap=i.get("heatmap"), chat=chat, comments=comments)
 
 
@@ -96,12 +118,14 @@ def _live(job, i, d):
         # (no re-encode). Returns False if the stream is already over. If Stop is pressed mid-chunk, ffmpeg is
         # told to quit gracefully and the partial chunk is kept and still processed below.
         # Small gaps (a few seconds) between chunks are lost while the next recording starts.
-        if not download.record_live_chunk(job["url"], out, LIVE_CHUNK_SECONDS, stop):
+        if not download.record_live_chunk(job["url"], out, LIVE_CHUNK_SECONDS, stop,
+                                           download.height_for(job.get("hq"))):
             db.log(jid, "stream ended")
             break
         if not out.exists() or out.stat().st_size == 0:  # ffmpeg produced nothing: stream died mid-chunk
             break
-        db.log(jid, f"chunk {k} recorded, processing in background")
+        db.log(jid, f"chunk {k} recorded in {time.time() - t0:.0f}s ({out.stat().st_size / 1e6:.0f} MB), "
+                    f"chat msgs so far: {len(chat.times)}, processing in background")
 
         # ponytail: chunks are processed independently, so a moment straddling a boundary gets split.
         # Upgrade: overlap chunks by ~60s.
@@ -144,8 +168,8 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None):
         # broadcast unit for how loud audio *feels* to a person (not raw volume). We keep one value
         # per second, roughly -35 = calm talking, -10 = screaming/explosion, floored at -70 (silence).
         # len(audio) doubles as the video length in seconds.
-        db.log(jid, f"analyzing audio of {src.name}")
-        audio = signals.loudness(src)
+        with db.step(jid, f"STEP 1 analysing loudness of {src.name}"):
+            audio = signals.loudness(src)
         n = len(audio)
 
         # STEP 2: Hype curve. Each signal becomes a per-second array, gets normalised to 0..1
@@ -157,7 +181,7 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None):
         #   audio    x1    loudness from step 1
         # curve[t] = how "hype" second t is. parts = each normalised signal, kept for the UI graph and the AI.
         curve, parts = signals.hype_curve(n, audio, heatmap, chat, comments)
-        db.log(jid, f"{n}s analysed, signals used: {', '.join(parts) or 'none'}, mode: {mode}")
+        db.log(jid, f"STEP 2 hype curve: {n}s analysed, signals used: {', '.join(parts) or 'none'}, mode: {mode}")
         _save_curves(d, src, curve, parts)  # UI can show the graph while we keep working
         if mode == "manual":
             db.log(jid, "manual mode: add your cuts in the UI")
@@ -185,43 +209,55 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None):
         if not cands:
             db.log(jid, "video too short for requested clips")
             return
+        db.log(jid, f"STEP 3 candidate windows: {len(cands)} ("
+                    + ", ".join(f"{c['kind']} {_mmss(c['start'])}-{_mmss(c['end'])} hype {c['signal']}" for c in cands[:12])
+                    + (" ..." if len(cands) > 12 else "") + ")")
 
         # STEP 4: Transcribe with Whisper (word-level timestamps, GPU if available, else CPU).
         # "hype": only the candidate windows (overlaps merged so nothing is transcribed twice), fast.
         # "ai" modes: the whole video, so DeepSeek can find moments the curves missed. Slow on long videos.
         spans = [[0, n]] if mode != "hype" else transcribe.merge([(c["start"], c["end"]) for c in cands])
-        db.log(jid, f"transcribing {sum(e - s for s, e in spans):.0f}s")
         words = []
-        for s, e in spans:
-            words += transcribe.words(src, s, e)
+        with db.step(jid, f"STEP 4 transcribing {sum(e - s for s, e in spans):.0f}s in {len(spans)} part(s) "
+                          f"({transcribe.device()})"):
+            for s, e in spans:
+                words += transcribe.words(src, s, e)
+        db.log(jid, f"transcript: {len(words)} words")
         for c in cands:  # "[12.0] hello there [17.1] ..." text per window, absolute seconds
             c["transcript"] = transcribe.text_with_times(words, c["start"], c["end"])
 
         # STEP 5: DeepSeek picks the final clips, trims them to sentence boundaries and writes
         # title/description/hashtags. Its numbers are clamped by pick.validate(). If the API fails,
         # fall back to the strongest raw hype windows so the job still produces something.
-        db.log(jid, "asking DeepSeek to pick the best moments")
         try:
-            if mode == "hype":
-                chosen = pick.choose(title, cands, counts)
-            else:
-                chosen = pick.choose_full(title, n, transcribe.text_with_times(words, 0, n),
-                                          parts if mode == "ai+hype" else None, counts)
+            with db.step(jid, f"STEP 5 asking DeepSeek to pick {counts['short']} short / {counts['long']} long"):
+                if mode == "hype":
+                    chosen = pick.choose(title, cands, counts)
+                else:
+                    chosen = pick.choose_full(title, n, transcribe.text_with_times(words, 0, n),
+                                              parts if mode == "ai+hype" else None, counts)
         except Exception as e:
             db.log(jid, f"DeepSeek failed ({e!r}), using raw hype windows")
             chosen = pick.fallback(cands, counts, title)
+        for c in chosen:
+            db.log(jid, f"picked {c['kind']} {_mmss(c['start'])}-{_mmss(c['end'])} score {c['score']}: "
+                        f"\"{c['title']}\" [{c.get('headline', '')}] {' '.join('#' + t for t in c['tags'])} | {c['reason']}")
         # Snap every pick out to whole sentences (AI times are guesses from coarse markers), within the
         # video and never past the hard max (YouTube rejects Shorts over 3 min).
         for c in chosen:
             s, e = transcribe.snap(words, c["start"], c["end"])
-            c["start"], c["end"] = s, min(e, n, s + pick.HARD_MAX[c["kind"]])
+            s, e = s, min(e, n, s + pick.HARD_MAX[c["kind"]])
+            if (s, e) != (c["start"], c["end"]):
+                db.log(jid, f"snapped to sentences: {_mmss(c['start'])}-{_mmss(c['end'])} -> {_mmss(s)}-{_mmss(e)} "
+                            f"({e - s:.0f}s) \"{c['title']}\"")
+            c["start"], c["end"] = s, e
         _save_curves(d, src, curve, parts, chosen)  # now with the picked clips marked on the graph
 
         # STEP 6: Save each clip to the DB, render it with ffmpeg (every kind vertical 9:16), burn in the
         # headline (top) + captions (bottom) if the job asked for subtitles, then upload if auto-upload is on.
         _render_clips(job, src, d, chosen, words, job.get("subtitles", 1))
     except Exception as e:
-        db.log(jid, f"ERROR processing {src.name}: {e!r}")
+        db.log(jid, f"ERROR processing {src.name}: {e!r}", exc=True)
 
 
 def _render_clips(job, src, d, chosen, words, subtitles):
@@ -239,13 +275,18 @@ def _render_one(job, src, d, c, words, subtitles):
                     reason=c["reason"], headline=c.get("headline", ""), status="rendering")
     out = d / "clips" / f"{cid}.mp4"
     voice = _voiceover(job, c, words, out) if job.get("voiceover") else []
-    db.log(jid, f"rendering {c['kind']} #{cid}: {c['title']}")
     try:
-        render.cut(src, out, c["start"], c["end"], True, words if subtitles else (),
-                   c.get("headline", "") if subtitles else "", voice)
+        with db.step(jid, f"STEP 6 rendering {c['kind']} #{cid} ({c['end'] - c['start']:.0f}s, {render.encoder_name()}): "
+                          f"{c['title']}"):
+            render.cut(src, out, c["start"], c["end"], True, words if subtitles else (),
+                       c.get("headline", "") if subtitles else "", voice, job.get("aspect"))
+    except Exception:
+        db.update("clips", cid, status="render failed")
+        raise
     finally:
         for wav, _ in voice:
             wav.unlink(missing_ok=True)  # voice lines are baked into the mp4 now
+    db.log(jid, f"clip #{cid} ready: {out.name}, {out.stat().st_size / 1e6:.1f} MB")
     db.update("clips", cid, path=str(out.relative_to(DATA)), status="rendered")
     if job["auto_upload"]:
         upload_clip(cid)
@@ -275,7 +316,8 @@ def _voiceover(job, c, words, out):
         wav = out.with_name(f"{out.stem}_vo{k}.wav")
         free_at = at + render.tts(ln["text"], wav) + 0.3
         voice.append((wav, at))
-    db.log(jid, f"voice-over: {len(voice)} lines")
+    db.log(jid, f"voice-over: {len(voice)} lines: " + " | ".join(f"{at:.1f}s \"{ln['text']}\""
+                                                            for (_, at), ln in zip(voice, lines)))
     return voice
 
 
@@ -285,6 +327,8 @@ def manual_cuts(job_id, cuts, subtitles=True):
     def run():
         job = db.get("jobs", job_id)
         d = DATA / "jobs" / str(job_id)
+        db.log(job_id, f"manual cuts: {len(cuts)} ("
+                       + ", ".join(f"{c['kind']} {_mmss(c['start'])}-{_mmss(c['end'])}" for c in cuts) + ")")
         try:
             src = next(d.glob("source.*"))
             words = []
@@ -293,8 +337,29 @@ def manual_cuts(job_id, cuts, subtitles=True):
                     words += transcribe.words(src, s, e)
             _render_clips(job, src, d, [{"score": 0, "reason": "manual cut", **c} for c in cuts], words, subtitles)
         except Exception as e:
-            db.log(job_id, f"ERROR in manual cuts: {e!r}")
+            db.log(job_id, f"ERROR in manual cuts: {e!r}", exc=True)
     threading.Thread(target=run, daemon=True).start()
+
+
+def _mmss(sec):
+    return f"{int(sec // 60)}:{int(sec % 60):02d}"
+
+
+def _describe(src):
+    """'3840x2160 vp9 60fps, 13.6 min' for the log (ffprobe next to ffmpeg; '' if that fails)."""
+    try:
+        import subprocess
+        from .config import FFMPEG
+        probe = str(Path(FFMPEG).with_name("ffprobe" + Path(FFMPEG).suffix)) if Path(FFMPEG).parent != Path(".") else "ffprobe"
+        out = subprocess.run([probe, "-v", "error", "-select_streams", "v:0", "-show_entries",
+                              "stream=codec_name,width,height,r_frame_rate:format=duration", "-of", "json", str(src)],
+                             capture_output=True, text=True, timeout=30).stdout
+        j = json.loads(out)
+        v, dur = j["streams"][0], float(j["format"]["duration"])
+        num, den = (int(x) for x in v["r_frame_rate"].split("/"))
+        return f"{v['width']}x{v['height']} {v['codec_name']} {num / den:.0f}fps, {dur / 60:.1f} min"
+    except Exception:
+        return ""
 
 
 def _save_curves(d, src, curve, parts, chosen=()):
@@ -310,16 +375,63 @@ def _save_curves(d, src, curve, parts, chosen=()):
     tmp.replace(out)
 
 
-def upload_clip(cid):
+def upload_clip(cid, platforms=None):
+    """Upload to `platforms` (default: the ones chosen for the job). Platforms that already worked are skipped,
+    so pressing Upload again only retries the failed ones."""
     c = db.get("clips", cid)
-    if not upload.connected():
-        db.update("clips", cid, status="not uploaded (connect YouTube)")
-        return
+    job = db.get("jobs", c["job_id"]) or {}
+    platforms = platforms or json.loads(job.get("platforms") or '["youtube"]') or ["youtube"]
+    done = json.loads(c.get("uploads") or "{}")
     db.update("clips", cid, status="uploading")
-    try:
-        vid = upload.upload(DATA / c["path"], c["title"], c["description"], json.loads(c["tags"] or "[]"),
-                            short=c["end"] - c["start"] <= SHORT_HARD_MAX)  # vertical + <= 3 min = a Short
-        db.update("clips", cid, youtube_id=vid, status="uploaded")
-        db.log(c["job_id"], f"uploaded #{cid} -> https://youtu.be/{vid}")
-    except Exception as e:
-        db.update("clips", cid, status=f"upload failed: {e}"[:300])
+    for p in platforms:
+        if done.get(p, {}).get("id"):
+            continue
+        b = social.blocked(p)
+        if b:  # daily limit reached: don't call the API (it would fail and waste quota); retry_waiting() resumes it
+            done[p] = {"waiting": b["reason"], "until": b["until"]}
+            db.log(c["job_id"], f"upload #{cid} to {p} waiting: {b['reason']}, "
+                                f"retrying after {time.strftime('%H:%M', time.localtime(b['until']))}")
+            db.update("clips", cid, uploads=json.dumps(done))
+            continue
+        t = time.time()
+        db.log(c["job_id"], f"uploading #{cid} to {p}...")
+        try:
+            done[p] = {**social.upload(p, DATA / c["path"], c["title"], c["description"],
+                                       json.loads(c["tags"] or "[]"), c["end"] - c["start"]), "at": time.time()}
+            db.log(c["job_id"], f"uploaded #{cid} to {p} in {time.time() - t:.0f}s -> {done[p]['url']}")
+        except Exception as e:
+            if social.is_limit_error(e):
+                b = social.block(p, e)
+                done[p] = {"waiting": b["reason"], "until": b["until"]}
+                db.log(c["job_id"], f"upload #{cid} to {p}: {b['reason']}. {p} paused until "
+                                    f"{time.strftime('%H:%M', time.localtime(b['until']))}, the clip will upload then")
+            else:
+                done[p] = {"error": str(e)[:300]}
+                db.log(c["job_id"], f"upload #{cid} to {p} failed after {time.time() - t:.0f}s: {e}", exc=True)
+        db.update("clips", cid, uploads=json.dumps(done))
+    ok = [p for p in platforms if done.get(p, {}).get("id")]
+    waiting = [p for p in platforms if done.get(p, {}).get("waiting")]
+    status = ("uploaded" if len(ok) == len(platforms) else
+              f"waiting for {', '.join(waiting)} limit" + (f" ({len(ok)}/{len(platforms)} uploaded)" if ok else "")
+              if waiting else f"uploaded {len(ok)}/{len(platforms)}" if ok else "upload failed")
+    db.update("clips", cid, status=status, youtube_id=done.get("youtube", {}).get("id"))
+
+
+def retry_waiting():
+    """Upload clips that were waiting for a platform's daily limit, once that platform is free again."""
+    for c in db.all("clips", "uploads LIKE '%waiting%'"):
+        ready = [p for p, u in json.loads(c["uploads"]).items() if u.get("waiting") and not social.blocked(p)]
+        if ready:
+            db.log(c["job_id"], f"limit cleared: retrying upload of #{c['id']} to {', '.join(ready)}")
+            upload_clip(c["id"], ready)
+
+
+def start_retry_loop(every=600):
+    def loop():
+        while True:
+            time.sleep(every)
+            try:
+                retry_waiting()
+            except Exception as e:
+                db.syslog(f"retry of waiting uploads failed: {e!r}", exc=True)
+    threading.Thread(target=loop, daemon=True).start()

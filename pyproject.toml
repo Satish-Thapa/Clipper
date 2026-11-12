@@ -16,6 +16,8 @@ dependencies = [
   "chat-downloader",
   "google-api-python-client",
   "google-auth-oauthlib",
+  "httpx",
+  "opencv-python-headless",  # face detector (YuNet) for the topic "mostly gameplay, not a person" check
 ]
 
 [project.optional-dependencies]

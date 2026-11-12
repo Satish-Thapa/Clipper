@@ -42,7 +42,26 @@ cp .env.example .env                        # fill DEEPSEEK_API_KEY, FFMPEG path
    The headline (3-4 words, yellow box) goes in the top bar, captions in the bottom bar, and the logo
    (`clipper/assets/logo.png`) top-right just above the video. Optional voice-over is mixed in with ducking.
    Encodes with `h264_nvenc` (GPU) if a test encode works, else `libx264`; `RENDER_JOBS` (2) clips at once.
-7. **Upload** (`upload.py`): every clip is ≤180s and vertical, so it is a Short.
+   Source is up to 1080p, or up to 4K when the job's "4K quality" box (`hq`) is ticked; 8 chunks download at once. Animated `END_CARD` ("FOLLOW FOR MORE")
+   for the last 2.6s, drawn in the ASS file. With `CROP_ASPECT=0.5625` the logo sits under the headline.
+7. **Upload** (`social.py` dispatches; `upload.py` is YouTube): to the platforms chosen per job (`jobs.platforms`,
+   JSON). YouTube, Facebook Page (Reels ≤90s, else Page video), Instagram Reels, TikTok. Results per platform go to
+   `clips.uploads` (JSON); "Upload" again retries only the failed ones. FB/IG/TikTok keys are in `.env` (README).
+
+**Topics** (`topics.py`): a queue. Topic → DeepSeek search queries (`pick.search_queries`) → yt-dlp YouTube search
+(this week, widening to month/any) → DeepSeek scores each candidate's clippability (`pick.clippable`; below
+`MIN_CLIPPABLE`=6 means viewers need the full video, so it's skipped) → the most-viewed that pass → one normal job each, run one after another
+(`worker.run`, blocking). Queued topics survive restarts; already-clipped videos are never picked again.
+Then `vision.py` checks ~30 YouTube storyboard frames per candidate with OpenCV YuNet: skipped if a person fills the
+screen (`MAX_PERSON`) or the picture is static (`MAX_STATIC`); a small corner facecam passes. Searches use
+`SEARCH_REGION` (US). **Stats** (`stats.py`): views per platform into `clips.views`, hourly WhatsApp report via
+CallMeBot (`WHATSAPP_PHONE`/`WHATSAPP_APIKEY`). YouTube views need the readonly scope (reconnect).
+**UI** is one page with hash tabs: #create #topics #jobs #clips #socials #logs.
+**Logging**: `db.log(id, msg, table, exc=)` writes the job/topic log, the terminal AND `data/logs/clipper.log`
+(rotating, tracebacks when `exc=True`); `db.syslog` for non-job events; `db.step(...)` logs a step with its duration.
+**Upload limits** (`social.LIMITS`, `UPLOAD_LIMIT_<PLATFORM>` in .env; YouTube 10/24h, hit for real): uploads store
+`"at"`; a limit error (or our own count reaching the limit) pauses the platform (`data/upload_blocks.json`), clips get
+`"waiting"` and `worker.retry_waiting()` (every 10 min) uploads them when it clears. UI shows a banner and counters.
 
 ## Decisions the user made (don't undo without asking)
 
