@@ -17,7 +17,7 @@ db.syslog(f"server started, data in {DATA}")
 topics.start_loop()  # picks up topics still queued from before a restart
 stats.start_loop()  # hourly WhatsApp report, if WHATSAPP_PHONE/WHATSAPP_APIKEY are set
 social.backfill_times()  # give old uploads a time so the 24h upload counter includes them
-worker.start_retry_loop()  # every 10 min: upload clips that waited for a platform's daily limit
+social.backfill_limit_hits()  # start the 24h timer of a limit error logged before timers existed
 app.mount("/media", StaticFiles(directory=DATA), name="media")
 INDEX = Path(__file__).parent / "static" / "index.html"
 
@@ -148,7 +148,7 @@ def state():
     return {"jobs": db.all("jobs"), "clips": db.all("clips"), "topics": db.all("topics"), "platforms": social.connected(),
             "deepseek": pick.balance(), "whatsapp": stats.whatsapp_ready(), "report_minutes": stats.REPORT_MINUTES,
             "view_errors": stats.LAST["errors"], "crop_aspect": CROP_ASPECT,
-            "limits": social.limits_status()}
+            "uploads": social.upload_status(), "limit_timers": social.limit_timers()}
 
 
 @app.post("/api/jobs/{jid}/stop")

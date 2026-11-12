@@ -30,7 +30,6 @@
   .meter.warn > span { background:var(--warn); } .meter.full > span { background:#f44; }
   .chip { font-size:12px; padding:3px 8px; border-radius:99px; border:1px solid var(--line); color:var(--dim); text-decoration:none; }
   .chip.warn { color:var(--warn); border-color:#5a4410; } .chip.full { color:#f66; border-color:#5a2a2a; }
-  .ups .wait { color:var(--warn); cursor:help; }
   #logbox { max-height:70vh; min-height:300px; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:10px;
     font:12px/1.5 ui-monospace, monospace; color:var(--text); }
   #logbox .err { color:#f88; } #logbox .sys { color:var(--dim); }
@@ -179,7 +178,7 @@
  </div>
 
  <div class="page" id="page-socials">
-  <div class="page-head"><h2>Socials</h2><p>Where clips get uploaded. Pick platforms per job or topic when you create it.</p></div>
+  <div class="page-head"><h2>Socials</h2><p>Where clips get uploaded. Pick platforms per job or topic when you create it. How to connect each one: <code>SOCIALS.md</code> in the project folder.</p></div>
   <div class="socials" id="socials"></div>
  </div>
 </main>
@@ -364,6 +363,16 @@ $("#logfilter").oninput = () => { $("#logbox").scrollTop = 1e9; loadLogs(); };
 $("#loglines").onchange = loadLogs;
 window.addEventListener("hashchange", loadLogs);
 
+// 24h countdowns for "upload limit exceeded" (time stored in the db, ticking here every second)
+let limitTimers = {};
+function tick() {
+  document.querySelectorAll(".countdown").forEach(el => {
+    const left = Math.max(0, el.dataset.until - Date.now() / 1000);
+    el.textContent = left ? [left / 3600, left % 3600 / 60, left % 60].map(x => String(Math.floor(x)).padStart(2, "0")).join(":") : "now";
+  });
+}
+setInterval(tick, 1000);
+
 let clipKey = "";
 async function refresh() {
   const s = await (await fetch("/api/state")).json();
@@ -371,19 +380,21 @@ async function refresh() {
   $("#ds").innerHTML = ds.error ? `<span style="color:#f66" title="${esc(ds.error)}">DeepSeek balance: error</span>`
     : b ? `<span style="color:${!ds.available || +b.total < 1 ? "#f66" : +b.total < 3 ? "var(--warn)" : "var(--ok)"}"
         title="topped up ${esc(b.topped_up)} + granted ${esc(b.granted)} ${esc(b.currency)}">DeepSeek left: ${b.currency === "USD" ? "$" : ""}${esc(b.total)} ${b.currency === "USD" ? "" : esc(b.currency)}${ds.available ? "" : " (empty)"}</span>` : "";
-  const lim = s.limits || {}, hhmm = t => new Date(t * 1000).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"});
-  const blockedNow = Object.entries(lim).filter(([, l]) => l.blocked);
-  $("#banner").innerHTML = blockedNow.map(([p, l]) => `⚠ <b>${PLATFORMS[p]} uploads paused</b>: ${esc(l.blocked.reason)}.
-    New clips wait and upload automatically after <b>${hhmm(l.blocked.until)}</b>.`).join("<br>");
-  const yt = lim.youtube;
-  $("#quota").innerHTML = yt && yt.limit && s.platforms.youtube ? `<a href="#socials" class="chip ${yt.blocked || yt.used >= yt.limit ? "full"
-    : yt.used >= yt.limit * 0.8 ? "warn" : ""}" title="YouTube uploads in the last 24 hours (daily limit ${yt.limit})">YouTube ${yt.used}/${yt.limit} today</a>` : "";
-  const meter = p => { const l = lim[p] || {}; if (!l.limit) return `<div class="dim" style="font-size:13px">${l.used || 0} uploads in the last 24h (no known daily limit)</div>`;
-    const pct = Math.min(100, l.used / l.limit * 100), cls = l.blocked || l.used >= l.limit ? "full" : pct >= 80 ? "warn" : "";
-    return `<div style="font-size:13px"><b>${l.used} / ${l.limit}</b> <span class="dim">uploads in the last 24h</span></div>
-      <div class="meter ${cls}"><span style="width:${pct}%"></span></div>
-      ${l.blocked ? `<div style="color:#f66;font-size:13px">Paused until ${hhmm(l.blocked.until)}: ${esc(l.blocked.reason)}. Waiting clips upload automatically.</div>`
-        : pct >= 80 ? `<div style="color:var(--warn);font-size:13px">Close to the daily limit.</div>` : ""}`; };
+  const up = s.uploads || {}, hhmm = t => new Date(t * 1000).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"});
+  // Banner: a platform's most recent upload failed -> show exactly what the platform said (until an upload works again).
+  limitTimers = s.limit_timers || {};
+  $("#banner").innerHTML = Object.entries(limitTimers).map(([p, l]) =>
+    `⏱ <b>${PLATFORMS[p]} upload limit exceeded</b> at ${hhmm(l.hit_at)}. 24h are up in <b class="countdown" data-until="${l.until}"></b>`)
+    .concat(Object.entries(up).filter(([p, u]) => u.error && !limitTimers[p]).map(([p, u]) =>
+    `⚠ <b>${PLATFORMS[p]} upload failed</b> (clip #${u.error.clip}, ${hhmm(u.error.at)}): ${esc(u.error.error)}`)).join("<br>");
+  tick();
+  $("#quota").innerHTML = s.platforms.youtube && up.youtube ? `<a href="#socials" class="chip ${up.youtube.error ? "full" : ""}"
+    title="YouTube uploads in the last 24 hours">YouTube ${up.youtube.used} uploaded today</a>` : "";
+  const meter = p => { const u = up[p] || {};
+    return `<div style="font-size:13px"><b>${u.used || 0}</b> <span class="dim">uploads in the last 24h</span></div>
+      ${limitTimers[p] ? `<div style="color:#f66;font-size:13px">Limit exceeded at ${hhmm(limitTimers[p].hit_at)}: 24h up in
+        <b class="countdown" data-until="${limitTimers[p].until}"></b></div>` : ""}
+      ${u.error ? `<div style="color:#f66;font-size:13px">Last upload failed (${hhmm(u.error.at)}): ${esc(u.error.error)}</div>` : ""}`; };
   const nOn = Object.values(s.platforms).filter(Boolean).length;
   $("#yt").innerHTML = `<a href="#socials" style="color:var(--dim);text-decoration:none">${Object.keys(PLATFORMS).map(k =>
     `<span class="dot ${s.platforms[k] ? "ok" : ""}" title="${PLATFORMS[k]}"></span>`).join(" ")}</a>`;
@@ -472,8 +483,7 @@ async function refresh() {
     const tags = JSON.parse(c.tags || "[]").map(t => "#" + t).join(" ");
     const canUpload = c.path && !["uploaded","uploading"].includes(c.status);
     const ups = Object.entries(JSON.parse(c.uploads || "{}")).map(([p, u]) => u.id
-      ? `<a href="${esc(u.url)}" target="_blank">▶ ${PLATFORMS[p] || p}${p in JSON.parse(c.views || "{}") ? ` · ${JSON.parse(c.views)[p].toLocaleString()} views` : ""}</a>` : u.waiting ? `<span class="wait" title="${esc(u.waiting)}; uploads automatically after ${new Date(u.until * 1000).toLocaleTimeString()}">⏳ ${PLATFORMS[p] || p}</span>`
-      : `<span class="err" title="${esc(u.error)}">✕ ${PLATFORMS[p] || p}</span>`).join("");
+      ? `<a href="${esc(u.url)}" target="_blank">▶ ${PLATFORMS[p] || p}${p in JSON.parse(c.views || "{}") ? ` · ${JSON.parse(c.views)[p].toLocaleString()} views` : ""}</a>` : `<span class="err">✕ ${PLATFORMS[p] || p}</span>`).join("");
     return `<div class="clip ${c.kind}">
       ${c.path ? `<video src="/media/${esc(c.path)}" controls preload="metadata"></video>` : `<div style="aspect-ratio:9/16;display:grid;place-items:center" class="dim">${esc(c.status)}…</div>`}
       <div class="body">
@@ -483,6 +493,8 @@ async function refresh() {
         ${c.headline ? `<div><span class="badge">${esc(c.headline)}</span></div>` : ""}
         <div class="dim">${esc(c.reason)}</div>
         <div class="dim">${esc(tags)}</div>
+        ${Object.entries(JSON.parse(c.uploads || "{}")).filter(([, u]) => u.error).map(([p, u]) =>
+          `<div style="color:#f88;font-size:12px"><b>${PLATFORMS[p] || p} error:</b> ${esc(u.error)}</div>`).join("")}
         <div class="row">
           ${ups ? `<span class="ups">${ups}</span>` : c.youtube_id ? `<a href="https://youtu.be/${esc(c.youtube_id)}" target="_blank">▶ on YouTube</a>` : `<span class="dim">${esc(c.status)}</span>`}
           ${canUpload ? `<button class="ghost" onclick="uploadClip(${c.id}, this)" title="to the job's platforms; only retries the ones not done yet">${ups ? "Retry upload" : "Upload"}</button>` : ""}

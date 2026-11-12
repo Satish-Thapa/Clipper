@@ -31,6 +31,9 @@ CREATE TABLE IF NOT EXISTS clips (
   score REAL, title TEXT, description TEXT, tags TEXT, reason TEXT,
   path TEXT, youtube_id TEXT, status TEXT DEFAULT 'rendered', headline TEXT DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS limit_hits (
+  platform TEXT PRIMARY KEY, hit_at REAL, message TEXT
+);
 CREATE TABLE IF NOT EXISTS topics (
   id INTEGER PRIMARY KEY, topic TEXT, videos INTEGER, shorts INTEGER, longs INTEGER, mode TEXT,
   subtitles INTEGER, voiceover INTEGER, platforms TEXT DEFAULT '[]', queries TEXT DEFAULT '[]',

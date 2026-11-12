@@ -386,13 +386,6 @@ def upload_clip(cid, platforms=None):
     for p in platforms:
         if done.get(p, {}).get("id"):
             continue
-        b = social.blocked(p)
-        if b:  # daily limit reached: don't call the API (it would fail and waste quota); retry_waiting() resumes it
-            done[p] = {"waiting": b["reason"], "until": b["until"]}
-            db.log(c["job_id"], f"upload #{cid} to {p} waiting: {b['reason']}, "
-                                f"retrying after {time.strftime('%H:%M', time.localtime(b['until']))}")
-            db.update("clips", cid, uploads=json.dumps(done))
-            continue
         t = time.time()
         db.log(c["job_id"], f"uploading #{cid} to {p}...")
         try:
@@ -400,38 +393,12 @@ def upload_clip(cid, platforms=None):
                                        json.loads(c["tags"] or "[]"), c["end"] - c["start"]), "at": time.time()}
             db.log(c["job_id"], f"uploaded #{cid} to {p} in {time.time() - t:.0f}s -> {done[p]['url']}")
         except Exception as e:
-            if social.is_limit_error(e):
-                b = social.block(p, e)
-                done[p] = {"waiting": b["reason"], "until": b["until"]}
-                db.log(c["job_id"], f"upload #{cid} to {p}: {b['reason']}. {p} paused until "
-                                    f"{time.strftime('%H:%M', time.localtime(b['until']))}, the clip will upload then")
-            else:
-                done[p] = {"error": str(e)[:300]}
-                db.log(c["job_id"], f"upload #{cid} to {p} failed after {time.time() - t:.0f}s: {e}", exc=True)
+            done[p] = {"error": social.error_text(e)[:500], "at": time.time()}  # shown as-is in the UI
+            db.log(c["job_id"], f"upload #{cid} to {p} failed after {time.time() - t:.0f}s: {done[p]['error']}", exc=True)
+            if social.note_limit(p, str(e)):
+                db.log(c["job_id"], f"{p} says the upload limit is exceeded: 24h timer started")
         db.update("clips", cid, uploads=json.dumps(done))
     ok = [p for p in platforms if done.get(p, {}).get("id")]
-    waiting = [p for p in platforms if done.get(p, {}).get("waiting")]
-    status = ("uploaded" if len(ok) == len(platforms) else
-              f"waiting for {', '.join(waiting)} limit" + (f" ({len(ok)}/{len(platforms)} uploaded)" if ok else "")
-              if waiting else f"uploaded {len(ok)}/{len(platforms)}" if ok else "upload failed")
+    status = ("uploaded" if len(ok) == len(platforms) else f"uploaded {len(ok)}/{len(platforms)}" if ok
+              else "upload failed")
     db.update("clips", cid, status=status, youtube_id=done.get("youtube", {}).get("id"))
-
-
-def retry_waiting():
-    """Upload clips that were waiting for a platform's daily limit, once that platform is free again."""
-    for c in db.all("clips", "uploads LIKE '%waiting%'"):
-        ready = [p for p, u in json.loads(c["uploads"]).items() if u.get("waiting") and not social.blocked(p)]
-        if ready:
-            db.log(c["job_id"], f"limit cleared: retrying upload of #{c['id']} to {', '.join(ready)}")
-            upload_clip(c["id"], ready)
-
-
-def start_retry_loop(every=600):
-    def loop():
-        while True:
-            time.sleep(every)
-            try:
-                retry_waiting()
-            except Exception as e:
-                db.syslog(f"retry of waiting uploads failed: {e!r}", exc=True)
-    threading.Thread(target=loop, daemon=True).start()

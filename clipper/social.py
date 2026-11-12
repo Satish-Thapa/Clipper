@@ -1,14 +1,13 @@
 """Upload one rendered clip to YouTube, Facebook, Instagram or TikTok. Every uploader -> {"id", "url"}.
 Credentials live in .env (see README "Facebook / Instagram / TikTok setup"); YouTube uses its own OAuth (upload.py)."""
 import json
-import os
 import re
 import time
 
 import httpx
 
 from . import upload as youtube
-from .config import (DATA, FB_PAGE_ID, FB_PAGE_TOKEN, GRAPH_VERSION, IG_TOKEN, IG_USER_ID, TIKTOK_CLIENT_KEY,
+from .config import (FB_PAGE_ID, FB_PAGE_TOKEN, GRAPH_VERSION, IG_TOKEN, IG_USER_ID, TIKTOK_CLIENT_KEY,
                      TIKTOK_CLIENT_SECRET, TIKTOK_PRIVACY, TIKTOK_REFRESH_TOKEN, TIKTOK_TOKEN)
 
 PLATFORMS = ("youtube", "facebook", "instagram", "tiktok")
@@ -20,16 +19,8 @@ FB_REEL_MAX = 90  # seconds; longer clips go up as a normal Page video
 TIMEOUT = httpx.Timeout(30, read=600, write=600)
 
 
-# ---- daily upload limits ----
-# Each platform caps uploads per rolling 24h (YouTube: per channel, ~10 for new/unverified channels; you hit it at 10).
-# We count our own uploads, pause a platform when it says "limit reached" (or when our count reaches the limit),
-# and worker.retry_waiting() re-uploads the waiting clips once a slot frees up. Override in .env: UPLOAD_LIMIT_YOUTUBE=...
-LIMITS = {p: int(os.getenv(f"UPLOAD_LIMIT_{p.upper()}", d)) for p, d in
-          (("youtube", "10"), ("facebook", "0"), ("instagram", "50"), ("tiktok", "15"))}  # 0 = no known limit
+# ---- upload counter + last error (information only: the app never holds uploads back) ----
 DAY = 24 * 3600
-BLOCKS = DATA / "upload_blocks.json"  # {platform: {"until": ts, "reason": str}}, survives restarts
-LIMIT_ERRORS = re.compile(r"uploadLimitExceeded|quotaExceeded|dailyLimitExceeded|rateLimitExceeded|"
-                          r"spam_risk_too_many_posts|too many posts|request limit reached|max.*posts", re.I)
 
 
 def upload_times(platform, clips=None):
@@ -43,43 +34,6 @@ def upload_times(platform, clips=None):
     return sorted(out)
 
 
-def _blocks():
-    try:
-        return json.loads(BLOCKS.read_text())
-    except (OSError, ValueError):
-        return {}
-
-
-def blocked(platform):
-    """None if we may upload now, else {"until": ts, "reason": str}. Also blocks pre-emptively when our own
-    24h count already reached the limit (saves a failing API call and its quota)."""
-    b = _blocks().get(platform)
-    if b and b["until"] > time.time():
-        return b
-    limit, recent = LIMITS.get(platform, 0), [t for t in upload_times(platform) if t > time.time() - DAY]
-    if limit and len(recent) >= limit:
-        return {"until": recent[0] + DAY, "reason": f"{len(recent)}/{limit} uploads in the last 24h"}
-    return None
-
-
-def block(platform, err):
-    """Called when an upload failed with a limit error: pause the platform until a slot should be free.
-    YouTube's API quota resets at midnight Pacific; the per-channel upload limit is a rolling 24h window."""
-    now = time.time()
-    if "quotaExceeded" in str(err) or "dailyLimitExceeded" in str(err):
-        pacific = now - 8 * 3600  # ponytail: fixed UTC-8, so up to an hour early during daylight saving
-        until = now + (DAY - pacific % DAY)
-        reason = "API quota used up for today (resets at midnight Pacific)"
-    else:
-        recent = [t for t in upload_times(platform) if t > now - DAY]
-        until = (recent[0] + DAY) if recent else now + DAY
-        reason = f"daily upload limit reached ({len(recent)} uploads in the last 24h)"
-    b = _blocks()
-    b[platform] = {"until": until, "reason": reason}
-    BLOCKS.write_text(json.dumps(b))
-    return b[platform]
-
-
 def backfill_times():
     """Uploads from before the counter existed have no time. Recover it from the job log line
     "[HH:MM:SS] uploaded #<clip> (to <platform>) ..." + the job's date, so today's uploads count. Runs at startup."""
@@ -88,13 +42,8 @@ def backfill_times():
         ups = json.loads(c.get("uploads") or "{}")
         if c.get("youtube_id") and not ups.get("youtube"):  # uploaded before multi-platform: YouTube only
             ups["youtube"] = {"id": c["youtube_id"], "url": f"https://youtu.be/{c['youtube_id']}"}
-        limit_errs = [p for p, u in ups.items() if u.get("error") and is_limit_error(u["error"])]
-        for p in limit_errs:  # failed on a limit before pausing existed: make it wait and retry instead
-            ups[p] = {"waiting": "daily upload limit reached", "until": time.time()}
         missing = [p for p, u in ups.items() if u.get("id") and not u.get("at")]
         if not missing:
-            if limit_errs:
-                db.update("clips", c["id"], uploads=json.dumps(ups), status=f"waiting for {', '.join(limit_errs)} limit")
             continue
         job = db.get("jobs", c["job_id"]) or {}
         day = time.strftime("%Y-%m-%d", time.localtime(job.get("created") or time.time()))
@@ -105,16 +54,74 @@ def backfill_times():
         db.update("clips", c["id"], uploads=json.dumps(ups))
 
 
-def is_limit_error(err):
-    return bool(LIMIT_ERRORS.search(str(err)))
+def error_text(err):
+    """The platform's own message, readable: YouTube's HttpError -> 'The user has exceeded ... (uploadLimitExceeded)'."""
+    reason = getattr(err, "reason", None)  # googleapiclient HttpError
+    details = getattr(err, "error_details", None)
+    if reason:
+        why = ", ".join(d.get("reason", "") for d in details if isinstance(d, dict)) if isinstance(details, list) else ""
+        status = getattr(getattr(err, "resp", None), "status", "")
+        return f"HTTP {status}: {reason}" + (f" ({why})" if why else "")
+    return str(err)
 
 
-def limits_status():
-    """For the UI: {platform: {"used": uploads in last 24h, "limit": n or 0, "blocked": {...} or None}}."""
+# When a platform's API says the upload limit is exceeded, remember when (table limit_hits) so the UI can count down
+# 24 hours from that moment. Information only: uploads are never held back.
+LIMIT_RE = re.compile(r"uploadLimitExceeded|exceeded the number of videos|quotaExceeded|dailyLimitExceeded|"
+                      r"spam_risk_too_many_posts|too many posts", re.I)
+
+
+def note_limit(platform, message):
+    """If `message` is a limit error, store/refresh the time it happened. Returns True if it was one."""
+    from . import db
+    if not LIMIT_RE.search(message):
+        return False
+    with db.conn() as c:
+        c.execute("INSERT OR REPLACE INTO limit_hits (platform, hit_at, message) VALUES (?, ?, ?)",
+                  (platform, time.time(), message[:500]))
+    return True
+
+
+def backfill_limit_hits():
+    """Limit errors logged before limit_hits existed: take the latest one per platform from the job logs
+    ("[HH:MM:SS] upload #8 to youtube failed: ...uploadLimitExceeded...") so its 24h timer starts at the real time."""
+    from . import db
+    known = limit_timers()
+    for job in db.all("jobs"):
+        day = time.strftime("%Y-%m-%d", time.localtime(job.get("created") or time.time()))
+        for hh, p, msg in re.findall(r"\[(\d\d:\d\d:\d\d)\] upload #\d+ to (\w+) failed[^:]*: (.*)", job.get("log") or ""):
+            at = time.mktime(time.strptime(f"{day} {hh}", "%Y-%m-%d %H:%M:%S"))
+            if LIMIT_RE.search(msg) and at > time.time() - DAY and at > known.get(p, {}).get("hit_at", 0):
+                with db.conn() as c:
+                    c.execute("INSERT OR REPLACE INTO limit_hits (platform, hit_at, message) VALUES (?, ?, ?)",
+                              (p, at, msg[:500]))
+                known[p] = {"hit_at": at}
+
+
+def limit_timers():
+    """{platform: {"hit_at", "until", "message"}} for limit hits less than 24h old."""
+    from . import db
+    with db.conn() as c:
+        rows = [dict(r) for r in c.execute("SELECT * FROM limit_hits WHERE hit_at > ?", (time.time() - DAY,))]
+    return {r["platform"]: {**r, "until": r["hit_at"] + DAY} for r in rows}
+
+
+def upload_status():
+    """For the UI, per platform: uploads in the last 24h, and the last error if the most recent attempt failed."""
     from . import db
     clips, now = db.all("clips"), time.time()
-    return {p: {"used": len([t for t in upload_times(p, clips) if t > now - DAY]), "limit": LIMITS.get(p, 0),
-                "blocked": blocked(p)} for p in PLATFORMS}
+    out = {}
+    for p in PLATFORMS:
+        last_ok, last_err = 0, None
+        for c in clips:
+            u = json.loads(c.get("uploads") or "{}").get(p, {})
+            if u.get("id"):
+                last_ok = max(last_ok, u.get("at") or 0)
+            elif u.get("error") and u.get("at") and (not last_err or u["at"] > last_err["at"]):
+                last_err = {"error": u["error"], "at": u["at"], "clip": c["id"]}
+        out[p] = {"used": len([t for t in upload_times(p, clips) if t > now - DAY]),
+                  "error": last_err if last_err and last_err["at"] > last_ok else None}
+    return out
 
 
 def connected():

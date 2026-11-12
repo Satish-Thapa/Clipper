@@ -59,9 +59,10 @@ CallMeBot (`WHATSAPP_PHONE`/`WHATSAPP_APIKEY`). YouTube views need the readonly 
 **UI** is one page with hash tabs: #create #topics #jobs #clips #socials #logs.
 **Logging**: `db.log(id, msg, table, exc=)` writes the job/topic log, the terminal AND `data/logs/clipper.log`
 (rotating, tracebacks when `exc=True`); `db.syslog` for non-job events; `db.step(...)` logs a step with its duration.
-**Upload limits** (`social.LIMITS`, `UPLOAD_LIMIT_<PLATFORM>` in .env; YouTube 10/24h, hit for real): uploads store
-`"at"`; a limit error (or our own count reaching the limit) pauses the platform (`data/upload_blocks.json`), clips get
-`"waiting"` and `worker.retry_waiting()` (every 10 min) uploads them when it clears. UI shows a banner and counters.
+**Upload limits: the app never holds uploads back** (user's explicit choice; don't add pausing/retrying). Every
+upload is attempted, the platform's own error is stored in `clips.uploads` and shown on the clip card + a banner.
+If the error says the limit is exceeded (`social.LIMIT_RE`), `limit_hits` (platform, hit_at) is saved and the UI
+counts down 24h from it. Uploads in the last 24h are counted for display only.
 
 ## Decisions the user made (don't undo without asking)
 

@@ -58,6 +58,8 @@ Open http://127.0.0.1:8000.
 
 ## Facebook / Instagram / TikTok setup (one time)
 
+**Step-by-step guide: [SOCIALS.md](SOCIALS.md)** (Facebook, Instagram, TikTok, WhatsApp report).
+
 Each platform is optional. One that isn't set up shows "(not set up)" in the UI, and uploads to it fail with that message.
 Put the keys in `.env`, then restart the server.
 
@@ -86,12 +88,10 @@ While the Meta app is in Development mode, only you (the app admin) can post, wh
 
 ## Upload limits
 
-Platforms cap how many videos you can upload per 24 hours. YouTube allows about **10 per channel** for new or
-unverified channels (that's where `uploadLimitExceeded` comes from). Clipper counts its uploads per platform and shows
-them on the **Socials** page and in the header (e.g. "YouTube 10/10 today"). When a platform's limit is reached, its
-uploads pause, a red banner shows when they resume, and waiting clips upload automatically once a slot frees up
-(checked every 10 minutes). If you know your real limit, set it in `.env`: `UPLOAD_LIMIT_YOUTUBE=15`,
-`UPLOAD_LIMIT_INSTAGRAM=50`, `UPLOAD_LIMIT_TIKTOK=15`, `UPLOAD_LIMIT_FACEBOOK=0` (0 = no limit).
+Platforms cap how many videos you can upload per 24 hours (YouTube stopped this channel at 10: `uploadLimitExceeded`).
+Clipper doesn't hold anything back: every upload is tried, and whatever the platform answers is shown on the clip card
+and in a banner at the top. When the answer is "limit exceeded", the time is saved and a **24h countdown** shows in the
+banner and on the **Socials** page. The header shows how many clips went up to YouTube in the last 24 hours.
 
 ## WhatsApp report (hourly views)
 
