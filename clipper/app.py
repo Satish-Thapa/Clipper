@@ -24,6 +24,7 @@ class NewJob(BaseModel):
     auto_upload: bool = True
     mode: Literal["hype", "ai+hype", "ai", "manual"] = "hype"
     subtitles: bool = True
+    voiceover: bool = False
 
 
 class Cut(BaseModel):
@@ -46,7 +47,7 @@ def create_job(j: NewJob):
     if j.shorts + j.longs == 0:
         raise HTTPException(400, "ask for at least one clip")
     jid = db.insert("jobs", url=j.url, shorts=j.shorts, longs=j.longs, auto_upload=int(j.auto_upload),
-                    mode=j.mode, subtitles=int(j.subtitles), created=time.time())
+                    mode=j.mode, subtitles=int(j.subtitles), voiceover=int(j.voiceover), created=time.time())
     worker.start(jid)
     return {"id": jid}
 
@@ -54,13 +55,13 @@ def create_job(j: NewJob):
 @app.post("/api/jobs/file")
 async def create_file_job(request: Request, filename: str, shorts: int = 3, longs: int = 1,
                           auto_upload: bool = True, mode: Literal["hype", "ai+hype", "ai", "manual"] = "hype",
-                          subtitles: bool = True):
+                          subtitles: bool = True, voiceover: bool = False):
     """Raw file bytes in the body (no multipart, so no python-multipart dependency)."""
     ext = Path(filename).suffix.lower()
     if ext not in (".mp4", ".mkv", ".mov", ".webm", ".ts", ".avi"):
         raise HTTPException(400, f"unsupported file type {ext or '(none)'}")
     jid = db.insert("jobs", url=f"file:{Path(filename).name}", title=Path(filename).stem, shorts=shorts,
-                    longs=longs, auto_upload=int(auto_upload), mode=mode, subtitles=int(subtitles), status="uploading", created=time.time())
+                    longs=longs, auto_upload=int(auto_upload), mode=mode, subtitles=int(subtitles), voiceover=int(voiceover), status="uploading", created=time.time())
     d = DATA / "jobs" / str(jid)
     d.mkdir(parents=True, exist_ok=True)
     with open(d / f"source{ext}", "wb") as f:
@@ -86,7 +87,7 @@ def add_cuts(jid: int, cuts: list[Cut], subtitles: bool = True):
 
 @app.get("/api/jobs/{jid}/curves")
 def curves(jid: int):
-    return [json.loads(p.read_text()) for p in sorted((DATA / "jobs" / str(jid)).glob("*.curves.json"))]
+    return [json.loads(p.read_text()) for p in sorted((DATA / "jobs" / str(jid)).glob("curves_*.json"))]
 
 
 @app.get("/api/state")

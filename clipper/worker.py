@@ -231,12 +231,45 @@ def _render_clips(job, src, d, chosen, words, subtitles):
                         title=c["title"], description=c["description"], tags=json.dumps(c["tags"]),
                         reason=c["reason"], headline=c.get("headline", ""), status="rendering")
         out = d / "clips" / f"{cid}.mp4"
+        voice = _voiceover(job, c, words, out) if job.get("voiceover") else []
         db.log(jid, f"rendering {c['kind']} #{cid}: {c['title']}")
-        render.cut(src, out, c["start"], c["end"], True, words if subtitles else (),
-                   c.get("headline", "") if subtitles else "")
+        try:
+            render.cut(src, out, c["start"], c["end"], True, words if subtitles else (),
+                       c.get("headline", "") if subtitles else "", voice)
+        finally:
+            for wav, _ in voice:
+                wav.unlink(missing_ok=True)  # voice lines are baked into the mp4 now
         db.update("clips", cid, path=str(out.relative_to(DATA)), status="rendered")
         if job["auto_upload"]:
             upload_clip(cid)
+
+
+def _voiceover(job, c, words, out):
+    """AI voice-over for one clip: DeepSeek writes the lines, macOS `say` speaks them.
+    -> [(wav, seconds into clip)], pushed later where needed so lines never talk over each other.
+    Any failure just means no voice-over; the clip still renders."""
+    jid = job["id"]
+    if not render.can_speak():
+        db.log(jid, "voice-over skipped: macOS 'say' not found")
+        return []
+    s, e = c["start"], c["end"]
+    rel = [{**w, "s": w["s"] - s, "e": w["e"] - s} for w in words if s <= w["s"] < e]  # times from clip start
+    try:
+        lines = pick.voice_script(job.get("title") or "", c["title"], e - s,
+                                  transcribe.text_with_times(rel, 0, e - s, every=2))
+    except Exception as ex:
+        db.log(jid, f"voice-over skipped for '{c['title']}': {ex!r}")
+        return []
+    voice, free_at = [], 0.0
+    for k, ln in enumerate(lines):
+        at = max(ln["at"], free_at)  # wait for the previous line to finish
+        if at >= e - s - 1:
+            break
+        wav = out.with_name(f"{out.stem}_vo{k}.wav")
+        free_at = at + render.tts(ln["text"], wav) + 0.3
+        voice.append((wav, at))
+    db.log(jid, f"voice-over: {len(voice)} lines")
+    return voice
 
 
 def manual_cuts(job_id, cuts, subtitles=True):
@@ -248,7 +281,7 @@ def manual_cuts(job_id, cuts, subtitles=True):
         try:
             src = next(d.glob("source.*"))
             words = []
-            if subtitles:  # only transcribe when captions are wanted; it's the slow part
+            if subtitles or job.get("voiceover"):  # transcribe only if captions/voice-over need it (slow part)
                 for s, e in transcribe.merge([(c["start"], c["end"]) for c in cuts]):
                     words += transcribe.words(src, s, e)
             _render_clips(job, src, d, [{"score": 0, "reason": "manual cut", **c} for c in cuts], words, subtitles)
@@ -258,12 +291,13 @@ def manual_cuts(job_id, cuts, subtitles=True):
 
 
 def _save_curves(d, src, curve, parts, chosen=()):
-    """Write per-second curves (all 0..1) + picked clips for the UI graph: data/jobs/<id>/<file>.curves.json"""
+    """Write per-second curves (all 0..1) + picked clips for the UI graph: data/jobs/<id>/curves_<file>.json
+    (not "source.*.json": that would match the glob used to find the source video)."""
     top = float(curve.max()) if len(curve) and curve.max() > 0 else 1.0
     data = {"name": src.name, "n": len(curve),
             "signals": {k: [round(float(x), 2) for x in v] for k, v in {"hype": curve / top, **parts}.items()},
             "chosen": [{k: c[k] for k in ("kind", "start", "end", "title")} for c in chosen]}
-    out = d / f"{src.stem}.curves.json"
+    out = d / f"curves_{src.stem}.json"
     tmp = out.with_suffix(".tmp")  # write-then-rename so the UI never reads a half-written file
     tmp.write_text(json.dumps(data))
     tmp.replace(out)

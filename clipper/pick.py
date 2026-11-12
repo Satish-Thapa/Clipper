@@ -166,17 +166,46 @@ def curve_table(parts, n, step=10):
     return "\n".join(rows)
 
 
-def _ask(task):
-    """Send one request to DeepSeek (OpenAI-compatible API) in JSON mode; return the raw "clips" list."""
+VOICE_SYSTEM = """You write voice-over commentary for short vertical clips (any content: gaming like GTA,
+streams, podcasts, commentary...). The narrator is the channel's own voice: confident, funny, hyped,
+talking to the viewer like a friend.
+Rules:
+- 2-5 lines, each at most 12 words, plain spoken English. No emojis, hashtags or stage directions.
+- Line 1 at 0-1s is a hook that makes people stay ("This cop had NO idea what was coming.").
+- Later lines add context, a reaction or a joke. Put them where nobody important is speaking (use the
+  transcript timing), NEVER over the punchline or the key line. Fewer lines is better than talking over it.
+- Don't just repeat what is said in the clip, and don't invent facts that contradict the transcript.
+- "at" = seconds from the clip start.
+Return JSON only: {"lines": [{"at": <sec>, "text": "..."}]}"""
+
+
+def voice_script(video_title, clip_title, length, transcript):
+    """AI commentary lines for one clip -> [{"at": sec from clip start, "text": str}], sorted, sane."""
+    task = (f'Video: "{video_title}". Clip title: "{clip_title}". Clip length: {length:.0f}s.\n'
+            f"Transcript ([seconds] from clip start):\n{transcript or '(no speech)'}")
+    out = []
+    for ln in _ask(task, VOICE_SYSTEM, "lines"):
+        if not isinstance(ln, dict) or not str(ln.get("text", "")).strip():
+            continue
+        try:
+            at = float(ln.get("at", 0))
+        except (TypeError, ValueError):
+            continue
+        out.append({"at": min(max(at, 0.0), max(length - 1, 0.0)), "text": str(ln["text"]).strip()[:120]})
+    return sorted(out, key=lambda x: x["at"])[:6]
+
+
+def _ask(task, system=SYSTEM, key="clips"):
+    """Send one request to DeepSeek (OpenAI-compatible API) in JSON mode; return the raw `key` list."""
     if not DEEPSEEK_API_KEY:
         raise RuntimeError("DEEPSEEK_API_KEY missing in .env")
     client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
     r = client.chat.completions.create(
         model=DEEPSEEK_MODEL,
         response_format={"type": "json_object"},  # forces valid JSON back
-        messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": task}],
+        messages=[{"role": "system", "content": system}, {"role": "user", "content": task}],
     )
-    return json.loads(r.choices[0].message.content).get("clips", [])
+    return json.loads(r.choices[0].message.content).get(key, [])
 
 
 def validate(clips, candidates, counts):

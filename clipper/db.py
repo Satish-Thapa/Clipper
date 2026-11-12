@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   id INTEGER PRIMARY KEY, url TEXT, title TEXT, is_live INTEGER DEFAULT 0,
   shorts INTEGER, longs INTEGER, auto_upload INTEGER,
   status TEXT DEFAULT 'queued', log TEXT DEFAULT '', created REAL, mode TEXT DEFAULT 'hype',
-  subtitles INTEGER DEFAULT 1
+  subtitles INTEGER DEFAULT 1, voiceover INTEGER DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS clips (
   id INTEGER PRIMARY KEY, job_id INTEGER, kind TEXT, start REAL, "end" REAL,
@@ -28,7 +28,7 @@ def init():
     with conn() as c:
         c.executescript(SCHEMA)
         for table, col in (("jobs", "mode TEXT DEFAULT 'hype'"), ("jobs", "subtitles INTEGER DEFAULT 1"),
-                           ("clips", "headline TEXT DEFAULT ''")):  # columns added after v0.1
+                           ("clips", "headline TEXT DEFAULT ''"), ("jobs", "voiceover INTEGER DEFAULT 0")):  # columns added after v0.1
             try:
                 c.execute(f"ALTER TABLE {table} ADD COLUMN {col}")
             except sqlite3.OperationalError:

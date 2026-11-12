@@ -15,6 +15,10 @@ LIVE_CHUNK_SECONDS = int(os.getenv("LIVE_CHUNK_SECONDS", "600"))
 SHORT_HARD_MAX = 180  # YouTube Shorts can't be longer than 3 min; no clip of any kind ever exceeds it
 SHORT_MIN, SHORT_MAX = int(os.getenv("SHORT_MIN", "15")), min(int(os.getenv("SHORT_MAX", "60")), SHORT_HARD_MAX)
 LONG_MIN, LONG_MAX = int(os.getenv("LONG_MIN", "60")), min(int(os.getenv("LONG_MAX", "180")), SHORT_HARD_MAX)
+_logo = os.getenv("LOGO", str(ROOT / "clipper" / "assets" / "logo.png"))
+LOGO = Path(_logo) if _logo else None  # watermark on every clip; LOGO= (empty) in .env turns it off
+VOICE = os.getenv("VOICE", "")  # macOS voice for AI voice-overs (`say -v '?'` lists them); empty = system default
+CROP_ASPECT = min(max(float(os.getenv("CROP_ASPECT", "1")), 9 / 16), 16 / 9)  # kept part of the frame, w/h
 STRETCH_SHORT, STRETCH_LONG = int(os.getenv("STRETCH_SHORT", "10")), int(os.getenv("STRETCH_LONG", "10"))
 
 YT_CLIENT_SECRETS = Path(os.getenv("YT_CLIENT_SECRETS", ROOT / "client_secret.json"))

@@ -67,6 +67,7 @@
         <option value="manual">I'll cut it myself</option>
       </select></label>
       <label class="check"><input type="checkbox" name="subtitles" checked> Headline + subtitles</label>
+      <label class="check"><input type="checkbox" name="voiceover"> AI voice-over</label>
       <label class="check"><input type="checkbox" name="auto_upload" checked> Auto-upload (public)</label>
       <button>Start clipping</button>
     </form>
@@ -85,7 +86,7 @@ const post = (u, body) => fetch(u, {method:"POST", headers:{"Content-Type":"appl
 $("#f").onsubmit = async e => {
   e.preventDefault();
   const f = new FormData(e.target), file = f.get("file");
-  const opts = {shorts: +f.get("shorts"), longs: +f.get("longs"), auto_upload: f.has("auto_upload"), mode: f.get("mode"), subtitles: f.has("subtitles")};
+  const opts = {shorts: +f.get("shorts"), longs: +f.get("longs"), auto_upload: f.has("auto_upload"), mode: f.get("mode"), subtitles: f.has("subtitles"), voiceover: f.has("voiceover")};
   const btn = e.target.querySelector("button");
   let r;
   if (file && file.size) {
@@ -197,7 +198,7 @@ async function refresh() {
       <b>#${j.id}</b> ${j.is_live ? '<span class="badge live">LIVE</span>' : ""}
       <span>${esc(j.title || j.url)}</span>
       <span class="badge ${cls}">${esc(j.status)}</span>
-      <span class="dim">${j.mode === "manual" ? "manual cuts" : `${j.shorts} shorts · ${j.longs} long · ${esc(j.mode || "hype")}`}</span>
+      <span class="dim">${j.mode === "manual" ? "manual cuts" : `${j.shorts} shorts · ${j.longs} long · ${esc(j.mode || "hype")}`}${j.voiceover ? " · voice-over" : ""}</span>
       ${running ? `<button class="ghost" onclick="stopJob(${j.id})">Stop</button>` : ""}
     </div>
     <details ${openLogs.has(j.id) ? "open" : ""} ontoggle="this.open ? openLogs.add(${j.id}) : openLogs.delete(${j.id})">
