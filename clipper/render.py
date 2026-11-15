@@ -3,6 +3,7 @@ import shutil
 import subprocess
 import wave
 from functools import lru_cache
+from pathlib import Path
 
 from . import db
 from .config import CROP_ASPECT, END_CARD, FFMPEG, LOGO, VOICE
@@ -152,11 +153,30 @@ def encoder():
         if subprocess.run(test, capture_output=True, timeout=30).returncode == 0:
             db.syslog("render: GPU encoder (h264_nvenc)")
             return ["-c:v", "h264_nvenc", "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", "18", "-b:v", "0",
-                    "-maxrate", "25M", "-bufsize", "50M", "-profile:v", "high"]
+                    "-maxrate", "18M", "-bufsize", "36M", "-profile:v", "high"]
     except (OSError, subprocess.SubprocessError):
         pass
     db.syslog("render: CPU encoder (libx264)")
-    return ["-c:v", "libx264", "-preset", "medium", "-crf", "18", "-profile:v", "high"]
+    return ["-c:v", "libx264", "-preset", "medium", "-crf", "18", "-maxrate", "18M", "-bufsize", "36M", "-profile:v", "high"]
+    # ^ 18 Mbps cap: Instagram rejects Reels over 25 Mbps, and 1080x1920 looks no better above ~15
+
+
+FFPROBE = (str(Path(FFMPEG).with_name("ffprobe" + Path(FFMPEG).suffix)) if Path(FFMPEG).parent != Path(".")
+           else "ffprobe")
+
+
+def bitrate_mbps(path):
+    out = subprocess.run([FFPROBE, "-v", "error", "-show_entries", "format=bit_rate", "-of", "csv=p=0", str(path)],
+                         capture_output=True, text=True).stdout.strip()
+    return int(out) / 1e6 if out.isdigit() else 0
+
+
+def reencode(src, out, bitrate):
+    """Same video at a lower bitrate (for Instagram's 25 Mbps cap); audio copied."""
+    subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-i", str(src), *encoder()[:2], "-b:v", bitrate,
+                    "-maxrate", bitrate, "-bufsize", "28M", "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart",
+                    str(out)], check=True, capture_output=True)
+    return out
 
 
 def encoder_name():

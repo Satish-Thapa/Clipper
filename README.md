@@ -73,7 +73,9 @@ Put the keys in `.env`, then restart the server.
    (a Page token from a long-lived user token doesn't expire).
 5. Call `GET /<FB_PAGE_ID>?fields=instagram_business_account`. Copy that id → `IG_USER_ID`.
 
-Facebook clips up to 90s go up as Reels, and longer ones as normal Page videos. Instagram posts every clip as a Reel.
+Facebook clips up to 90s go up as Reels, and longer ones as normal Page videos. Instagram posts clips up to `IG_MAX_SECONDS` (30) as Reels; its API often rejects longer ones,
+so those get a red **↑ Instagram (may fail)** button on the clip card instead. Files over 20 Mbps are re-encoded for
+Instagram (its limit is 25 Mbps), and a `ProcessingFailedError` is retried once.
 While the Meta app is in Development mode, only you (the app admin) can post, which is fine for your own Page.
 
 **TikTok** (Content Posting API):
@@ -102,36 +104,43 @@ It's sent with Meta's official **WhatsApp Cloud API**, from the Meta app you use
 YouTube views need read access: click **Reconnect YouTube** once (older logins could only upload).
 TikTok doesn't give view counts for private app posts, so it's listed as unavailable until your TikTok app is audited.
 
-## Auto research (hands-off mode)
+## Autopilot (hands-off mode)
 
-The **Auto** page runs the whole thing by itself, once a day. Settings:
+The **Auto** page. Flip the switch ON and set:
 
-- **Niche** (optional), e.g. "GTA 5, GTA 6 and gaming". Leave it empty and the autopilot decides: it searches broadly
-  (gaming, streamers, podcasts, sports, viral moments) and picks whatever has the most momentum this week.
-- **Videos to research / day**: how many candidate videos it judges (DeepSeek score + face check) before choosing.
-- **Videos to clip / day**: of those, how many get clipped and uploaded. **Shorts / Long per video**: clips from each.
-- **Upload timing**: as soon as each clip is ready, or one clip every 30 min / 1 h / 2 h / 4 h / 6 h (clips wait as
-  "scheduled" and go up one at a time, spreading posts over the day).
-- Framing, 4K, subtitles, voice-over, face check, where to upload, and the hour the daily round starts.
+- **Niche** (optional). Leave it empty and the autopilot picks whatever has the most momentum this week.
+- **Posts per day** and the **posting hours** (e.g. 6 a day between 10:00 and 22:00 = one every 2 h). Quick presets:
+  3 a day, 6 a day, every hour. The page spells out the plan as you type.
+- **Clips per video**, where to post, and how the clips look. **Advanced**: how choosy it is (videos judged per video
+  clipped), when it starts finding videos, long clips, face check, keep source videos.
 
-Tick **Auto research ON** and **Save**.
-After the chosen hour each day it:
+Each day, from the start hour, it works out how many clips today still needs (posts per day − posted − waiting − being
+made), finds trending topics (this week's most-viewed YouTube videos, read by DeepSeek), and clips just enough videos.
+Finished clips wait as **scheduled** and go up on the day's slots. If clips run late it catches up, but never posts
+closer than half a gap apart. If the day runs short (failed videos), up to 2 top-up rounds follow. Clips that miss the
+window go first tomorrow. Source videos are deleted once clipped (0.5-2 GB each) unless **Keep source videos** is on.
 
-1. searches YouTube (US, this week) for the niche and collects the most-viewed videos,
-2. asks DeepSeek which 1-3 topics are trending in them (YouTube's Trending page no longer exists),
-3. splits your videos-per-day over those topics and queues them as normal topics,
-4. and the topic flow does the rest: clippability + face check, download, clip, render, upload.
+- **Edit anytime**: saving applies right away, also to topics already queued or being clipped and to scheduled posts.
+- **OFF**: no new rounds, no posts; what's being clipped finishes and waits.
+- **■ Stop everything**: OFF + stops the running round, every autopilot topic and job, and cancels scheduled posts
+  (the clips stay on the Clips page).
 
-**Run now** does a round immediately. The Auto page shows what it's doing right **now** (e.g. "searching YouTube: gta 6
-leaks", "working on T12: clipping 1/2", "idle"), and an **Activity** view of every round, section by section: the
-searches it ran and how many videos each found, the most-viewed videos it read, the topics it decided on and why, and
-per topic which videos it judged (score + reason, kept or skipped), the face check numbers, which videos it clipped,
-each job's steps with timings, the clips it made (and why), and where each clip was uploaded.
+The **Today** panel shows posts done / planned, the next post, the posting slots, clips waiting and being made. The
+**Activity** view shows every round section by section: searches, the most-viewed videos it read, the topics it chose
+and why, each video it judged, face checks, jobs, clips and where each was posted.
 
-**Upload limits:** when a platform's API says its upload limit is reached, the autopilot leaves that platform out
-until its 24h timer ends (the clip can still be uploaded by hand later). If every platform it uploads to is at its
-limit, it pauses rounds altogether and resumes by itself when the timers end. Manual uploads are never held back. Reports (views per platform, best platform, top clips) are made every hour and listed
-on the **Reports** page, and also sent on WhatsApp when that's set up.
+**Upload limits:** when a platform's API says its limit is reached, the autopilot skips that platform until its 24h
+timer ends. If every platform is at its limit, rounds pause. Manual uploads are never held back.
+
+**YouTube bot check** ("Sign in to confirm you're not a bot"): YouTube wants a signed-in browser. On the **Socials**
+page, **YouTube cookies** takes a `cookies.txt` exported from a logged-in youtube.com tab (Chrome extension
+"Get cookies.txt LOCALLY"; a spare Google account is safest). It's saved as `cookies.txt` (gitignored) and used for every
+download, search and face check. Or set `YT_COOKIES_FROM_BROWSER=firefox` in `.env` (Chrome/Edge on Windows lock their
+cookies). After a bot check, rounds wait 2 h or until new cookies are added, and the topic stops instead of failing
+every video.
+
+Reports (views per platform, best platform, top clips) are made every hour and listed on the **Reports** page, and
+also sent on WhatsApp when that's set up.
 
 ## Topics (auto-find videos)
 

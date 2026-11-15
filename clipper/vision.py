@@ -38,7 +38,8 @@ def tiles(img, rows, cols, w, h):
 def frames(url, n=FRAMES):
     """~n storyboard frames spread evenly over the video ([] if YouTube has no storyboard for it)."""
     import cv2
-    with yt_dlp.YoutubeDL({"quiet": True, "skip_download": True, "no_warnings": True}) as y:
+    from .download import ydl
+    with ydl({"quiet": True, "skip_download": True, "no_warnings": True}) as y:
         info = y.extract_info(url, download=False)
     sbs = [f for f in info.get("formats", []) if f.get("format_id", "").startswith("sb") and f.get("fragments")]
     if not sbs:

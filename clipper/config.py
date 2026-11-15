@@ -23,6 +23,11 @@ VOICE = os.getenv("VOICE", "")  # voice-over voice (macOS 'say' / Windows SAPI n
 CROP_ASPECT = min(max(float(os.getenv("CROP_ASPECT", "1")), 9 / 16), 16 / 9)  # kept part of the frame, w/h
 STRETCH_SHORT, STRETCH_LONG = int(os.getenv("STRETCH_SHORT", "10")), int(os.getenv("STRETCH_LONG", "10"))
 
+# "Sign in to confirm you're not a bot": YouTube wants a signed-in browser's cookies. Export cookies.txt from a
+# logged-in youtube.com tab (extension "Get cookies.txt LOCALLY") to YT_COOKIES, or upload it on the Socials page.
+# Or YT_COOKIES_FROM_BROWSER=firefox (Chrome/Edge on Windows lock + encrypt their cookies, so yt-dlp can't read them).
+YT_COOKIES = Path(os.getenv("YT_COOKIES", ROOT / "cookies.txt"))
+YT_COOKIES_FROM_BROWSER = os.getenv("YT_COOKIES_FROM_BROWSER", "")
 YT_CLIENT_SECRETS = Path(os.getenv("YT_CLIENT_SECRETS", ROOT / "client_secret.json"))
 YT_TOKEN = DATA / "youtube_token.json"
 
@@ -30,9 +35,12 @@ YT_TOKEN = DATA / "youtube_token.json"
 GRAPH_VERSION = os.getenv("GRAPH_VERSION", "v23.0")
 FB_PAGE_ID, FB_PAGE_TOKEN = os.getenv("FB_PAGE_ID", ""), os.getenv("FB_PAGE_TOKEN", "")
 IG_USER_ID, IG_TOKEN = os.getenv("IG_USER_ID", ""), os.getenv("IG_TOKEN", "") or FB_PAGE_TOKEN
-# Instagram's API currently rejects Reels longer than ~30s for this account (ProcessingFailedError / 2207076, tested
-# 2026-11-15 with plain test videos too). Longer clips skip Instagram. Raise it, or 0 = no limit, once Meta fixes it.
+# Instagram's API often rejects longer Reels for this account (ProcessingFailedError / 2207076; a 29.4s clip failed,
+# then went through on a retry). Longer clips skip Instagram automatically; the UI's red button still tries. 0 = off.
 IG_MAX_SECONDS = float(os.getenv("IG_MAX_SECONDS", "30"))
+# Instagram's Reels spec caps video at 25 Mbps (a 20s clip at 25.3 Mbps failed): files above this are re-encoded
+# to IG_BITRATE for Instagram only.
+IG_MAX_MBPS, IG_BITRATE = 20, "14M"
 # TikTok Content Posting API. The refresh token rotates, so the current one lives in data/tiktok_token.json.
 TIKTOK_CLIENT_KEY, TIKTOK_CLIENT_SECRET = os.getenv("TIKTOK_CLIENT_KEY", ""), os.getenv("TIKTOK_CLIENT_SECRET", "")
 TIKTOK_REFRESH_TOKEN = os.getenv("TIKTOK_REFRESH_TOKEN", "")

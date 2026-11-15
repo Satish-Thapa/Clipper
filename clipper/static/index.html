@@ -86,6 +86,27 @@
   #tf { margin-top:14px; padding-top:14px; border-top:1px solid var(--line); }
   #tf[hidden] { display:none; }
   input[name=topic] { width:min(420px, 100%); }
+  .ap-top { display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
+  .switch { position:relative; width:58px; height:32px; flex:none; cursor:pointer; }
+  .switch input { opacity:0; width:0; height:0; }
+  .switch span { position:absolute; inset:0; background:var(--line); border-radius:99px; transition:.2s; }
+  .switch span::after { content:""; position:absolute; left:4px; top:4px; width:24px; height:24px; border-radius:50%; background:#fff; transition:.2s; }
+  .switch input:checked + span { background:var(--ok); } .switch input:checked + span::after { transform:translateX(26px); }
+  .apf { display:grid; gap:14px; } .apf .grp { border:1px solid var(--line); border-radius:10px; padding:12px 14px; display:grid; gap:10px; }
+  .apf h4 { margin:0; font-size:13px; color:var(--text); letter-spacing:.3px; }
+  .presets { font-size:13px; display:flex; gap:12px; flex-wrap:wrap; }
+  .plan { font-size:14px; background:var(--bg); border-radius:8px; padding:10px 12px; line-height:1.6; }
+  .plan b { color:var(--ok); }
+  .slots { display:flex; gap:4px; flex-wrap:wrap; margin:10px 0 6px; }
+  .slots span { flex:1; min-width:34px; max-width:80px; text-align:center; font-size:11px; padding:6px 2px; border-radius:6px;
+    background:var(--bg); border:1px solid var(--line); color:var(--dim); }
+  .slots .done { background:#123d2c; border-color:#1f6b4c; color:var(--ok); } .slots .next { border-color:var(--hot); color:var(--text); }
+  .stats { display:flex; gap:28px; flex-wrap:wrap; } .stats div { font-size:13px; color:var(--dim); }
+  .stats b { display:block; font-size:26px; color:var(--text); }
+  .alert { background:#3a1414; border:1px solid #7a2a2a; color:#ffd0d0; border-radius:10px; padding:12px 16px; font-size:14px; margin-bottom:0; }
+  .alert.warn { background:#3a2c10; border-color:#6a5010; color:#ffe2a8; }
+  button.danger { background:transparent; border:1px solid #7a2a2a; color:#f66; }
+  button.ig-risk { background:#c0283c; color:#fff; border:0; }
   .ups { display:flex; gap:8px; flex-wrap:wrap; font-size:12px; } .ups .err { color:#f66; cursor:help; }
 </style>
 </head>
@@ -137,47 +158,73 @@
  </div>
 
  <div class="page" id="page-auto">
-  <div class="page-head"><h2>Auto research</h2><p>Once a day it finds what's trending in your niche (this week's most-viewed
-    YouTube videos, read by DeepSeek), queues those topics, and the normal flow clips and uploads them. You set how many
-    videos a day; it does the rest.</p></div>
+  <div class="page-head"><h2>Autopilot</h2><p>Tell it how many clips to post a day and when. Every day it finds what's
+    trending (this week's most-viewed YouTube videos, read by DeepSeek), clips the best videos and posts them spread
+    over your posting hours. Changes apply right away, even while it's working.</p></div>
+  <section class="panel ap-top">
+    <label class="switch"><input type="checkbox" id="apOn" onchange="toggleAuto(this)"><span></span></label>
+    <div style="flex:1;min-width:220px"><div id="apState" class="now"></div><div id="apSub" class="dim" style="font-size:13px"></div></div>
+    <button type="button" class="ghost" id="autorun" onclick="runAuto(this)" title="find trends and queue videos now, without waiting for the daily round">▶ Run a round now</button>
+    <button type="button" class="ghost danger" id="apStop" onclick="stopAuto(this)" title="turn it OFF, stop every autopilot topic and job, and cancel the scheduled posts">■ Stop everything</button>
+  </section>
+  <div id="apAlerts"></div>
+  <section class="panel"><h3>Today</h3><div id="apToday"></div></section>
   <section class="panel">
-    <form id="af">
-      <label class="check" style="font-size:16px"><input type="checkbox" name="enabled"> <b>Auto research ON</b></label>
-      <label>Niche (optional)<input name="niche" style="width:min(320px,100%)" placeholder="empty = anything trending, autopilot decides"></label>
-      <label title="How many candidate videos it judges (DeepSeek score + face check) before choosing. More = choosier, slower.">Videos to research / day<input type="number" name="research_per_day" min="1" max="100"></label>
-      <label title="Of the researched videos, how many get clipped and uploaded.">Videos to clip / day<input type="number" name="videos_per_day" min="1" max="30"></label>
-      <label>Shorts per video<input type="number" name="shorts" min="0" max="20"></label>
-      <label>Long per video<input type="number" name="longs" min="0" max="10"></label>
-      <label>Daily round after<select name="hour"></select></label>
-      <label title="Spreads the autopilot's uploads over the day instead of posting every clip at once.">Upload timing<select name="upload_every">
-        <option value="0">As soon as each clip is ready</option>
-        <option value="30">One clip every 30 min</option>
-        <option value="60">One clip every hour</option>
-        <option value="120">One clip every 2 hours</option>
-        <option value="240">One clip every 4 hours</option>
-        <option value="360">One clip every 6 hours</option>
-      </select></label>
-      <label>Who picks the moments<select name="mode">
-        <option value="hype">AI picks from hype curves (fast)</option>
-        <option value="ai+hype">AI reads full transcript, curves as hints</option>
-        <option value="ai">AI reads full transcript only</option>
-      </select></label>
-      <label>Framing<select name="aspect" class="aspect">
-        <option value="0.5625">Full screen 9:16 (fills the phone)</option>
-        <option value="0.8">4:5 (a bit wider, thin bars)</option>
-        <option value="1">Square 1:1 (more of the scene)</option>
-        <option value="1.7778">Whole frame 16:9 (nothing cut off)</option>
-      </select></label>
-      <label class="check"><input type="checkbox" name="subtitles"> Headline + subtitles</label>
-      <label class="check"><input type="checkbox" name="hq"> 4K quality</label>
-      <label class="check"><input type="checkbox" name="voiceover"> AI voice-over</label>
-      <label class="check"><input type="checkbox" name="face_check"> Skip videos that are mostly a person</label>
-      <fieldset class="pf" data-default=""><legend>Upload to (none = don't upload)</legend></fieldset>
-      <button>Save</button>
-      <button type="button" class="ghost" id="autorun" onclick="runAuto(this)">▶ Run now</button>
+    <h3>Settings</h3>
+    <form id="af" class="apf">
+      <div class="grp"><h4>1 · What to post</h4>
+        <label>Niche (optional)<input name="niche" style="width:min(420px,100%)" placeholder="empty = anything trending, autopilot decides"></label>
+        <fieldset class="pf" data-default=""><legend>Post to (none = make clips, don't post)</legend></fieldset>
+      </div>
+      <div class="grp"><h4>2 · How much and when</h4>
+        <div class="row" style="align-items:end">
+          <label>Posts per day<input type="number" name="posts_per_day" min="1" max="48"></label>
+          <label>Between<select name="post_from"></select></label>
+          <label>and<select name="post_to"></select></label>
+          <label>Clips per video<input type="number" name="shorts" min="0" max="20"></label>
+        </div>
+        <div class="presets dim">Quick:
+          <a href="#auto" onclick="return preset(3, 12, 21)">3 a day</a>
+          <a href="#auto" onclick="return preset(6, 10, 22)">6 a day</a>
+          <a href="#auto" onclick="return preset(12, 8, 24)">every hour (12)</a>
+          <a href="#auto" onclick="return preset(24, 0, 24)">every hour, all day (24)</a></div>
+        <div id="apPlan" class="plan"></div>
+      </div>
+      <div class="grp"><h4>3 · How the clips look</h4>
+        <div class="row" style="align-items:end">
+          <label>Framing<select name="aspect" class="aspect">
+            <option value="0.5625">Full screen 9:16 (fills the phone)</option>
+            <option value="0.8">4:5 (a bit wider, thin bars)</option>
+            <option value="1">Square 1:1 (more of the scene)</option>
+            <option value="1.7778">Whole frame 16:9 (nothing cut off)</option>
+          </select></label>
+          <label class="check"><input type="checkbox" name="subtitles"> Headline + subtitles</label>
+          <label class="check"><input type="checkbox" name="voiceover"> AI voice-over</label>
+          <label class="check"><input type="checkbox" name="hq"> 4K source (sharper, slower)</label>
+        </div>
+      </div>
+      <details class="grp"><summary><h4 style="display:inline">Advanced</h4></summary>
+        <div class="row" style="align-items:end;margin-top:10px">
+          <label title="For every video it clips, how many candidates it judges first (DeepSeek score + face check).">How choosy<select name="choosy">
+            <option value="2">Relaxed (2 candidates per video)</option>
+            <option value="3">Normal (3 per video)</option>
+            <option value="5">Picky (5 per video)</option>
+            <option value="8">Very picky (8 per video)</option>
+          </select></label>
+          <label title="When the day's first round starts finding videos. Clipping takes ~5-15 min per video.">Start finding videos at<select name="hour"></select></label>
+          <label>Long clips per video<input type="number" name="longs" min="0" max="10"></label>
+          <label>Who picks the moments<select name="mode">
+            <option value="hype">AI picks from hype curves (fast)</option>
+            <option value="ai+hype">AI reads full transcript, curves as hints</option>
+            <option value="ai">AI reads full transcript only</option>
+          </select></label>
+          <label class="check"><input type="checkbox" name="face_check"> Skip videos that are mostly a person</label>
+          <label class="check" title="Source videos are 0.5-2 GB each. Off = deleted once clipped (clips are kept)."><input type="checkbox" name="keep_sources"> Keep source videos</label>
+        </div>
+      </details>
+      <div class="row"><button>Save</button><span class="dim" id="apSaved" style="font-size:13px">Applies right away, also to videos already queued or being clipped.</span></div>
     </form>
   </section>
-  <section class="panel"><h3 style="margin-top:0">Now</h3><div id="autonow"></div><div id="autolast"></div></section>
   <section class="panel"><h3 style="margin-top:0">Activity</h3>
     <p class="dim" style="margin-top:0;font-size:13px">Every round: what it searched, what it saw trending, what it decided,
       and what happened to each topic, video and clip. Click a section to open it.</p>
@@ -283,6 +330,7 @@ const picked = form => [...form.querySelectorAll("input[name=pf]:checked")].flat
 // connected members of a target, and the ones a clip isn't on yet
 const live = (s, t) => TARGETS[t].filter(p => s.platforms[p]);
 const fitsIG = c => !igMax || c.end - c.start <= igMax;
+const igRisky = (s, c) => s.platforms.instagram && !fitsIG(c) && !(JSON.parse(c.uploads || "{}").instagram || {}).id;
 const notOn = (s, c, t) => live(s, t).filter(p => !(JSON.parse(c.uploads || "{}")[p] || {}).id && (p !== "instagram" || fitsIG(c)));
 
 $("#f").onsubmit = async e => {
@@ -328,9 +376,9 @@ async function connectYT(btn) {
   refresh();
 }
 // Upload one clip to one platform (waits for the result), or every clip that isn't on a platform yet (background).
-async function uploadTo(id, platforms, btn) {
+async function uploadTo(id, platforms, btn, force = false) {
   btn.disabled = true; btn.textContent = "Uploading…";
-  await post(`/api/clips/${id}/upload`, platforms.split(",")); clipKey = ""; refresh();
+  await post(`/api/clips/${id}/upload${force ? "?force=true" : ""}`, platforms.split(",")); clipKey = ""; refresh();
 }
 async function uploadAll(t, n, btn) {
   if (!confirm(`Upload ${n} clip(s) to ${TARGET_NAMES[t]}? They go up one by one in the background.`)) return;
@@ -339,6 +387,13 @@ async function uploadAll(t, n, btn) {
   if (!r.ok) alertBox(await r.text());
   clipKey = ""; refresh();
 }
+async function sendCookies(el) {
+  const f = el.files[0]; if (!f) return;
+  const r = await fetch("/api/cookies", {method: "POST", body: await f.text()});
+  if (!r.ok) return alertBox((await r.json()).detail);
+  alertBox("YouTube cookies saved ✓ Downloads use them from now on (no restart needed)."); refresh();
+}
+async function dropCookies() { if (confirm("Remove the YouTube cookies?")) { await fetch("/api/cookies", {method: "DELETE"}); refresh(); } }
 async function uploadClip(id, btn) { btn.disabled = true; btn.textContent = "Uploading…"; await post(`/api/clips/${id}/upload`); clipKey = ""; refresh(); }
 async function deleteClip(id) {
   if (!confirm("Delete this clip file? (A YouTube copy, if any, stays up.)")) return;
@@ -461,26 +516,86 @@ function tick() {
 }
 setInterval(tick, 1000);
 
-// ---- Auto research ----
-$("#af").hour.innerHTML = Array.from({length: 24}, (_, h) => `<option value="${h}">${String(h).padStart(2, "0")}:00</option>`).join("");
-let autoLoaded = false;
+// ---- Autopilot ----
+const hh = h => `${String(h).padStart(2, "0")}:00`;
+$("#af").hour.innerHTML = Array.from({length: 24}, (_, h) => `<option value="${h}">${hh(h)}</option>`).join("");
+$("#af").post_from.innerHTML = Array.from({length: 24}, (_, h) => `<option value="${h}">${hh(h)}</option>`).join("");
+$("#af").post_to.innerHTML = Array.from({length: 24}, (_, h) => `<option value="${h + 1}">${h + 1 === 24 ? "midnight" : hh(h + 1)}</option>`).join("");
+const clock = t => new Date(t * 1000).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"});
+const dur = m => m >= 60 ? `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ""}` : `${m} min`;
+let autoLoaded = false, autoSt = null;
+const AUTO_KEYS = ["niche", "posts_per_day", "post_from", "post_to", "shorts", "longs", "choosy", "hour", "mode"];
+const AUTO_CHECKS = ["subtitles", "hq", "voiceover", "face_check", "keep_sources"];
 function fillAuto(st) {
   const f = $("#af"), a = st.settings;
-  for (const k of ["niche", "research_per_day", "videos_per_day", "shorts", "longs", "mode", "hour", "upload_every"]) f[k].value = a[k];
-  for (const k of ["enabled", "subtitles", "hq", "voiceover", "face_check"]) f[k].checked = !!a[k];
+  for (const k of AUTO_KEYS) f[k].value = a[k];
+  for (const k of AUTO_CHECKS) f[k].checked = !!a[k];
   f.aspect.value = [...f.aspect.options].reduce((b, o) => Math.abs(o.value - a.aspect) < Math.abs(b.value - a.aspect) ? o : b).value;
   f.querySelectorAll("input[name=pf]").forEach(i => i.checked = i.value.split(",").every(p => a.platforms.includes(p)));
+  planText();
+}
+function formAuto() {
+  const f = $("#af"), d = new FormData(f), o = {niche: d.get("niche"), mode: d.get("mode"), aspect: +d.get("aspect"), platforms: picked(f)};
+  for (const k of AUTO_KEYS.filter(k => !["niche", "mode"].includes(k))) o[k] = +d.get(k);
+  for (const k of AUTO_CHECKS) o[k] = d.has(k);
+  return o;
+}
+function preset(n, from, to) {
+  const f = $("#af"); f.posts_per_day.value = n; f.post_from.value = from; f.post_to.value = to;
+  autoDirty = true; planText(); return false;
+}
+function planText() {  // the plan in plain words, updated as you type
+  const o = formAuto(), n = Math.max(1, o.posts_per_day || 1), hours = o.post_to - o.post_from;
+  const per = Math.max(1, (o.shorts || 0) + (o.longs || 0)), videos = Math.ceil(n / per);
+  const where = o.platforms.length ? o.platforms.map(p => PLATFORMS[p]).join(", ") : "nowhere (clips only)";
+  $("#apPlan").innerHTML = hours <= 0 ? `<span class="no">The posting window must end after it starts.</span>` :
+    `Posts <b>${n} clip${n > 1 ? "s" : ""} a day</b> to ${esc(where)}, between <b>${hh(o.post_from)}</b> and <b>${o.post_to === 24 ? "midnight" : hh(o.post_to)}</b>
+     → <b>one every ${dur(Math.round(hours * 60 / n))}</b>${n / hours > 2 ? ` <span style="color:var(--warn)">(that's ${(n / hours).toFixed(1)} an hour: fast for one channel)</span>` : ""}.<br>
+     <span class="dim">From ${hh(o.hour)} it researches ~${videos * o.choosy} trending videos, clips the best ${videos} (${per} clip${per > 1 ? "s" : ""} each),
+     and tops up later if the day runs short. Clips not posted by the end of the window go first tomorrow.
+     ${o.platforms.includes("youtube") && n > 6 ? `<br><span style="color:var(--warn)">YouTube usually allows ~6-10 API uploads a day; past that it says "limit exceeded" and the autopilot skips YouTube until the 24h timer ends.</span>` : ""}
+     ${o.platforms.includes("instagram") ? `<br>Instagram only gets clips up to ${igMax}s (longer ones often fail there).` : ""}</span>`;
 }
 function showAuto(st, s) {
-  const l = st.last, when = t => new Date(t * 1000).toLocaleString();
-  $("#n-auto").textContent = st.settings.enabled ? "ON" : "";
-  $("#autorun").disabled = st.running; $("#autorun").textContent = st.running ? "Finding trends…" : "▶ Run now";
-  const lim = Object.entries(s.limit_timers || {}).filter(([p]) => st.settings.platforms.includes(p));
-  const paused = st.settings.platforms.length && lim.length === st.settings.platforms.length;
-  const limitNote = lim.length ? `<p style="color:${paused ? "#f66" : "var(--warn)"}">⏱ ${paused ? "<b>Autopilot paused</b>: every"
-    : "Upload limit reached on"} ${lim.map(([p, t]) => `${PLATFORMS[p]} (until ${new Date(t.until * 1000).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"})})`).join(", ")}${
-    paused ? " platform it uploads to is at its limit. It resumes by itself when the timers end." : ". Autopilot skips it until then."}</p>` : "";
-  $("#autolast").innerHTML = limitNote;  // rounds themselves are in the Activity view
+  autoSt = st;
+  const a = st.settings, sc = st.schedule, now = Date.now() / 1000;
+  $("#n-auto").textContent = a.enabled ? "ON" : "";
+  if (document.activeElement !== $("#apOn")) $("#apOn").checked = a.enabled;
+  const active = s.topics.filter(t => t.source === "auto" && !["done","failed","stopped","interrupted","queued"].includes(t.status));
+  const queued = s.topics.filter(t => t.source === "auto" && t.status === "queued");
+  const doing = st.running ? `<span class="spin">⟳</span> Finding trends: ${esc(st.stage || "starting")}`
+    : active.length ? `<span class="spin">⟳</span> Clipping T${active[0].id} "${esc(active[0].topic)}": ${esc(active[0].status)}` : "";
+  $("#apState").innerHTML = a.enabled ? `<b class="ok">ON</b> · ${doing || "💤 waiting for the next post or round"}`
+    : `<b class="dim">OFF</b>${doing ? ` · finishing up: ${doing}` : " · nothing is posted and no rounds run"}`;
+  $("#apSub").textContent = a.enabled ? `${sc.posts_per_day} posts a day, ${hh(a.post_from)}–${a.post_to === 24 ? "midnight" : hh(a.post_to)}, one every ${dur(sc.every_min)}`
+    + (queued.length ? ` · ${queued.length} topic(s) queued` : "") : "Flip the switch to start. Settings below.";
+  $("#autorun").disabled = st.running; $("#autorun").textContent = st.running ? "Finding trends…" : "▶ Run a round now";
+  $("#apStop").disabled = !a.enabled && !st.running && !active.length && !queued.length && !st.scheduled;
+  // alerts: bot check, upload limits
+  const lim = Object.entries(s.limit_timers || {}).filter(([p]) => a.platforms.includes(p));
+  const allLim = a.platforms.length && lim.length === a.platforms.length;
+  $("#apAlerts").innerHTML = (st.bot_check ? `<div class="alert">🤖 <b>YouTube's bot check</b> ("Sign in to confirm you're not a bot") stopped
+      downloads at ${clock(st.bot_check)}. New rounds wait 2 h. Fix: add YouTube cookies on the <a href="#socials">Socials page</a>, then rounds resume by themselves.</div>` : "")
+    + (lim.length ? `<div class="alert ${allLim ? "" : "warn"}">⏱ ${allLim ? "<b>Paused</b>: every platform it posts to is at its upload limit"
+      : "Upload limit reached on"} ${lim.map(([p, t]) => `${PLATFORMS[p]} (until ${clock(t.until)})`).join(", ")}.
+      ${allLim ? "It resumes by itself when the timers end." : "The autopilot skips it until then."}</div>` : "");
+  // today: slots + numbers
+  const [w0, w1] = sc.window, every = (w1 - w0) / sc.posts_per_day;
+  const slots = Array.from({length: sc.posts_per_day}, (_, i) => w0 + i * every);
+  const nextIdx = sc.posted_today < sc.posts_per_day && now < w1 ? sc.posted_today : -1;
+  const nextTxt = !a.enabled ? "off" : !st.scheduled ? (sc.posted_today >= sc.posts_per_day ? "done for today" : "waiting for clips")
+    : sc.next_at - now < 60 ? "any moment" : (sc.next_at > w1 ? "tomorrow " : "") + clock(sc.next_at);
+  $("#apToday").innerHTML = `<div class="stats">
+      <div><b>${sc.posted_today} / ${sc.posts_per_day}</b>posted today</div>
+      <div><b>${nextTxt}</b>next post</div>
+      <div><b>${st.scheduled}</b>clips waiting</div>
+      <div><b>${st.coming ? "~" + st.coming : 0}</b>clips being made</div>
+      <div><b>${st.need}</b>still to find today</div>
+      <div><b>${st.rounds_today} / ${st.max_rounds}</b>rounds today</div></div>
+    <div class="slots">${slots.map((t, i) => `<span class="${i < sc.posted_today ? "done" : i === nextIdx ? "next" : ""}"
+      title="slot ${i + 1}">${clock(t)}</span>`).join("")}</div>
+    <div class="dim" style="font-size:12px">Each box is a posting slot (green = posted). A clip goes up on its slot when one is ready;
+      if clips run late, it catches up, never posting closer than half a gap apart.</div>`;
   renderActivity(st, s);
 }
 async function loadAuto(s) {
@@ -488,6 +603,21 @@ async function loadAuto(s) {
   st.rounds = await (await fetch("/api/auto/rounds")).json();
   if (!autoLoaded || !$("#af").contains(document.activeElement) && !autoDirty) { fillAuto(st); autoLoaded = true; }
   showAuto(st, s);
+}
+async function toggleAuto(el) {
+  if (!el.checked && !confirm("Turn the autopilot OFF?\n\nNo new rounds and no posts. Videos being clipped right now still finish, and their clips wait until you turn it back on.\n(Use ■ Stop everything to stop those too.)")) { el.checked = true; return; }
+  const r = await post("/api/auto", {enabled: el.checked});
+  if (!r.ok) { el.checked = !el.checked; return alertBox(await r.text()); }
+  refresh();
+}
+async function stopAuto(btn) {
+  if (!confirm("Stop everything the autopilot is doing?\n\n• turns it OFF\n• stops the round that's finding trends\n• stops every autopilot topic and the video being clipped\n• cancels every scheduled post (the clips stay on the Clips page, you can post them by hand)")) return;
+  btn.disabled = true; btn.textContent = "Stopping…";
+  const r = await post("/api/auto/stop");
+  const j = r.ok ? await r.json() : null;
+  btn.textContent = j ? `Stopped ✓ (${j.topics} topic(s), ${j.clips} post(s))` : "■ Stop everything";
+  if (!r.ok) alertBox(await r.text());
+  setTimeout(() => btn.textContent = "■ Stop everything", 4000); refresh();
 }
 // ---- Activity view: one card per round, sections you can open ----
 // Which sections are open survives the 2s refresh. The newest round starts fully open; anything you close stays closed.
@@ -551,15 +681,6 @@ function topicSection(rt, s) {
     + (P.errors.length ? `<div class="no" style="font-size:12px">${P.errors.map(esc).join("<br>")}</div>` : ""));
 }
 function renderActivity(st, s) {
-  const stage = st.running ? `<span class="spin">⟳</span> <b>Finding trends</b>: ${esc(st.stage || "starting")}` : "";
-  const active = s.topics.filter(t => t.source === "auto" && !["done","failed","stopped","interrupted","queued"].includes(t.status));
-  const queued = s.topics.filter(t => t.source === "auto" && t.status === "queued");
-  const nxt = st.settings.enabled ? `next daily round after ${String(st.settings.hour).padStart(2, "0")}:00` : "auto research is OFF";
-  $("#autonow").innerHTML = `<div class="now">${stage || (active.length ? `<span class="spin">⟳</span> <b>Working on</b> T${active[0].id}
-    "${esc(active[0].topic)}": ${esc(active[0].status)}` : `💤 Idle · ${nxt}`)}${queued.length ? ` · ${queued.length} topic(s) waiting` : ""}</div>
-    ${st.scheduled ? `<div class="dim" style="margin-top:6px">⏰ ${st.scheduled} clip(s) scheduled · next upload ${st.next_upload
-      ? (st.next_upload - Date.now() / 1000 < 60 ? "within a minute" : "at " + new Date(st.next_upload * 1000).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"}))
-      : "within a minute"} (one every ${st.settings.upload_every || 0} min)</div>` : ""}`;
   const key = JSON.stringify([st.rounds.map(r => r.id), s.topics.filter(t => t.source === "auto").map(t => [t.id, t.status, t.log.length]),
     s.jobs.map(j => [j.id, j.status, (j.log || "").length]), s.clips.map(c => [c.id, c.status, c.uploads])]);
   if (key === actKey) return;
@@ -589,16 +710,12 @@ function renderActivity(st, s) {
   }).join("") : `<p class="empty">No rounds yet. Press ▶ Run now to see it work.</p>`;
 }
 let autoDirty = false;
-$("#af").oninput = () => autoDirty = true;
+$("#af").oninput = () => { autoDirty = true; planText(); };
+$("#af").onchange = () => planText();
 $("#af").onsubmit = async e => {
   e.preventDefault();
-  const f = new FormData(e.target);
-  const body = {enabled: f.has("enabled"), niche: f.get("niche"), research_per_day: +f.get("research_per_day"), upload_every: +f.get("upload_every"), videos_per_day: +f.get("videos_per_day"),
-    shorts: +f.get("shorts"), longs: +f.get("longs"), hour: +f.get("hour"), mode: f.get("mode"), aspect: +f.get("aspect"),
-    subtitles: f.has("subtitles"), hq: f.has("hq"), voiceover: f.has("voiceover"), face_check: f.has("face_check"),
-    platforms: picked(e.target)};
-  const r = await post("/api/auto", body);
-  if (!r.ok) return alertBox(await r.text());
+  const r = await post("/api/auto", formAuto());
+  if (!r.ok) return alertBox((await r.json()).detail || "could not save");
   autoDirty = false; e.target.querySelector("button").textContent = "Saved ✓";
   setTimeout(() => e.target.querySelector("button").textContent = "Save", 1500); refresh();
 };
@@ -635,7 +752,9 @@ async function refresh() {
   $("#banner").innerHTML = Object.entries(limitTimers).map(([p, l]) =>
     `⏱ <b>${PLATFORMS[p]} upload limit exceeded</b> at ${hhmm(l.hit_at)}. 24h are up in <b class="countdown" data-until="${l.until}"></b>`)
     .concat(Object.entries(up).filter(([p, u]) => u.error && !limitTimers[p]).map(([p, u]) =>
-    `⚠ <b>${PLATFORMS[p]} upload failed</b> (clip #${u.error.clip}, ${hhmm(u.error.at)}): ${esc(u.error.error)}`)).join("<br>");
+    `⚠ <b>${PLATFORMS[p]} upload failed</b> (clip #${u.error.clip}, ${hhmm(u.error.at)}): ${esc(u.error.error)}`))
+    .concat(s.youtube_cookies.bot_check_at ? [`🤖 <b>YouTube bot check</b> at ${hhmm(s.youtube_cookies.bot_check_at)}: "Sign in to confirm
+      you're not a bot". Downloads fail until you add YouTube cookies on the <a href="#socials">Socials page</a>.`] : []).join("<br>");
   tick();
   $("#quota").innerHTML = s.platforms.youtube && up.youtube ? `<a href="#socials" class="chip ${up.youtube.error ? "full" : ""}"
     title="YouTube uploads in the last 24 hours">YouTube ${up.youtube.used} uploaded today</a>` : "";
@@ -666,6 +785,16 @@ async function refresh() {
       ${s.platforms[k] ? "" : `<div class="dim" style="font-size:13px">${SETUP[k]}</div>`}
       ${k === "youtube" ? `<button class="ghost" onclick="connectYT(this)">${s.platforms[k] ? "Reconnect" : "Connect"} YouTube</button>` : ""}
     </div>`).join("") + `
+    <div class="social" id="cookiecard"><h3><span class="dot ${s.youtube_cookies.source ? "ok" : ""}"></span>YouTube cookies (downloads)</h3>
+      <div class="${s.youtube_cookies.source ? "" : "dim"}">${s.youtube_cookies.source ? `Using ${esc(s.youtube_cookies.source)}` : "None: downloads go out anonymously"}</div>
+      ${s.youtube_cookies.bot_check_at ? `<div style="color:#f66;font-size:13px">YouTube's bot check hit at ${hhmm(s.youtube_cookies.bot_check_at)}: add cookies to fix it.</div>` : ""}
+      <div class="dim" style="font-size:13px">Fixes "Sign in to confirm you're not a bot". In Chrome, install the extension
+        <b>Get cookies.txt LOCALLY</b>, open youtube.com signed in (a spare Google account is safest), click the extension → Export,
+        then pick that file here. Cookies last weeks to months; add new ones when the bot check comes back.</div>
+      <div class="row"><label class="ghost" style="cursor:pointer;color:var(--hot);font-size:14px">📄 Choose cookies.txt
+        <input type="file" accept=".txt" style="display:none" onchange="sendCookies(this)"></label>
+        ${s.youtube_cookies.source === "cookies.txt" ? `<button class="ghost danger" onclick="dropCookies()">Remove</button>` : ""}</div>
+    </div>` + `
     <div class="social"><h3><span class="dot ${s.whatsapp ? "ok" : ""}"></span>WhatsApp report</h3>
       <div class="${s.whatsapp ? "" : "dim"}">${s.whatsapp ? `Every ${s.report_minutes} min: views per platform, best platform, top clips`
         : "Not set up"}</div>
@@ -746,7 +875,7 @@ async function refresh() {
     const ups = Object.entries(JSON.parse(c.uploads || "{}")).map(([p, u]) => u.id
       ? `<a href="${esc(u.url)}" target="_blank">▶ ${PLATFORMS[p] || p}${p in JSON.parse(c.views || "{}") ? ` · ${JSON.parse(c.views)[p].toLocaleString()} views` : ""}</a>` : `<span class="err">✕ ${PLATFORMS[p] || p}</span>`).join("");
     return `<div class="clip ${c.kind}">
-      ${c.path ? `<video src="/media/${esc(c.path)}" controls preload="metadata"></video>` : `<div style="aspect-ratio:9/16;display:grid;place-items:center" class="dim">${esc(c.status)}…</div>`}
+      ${c.path ? `<video src="/media/${esc(c.path)}" controls preload="metadata"></video>` : `<div style="aspect-ratio:9/16;display:grid;place-items:center" class="dim">${c.status.startsWith("uploaded") ? "file deleted locally (still online)" : esc(c.status) + "…"}</div>`}
       <div class="body">
         <div class="row"><span class="score">${Math.round(c.score)}</span><span class="badge">${c.kind}</span>
           <span class="dim">job #${c.job_id} · ${fmt(c.start)}–${fmt(c.end)}</span></div>
@@ -765,6 +894,8 @@ async function refresh() {
           ${ready(c) ? Object.keys(TARGETS).filter(t => notOn(s, c, t).length).map(t =>
             `<button class="ghost" title="uploads to: ${notOn(s, c, t).map(p => PLATFORMS[p]).join(", ")}"
               onclick="uploadTo(${c.id}, '${notOn(s, c, t).join(",")}', this)">↑ ${TARGET_NAMES[t]}</button>`).join("") : ""}
+          ${ready(c) && igRisky(s, c) ? `<button class="ig-risk" onclick="uploadTo(${c.id}, 'instagram', this, true)"
+              title="${Math.round(c.end - c.start)}s is over ${igMax}s: Instagram's API often rejects Reels this long (ProcessingFailedError). It retries once by itself.">↑ Instagram (${Math.round(c.end - c.start)}s, may fail)</button>` : ""}
           ${!["rendering","uploading"].includes(c.status) ? `<button class="ghost danger" onclick="deleteClip(${c.id})">Delete</button>` : ""}
         </div>
       </div></div>`;

@@ -9,17 +9,24 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import autopilot, db, pick, social, stats, topics, upload, worker
-from .config import CROP_ASPECT, DATA, IG_MAX_SECONDS, SHORT_HARD_MAX
+from . import autopilot, db, download, pick, social, stats, topics, upload, worker
+from .config import CROP_ASPECT, DATA, IG_MAX_SECONDS, SHORT_HARD_MAX, YT_COOKIES
 
 app = FastAPI(title="Clipper")
 db.init()
 db.syslog(f"server started, data in {DATA}")
-topics.start_loop()  # picks up topics still queued from before a restart
-autopilot.start_loop()  # daily auto research round, when switched on in the UI
-stats.start_loop()  # hourly WhatsApp report, if WA_PHONE_NUMBER_ID/WA_TOKEN/WA_TO are set
-social.backfill_times()  # give old uploads a time so the 24h upload counter includes them
-social.backfill_limit_hits()  # start the 24h timer of a limit error logged before timers existed
+
+
+@app.on_event("startup")
+def _start():
+    """Background loops start with the server only (importing this module, e.g. in a test, starts nothing)."""
+    topics.start_loop()  # picks up topics still queued from before a restart
+    autopilot.start_loop()  # posts scheduled clips + runs rounds, when switched on in the UI
+    stats.start_loop()  # hourly WhatsApp report, if WA_PHONE_NUMBER_ID/WA_TOKEN/WA_TO are set
+    social.backfill_times()  # give old uploads a time so the 24h upload counter includes them
+    social.backfill_limit_hits()  # start the 24h timer of a limit error logged before timers existed
+
+
 app.mount("/media", StaticFiles(directory=DATA), name="media")
 INDEX = Path(__file__).parent / "static" / "index.html"
 
@@ -150,7 +157,27 @@ def state():
     return {"jobs": db.all("jobs"), "clips": db.all("clips"), "topics": db.all("topics"), "platforms": social.connected(),
             "deepseek": pick.balance(), "whatsapp": stats.whatsapp_ready(), "report_minutes": stats.REPORT_MINUTES,
             "view_errors": stats.LAST["errors"], "crop_aspect": CROP_ASPECT,
-            "uploads": social.upload_status(), "limit_timers": social.limit_timers(), "ig_max_seconds": IG_MAX_SECONDS}
+            "uploads": social.upload_status(), "limit_timers": social.limit_timers(), "ig_max_seconds": IG_MAX_SECONDS,
+            "youtube_cookies": download.cookies_state()}
+
+
+@app.post("/api/cookies")
+async def save_cookies(request: Request):
+    """Body: a cookies.txt (Netscape format) exported from a logged-in youtube.com tab. Fixes YouTube's bot check."""
+    text = (await request.body()).decode("utf-8", "replace")
+    if ".youtube.com" not in text or chr(9) not in text:
+        raise HTTPException(400, "that doesn't look like a cookies.txt with youtube.com cookies (Netscape format)")
+    YT_COOKIES.write_text(text if text.startswith("# Netscape") else "# Netscape HTTP Cookie File" + chr(10) + text,
+                          encoding="utf-8")
+    db.syslog(f"YouTube cookies saved to {YT_COOKIES.name} ({text.count('.youtube.com')} youtube.com cookies)")
+    return download.cookies_state()
+
+
+@app.delete("/api/cookies")
+def delete_cookies():
+    YT_COOKIES.unlink(missing_ok=True)
+    db.syslog("YouTube cookies removed")
+    return download.cookies_state()
 
 
 @app.post("/api/jobs/{jid}/stop")
@@ -160,9 +187,10 @@ def stop_job(jid: int):
 
 
 @app.post("/api/clips/{cid}/upload")
-def upload_clip(cid: int, platforms: list[Platform] | None = None):
-    """Body: optional list of platforms; default = the ones chosen for the clip's job."""
-    worker.upload_clip(cid, platforms)
+def upload_clip(cid: int, platforms: list[Platform] | None = None, force: bool = False):
+    """Body: optional list of platforms; default = the ones chosen for the clip's job.
+    ?force=true: try Instagram even when the clip is longer than IG_MAX_SECONDS (it may fail)."""
+    worker.upload_clip(cid, platforms, force)
     return db.get("clips", cid)
 
 
@@ -220,21 +248,24 @@ def reports(limit: int = 50):
 
 
 class AutoSettings(BaseModel):
-    enabled: bool = False
-    niche: str = Field("GTA 5, GTA 6 and gaming", max_length=200)  # "" = anything trending, its choice
-    research_per_day: int = Field(10, ge=1, le=100)  # candidate videos judged per day (split over topics)
-    videos_per_day: int = Field(3, ge=1, le=30)  # of those, how many get clipped
-    shorts: int = Field(2, ge=0, le=20)
-    longs: int = Field(0, ge=0, le=10)
-    mode: Literal["hype", "ai+hype", "ai"] = "hype"
-    aspect: float = Field(CROP_ASPECT, ge=0.56, le=1.78)
-    hq: bool = False
-    face_check: bool = True
-    subtitles: bool = True
-    voiceover: bool = False
-    platforms: list[Platform] = ["youtube"]
-    hour: int = Field(9, ge=0, le=23)  # local hour after which the daily round runs
-    upload_every: int = Field(0, ge=0, le=1440)  # minutes between autopilot uploads; 0 = as soon as ready
+    """Every field optional: the UI saves single fields live (e.g. the ON/OFF switch) as well as the whole form."""
+    enabled: bool | None = None
+    niche: str | None = Field(None, max_length=200)  # "" = anything trending, its choice
+    posts_per_day: int | None = Field(None, ge=1, le=48)  # clips posted a day (each to every chosen platform)
+    post_from: int | None = Field(None, ge=0, le=23)  # posting window, local hours: posts are spread evenly over it
+    post_to: int | None = Field(None, ge=1, le=24)
+    shorts: int | None = Field(None, ge=0, le=20)  # clips per video
+    longs: int | None = Field(None, ge=0, le=10)
+    choosy: int | None = Field(None, ge=1, le=10)  # videos researched per video clipped
+    hour: int | None = Field(None, ge=0, le=23)  # when the day's first round starts
+    keep_sources: bool | None = None
+    mode: Literal["hype", "ai+hype", "ai"] | None = None
+    aspect: float | None = Field(None, ge=0.56, le=1.78)
+    hq: bool | None = None
+    face_check: bool | None = None
+    subtitles: bool | None = None
+    voiceover: bool | None = None
+    platforms: list[Platform] | None = None
 
 
 @app.get("/api/auto")
@@ -244,9 +275,19 @@ def auto_status():
 
 @app.post("/api/auto")
 def auto_save(s: AutoSettings):
-    if s.shorts + s.longs == 0:
+    new = s.model_dump(exclude_none=True)
+    merged = {**autopilot.settings(), **new}
+    if merged["shorts"] + merged["longs"] == 0:
         raise HTTPException(400, "ask for at least one clip per video")
-    return autopilot.save(s.model_dump())
+    if merged["post_to"] <= merged["post_from"]:
+        raise HTTPException(400, "the posting window must end after it starts")
+    return autopilot.save(new)
+
+
+@app.post("/api/auto/stop")
+def auto_stop():
+    """OFF + stop everything the autopilot started: the running round, its topics and jobs, scheduled posts."""
+    return autopilot.stop_all()
 
 
 @app.get("/api/auto/rounds")

@@ -59,7 +59,11 @@ def _run(job_id):
         db.update("jobs", job_id, status=status)
         db.log(job_id, f"job {status} in {(time.time() - t0) / 60:.1f} min")
     except Exception as e:
-        db.log(job_id, f"ERROR: {e!r}", exc=True)
+        if download.bot_checked(e):
+            db.log(job_id, "ERROR: YouTube bot check ('Sign in to confirm you're not a bot'). YouTube wants a signed-in "
+                           "browser: add YouTube cookies on the Socials page, then run it again.")
+        else:
+            db.log(job_id, f"ERROR: {e!r}", exc=True)
         db.update("jobs", job_id, status="failed")
 
 
@@ -290,17 +294,11 @@ def _render_one(job, src, d, c, words, subtitles):
     db.update("clips", cid, path=str(out.relative_to(DATA)), status="rendered")
     if job["auto_upload"]:
         topic = db.get("topics", job["topic_id"]) if job.get("topic_id") else None
-        spacing = _auto_spacing() if topic and topic.get("source") == "auto" else 0
-        if spacing:  # autopilot with upload timing: autopilot.upload_tick() posts it when its turn comes
+        if topic and topic.get("source") == "auto":  # autopilot.upload_tick() posts it on its slot of the day
             db.update("clips", cid, status="scheduled")
-            db.log(jid, f"clip #{cid} scheduled: autopilot uploads one clip every {spacing} min")
+            db.log(jid, f"clip #{cid} scheduled: the autopilot posts it on the next free slot")
         else:
             upload_clip(cid)
-
-
-def _auto_spacing():
-    from . import autopilot  # late import: autopilot imports topics, which imports worker
-    return int(autopilot.settings().get("upload_every") or 0)
 
 
 def _voiceover(job, c, words, out):
@@ -386,9 +384,10 @@ def _save_curves(d, src, curve, parts, chosen=()):
     tmp.replace(out)
 
 
-def upload_clip(cid, platforms=None):
+def upload_clip(cid, platforms=None, force=False):
     """Upload to `platforms` (default: the ones chosen for the job). Platforms that already worked are skipped,
-    so pressing Upload again only retries the failed ones."""
+    so pressing Upload again only retries the failed ones. force=True: try Instagram even over IG_MAX_SECONDS
+    (the UI's red "Instagram (may fail)" button)."""
     c = db.get("clips", cid)
     job = db.get("jobs", c["job_id"]) or {}
     platforms = platforms or json.loads(job.get("platforms") or '["youtube"]') or ["youtube"]
@@ -403,7 +402,7 @@ def upload_clip(cid, platforms=None):
             db.log(c["job_id"], f"#{cid} not uploaded to {p} by autopilot: upload limit reached, timer ends "
                                 f"{time.strftime('%H:%M', time.localtime(limited[p]['until']))}. Upload it later from the clip card.")
             continue
-        if p == "instagram" and IG_MAX_SECONDS and c["end"] - c["start"] > IG_MAX_SECONDS:
+        if p == "instagram" and IG_MAX_SECONDS and c["end"] - c["start"] > IG_MAX_SECONDS and not force:
             db.log(c["job_id"], f"#{cid} not uploaded to instagram: {c['end'] - c['start']:.0f}s is over IG_MAX_SECONDS "
                                 f"({IG_MAX_SECONDS:.0f}s, Instagram's API rejects longer Reels right now)")
             continue

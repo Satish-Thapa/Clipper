@@ -126,6 +126,8 @@ def _run(t):
                                 f"{len(found)} videos", "topics")
                 except Exception as e:
                     db.log(tid, f"search '{q}' failed: {e!r}", "topics", exc=True)
+                    if download.bot_checked(e):
+                        raise RuntimeError("YouTube bot check: add YouTube cookies on the Socials page") from None
             rejected = {i for i, (score, _) in judged.items() if score < MIN_CLIPPABLE}
             # how many candidates get judged: the topic's "research" size (autopilot setting), else 3x the clips wanted
             pool = choose_videos(entries, max(t.get("pool") or t["videos"] * 3, t["videos"]), used | rejected)
@@ -141,10 +143,11 @@ def _run(t):
             db.log(tid, f"picked: {v.get('title')} ({v.get('view_count') or 0:,} views, {v['duration'] / 60:.0f} min, "
                         f"clippable {judged[v['id']][0]:.0f}/10: {judged[v['id']][1]})", "topics")
 
-        platforms = json.loads(t["platforms"] or "[]")
         for k, v in enumerate(videos, 1):
             if STOPS[tid].is_set():
                 break
+            t = db.get("topics", tid)  # read again: autopilot settings saved meanwhile apply to the next video
+            platforms = json.loads(t["platforms"] or "[]")
             db.update("topics", tid, status=f"clipping {k}/{len(videos)}")
             jid = db.insert("jobs", url=f"https://www.youtube.com/watch?v={v['id']}", title=v.get("title"),
                             shorts=t["shorts"], longs=t["longs"], auto_upload=int(bool(platforms)),
@@ -152,13 +155,37 @@ def _run(t):
                             voiceover=t["voiceover"], aspect=t.get("aspect"), hq=t.get("hq", 0), topic_id=tid, created=time.time())
             db.log(tid, f"video {k}/{len(videos)} -> job #{jid}", "topics")
             CURRENT[tid] = jid
+            t0 = time.time()
             worker.run(jid)
+            if t.get("source") == "auto":
+                _tidy(tid, jid)
+            if float(db.get_setting("yt_bot_check") or 0) >= t0:  # every next video would hit the same wall
+                db.log(tid, "YouTube bot check: stopping this topic. Add YouTube cookies on the Socials page.", "topics")
+                STOPS[tid].set()
         db.update("topics", tid, status="stopped" if STOPS[tid].is_set() else "done")
     except Exception as e:
         db.log(tid, f"ERROR: {e!r}", "topics", exc=True)
         db.update("topics", tid, status="failed")
     finally:
         CURRENT.pop(tid, None)
+
+
+def _tidy(tid, jid):
+    """Autopilot jobs: delete the downloaded source video once clipped (sources are ~0.5-2 GB each), unless the
+    autopilot's 'keep source videos' is on. Clips are kept; only re-cutting that video by hand needs the source."""
+    from . import autopilot
+    from .config import DATA
+    if autopilot.settings()["keep_sources"]:
+        return
+    freed = 0
+    for f in (DATA / "jobs" / str(jid)).glob("source.*"):
+        try:
+            freed += f.stat().st_size
+            f.unlink()
+        except OSError as e:
+            db.log(tid, f"could not delete {f.name} of job #{jid}: {e!r}", "topics")
+    if freed:
+        db.log(tid, f"deleted job #{jid}'s source video ({freed / 1e6:.0f} MB freed)", "topics")
 
 
 if __name__ == "__main__":

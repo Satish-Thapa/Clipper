@@ -174,6 +174,22 @@ def facebook(path, title, caption, seconds):
 
 
 def instagram(path, title, caption, seconds):
+    """Instagram's ProcessingFailedError is often random (the same file goes through on a second try): retry once."""
+    try:
+        return _instagram(path, title, caption, seconds)
+    except Exception as e:
+        if "ProcessingFailedError" not in str(e) and "processing failed" not in str(e):
+            raise
+        time.sleep(20)
+        return _instagram(path, title, caption, seconds)
+
+
+def _instagram(path, title, caption, seconds):
+    from pathlib import Path
+    from . import render
+    from .config import IG_BITRATE, IG_MAX_MBPS
+    if render.bitrate_mbps(path) > IG_MAX_MBPS:  # Instagram rejects Reels over 25 Mbps: send a lighter copy
+        path = render.reencode(path, Path(path).with_name(Path(path).stem + "_ig.mp4"), IG_BITRATE)
     c = _ok(httpx.post(f"{GRAPH}/{IG_USER_ID}/media", timeout=TIMEOUT,
                        data={"media_type": "REELS", "upload_type": "resumable", "caption": caption[:2200],
                              "share_to_feed": "true", "access_token": IG_TOKEN}))["id"]

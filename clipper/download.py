@@ -7,7 +7,38 @@ import urllib.parse
 
 import yt_dlp
 
-from .config import FFMPEG, SEARCH_REGION
+from .config import FFMPEG, SEARCH_REGION, YT_COOKIES, YT_COOKIES_FROM_BROWSER
+
+
+BOT_CHECK = "Sign in to confirm"  # YouTube's anti-bot wall: needs cookies (see config.YT_COOKIES)
+
+
+def ydl(opts):
+    """yt_dlp.YoutubeDL with the YouTube cookies added, when there are any (every YouTube call goes through this)."""
+    if YT_COOKIES_FROM_BROWSER:
+        opts = {**opts, "cookiesfrombrowser": (YT_COOKIES_FROM_BROWSER,)}
+    elif YT_COOKIES.exists():
+        opts = {**opts, "cookiefile": str(YT_COOKIES)}
+    return yt_dlp.YoutubeDL(opts)
+
+
+def bot_checked(e):
+    """True when an error is YouTube's 'Sign in to confirm you're not a bot'; remembers when, for the UI banner."""
+    if BOT_CHECK not in str(e):
+        return False
+    from . import db
+    db.set_setting("yt_bot_check", str(time.time()))
+    return True
+
+
+def cookies_state():
+    """For the UI: where cookies come from, and the last bot check (if newer than the cookies)."""
+    src = (f"browser: {YT_COOKIES_FROM_BROWSER}" if YT_COOKIES_FROM_BROWSER
+           else "cookies.txt" if YT_COOKIES.exists() else "")
+    from . import db
+    hit = float(db.get_setting("yt_bot_check") or 0)
+    fresh = YT_COOKIES.stat().st_mtime if YT_COOKIES.exists() else 0
+    return {"source": src, "bot_check_at": hit if hit > fresh and time.time() - hit < 6 * 3600 else None}
 
 
 FRAGMENTS = 8  # YouTube throttles each connection; fetching 8 chunks at once is several times faster
@@ -27,7 +58,7 @@ def fmt(height):
 def info(url, comments=False):
     opts = {"quiet": True, "skip_download": True, "getcomments": comments,
             "extractor_args": {"youtube": {"max_comments": ["500"]}}}
-    with yt_dlp.YoutubeDL(opts) as y:
+    with ydl(opts) as y:
         return y.extract_info(url, download=False)
 
 
@@ -40,7 +71,7 @@ def search(query, n=20, recent=RECENT[0]):
     # gl/hl = the country and language YouTube ranks results for (US English by default: US-trending videos).
     url = (f"https://www.youtube.com/results?search_query={urllib.parse.quote(query)}&gl={SEARCH_REGION}&hl=en"
            + (f"&sp={recent}" if recent else ""))
-    with yt_dlp.YoutubeDL({"quiet": True, "extract_flat": True, "playlistend": n, "skip_download": True}) as y:
+    with ydl({"quiet": True, "extract_flat": True, "playlistend": n, "skip_download": True}) as y:
         es = y.extract_info(url, download=False).get("entries") or []
     return [e for e in es if e and e.get("id") and e.get("ie_key") == "Youtube"]  # videos only, no channels/playlists
 
@@ -49,7 +80,7 @@ def download_vod(url, out_path, height=1080):
     form, sort = fmt(height)
     opts = {"quiet": True, "noprogress": True, "outtmpl": str(out_path), "merge_output_format": "mp4", "format": form,
             "format_sort": sort, "concurrent_fragment_downloads": FRAGMENTS, "ffmpeg_location": FFMPEG}
-    with yt_dlp.YoutubeDL(opts) as y:
+    with ydl(opts) as y:
         y.download([url])
 
 
@@ -57,7 +88,7 @@ def record_live_chunk(url, out_path, seconds, stop, height=1080):
     """Record `seconds` of a live stream from the live edge. Returns False if the stream is over.
     If `stop` is set mid-chunk, ffmpeg is told to quit and the partial chunk is kept."""
     form, sort = fmt(height)
-    with yt_dlp.YoutubeDL({"quiet": True, "format": form, "format_sort": sort}) as y:
+    with ydl({"quiet": True, "format": form, "format_sort": sort}) as y:
         i = y.extract_info(url, download=False)  # re-extract each chunk: HLS URLs expire
     if not i.get("is_live"):
         return False
