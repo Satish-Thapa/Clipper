@@ -127,7 +127,8 @@ def _run(t):
                 except Exception as e:
                     db.log(tid, f"search '{q}' failed: {e!r}", "topics", exc=True)
             rejected = {i for i, (score, _) in judged.items() if score < MIN_CLIPPABLE}
-            pool = choose_videos(entries, t["videos"] * 3, used | rejected)
+            # how many candidates get judged: the topic's "research" size (autopilot setting), else 3x the clips wanted
+            pool = choose_videos(entries, max(t.get("pool") or t["videos"] * 3, t["videos"]), used | rejected)
             judged.update(_judge(tid, t["topic"], [v for v in pool if v["id"] not in judged], t.get("face_check", 1)))
             videos = [v for v in pool if judged[v["id"]][0] >= MIN_CLIPPABLE][:t["videos"]]
             if len(videos) >= t["videos"]:

@@ -33,6 +33,16 @@
   #logbox { max-height:70vh; min-height:300px; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:10px;
     font:12px/1.5 ui-monospace, monospace; color:var(--text); }
   #logbox .err { color:#f88; } #logbox .sys { color:var(--dim); }
+  .act { border:1px solid var(--line); border-radius:10px; padding:10px 14px; margin-bottom:12px; background:var(--bg); }
+  .act > summary { font-size:14px; color:var(--text); }
+  .act details { margin:8px 0 0 6px; border-left:2px solid var(--line); padding-left:12px; }
+  .act details > summary { color:var(--text); font-size:13px; font-weight:600; }
+  .act table { border-collapse:collapse; font-size:12px; margin:6px 0; width:100%; }
+  .act td, .act th { text-align:left; padding:3px 8px 3px 0; border-bottom:1px solid var(--line); vertical-align:top; }
+  .act th { color:var(--dim); font-weight:600; }
+  .ok { color:var(--ok); } .no { color:#f66; } .pill { font-size:11px; padding:1px 7px; border-radius:99px; background:var(--line); }
+  .now { font-size:15px; } .now .spin { display:inline-block; animation:spin 1s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
   .dot { width:10px; height:10px; border-radius:50%; background:#555; display:inline-block; } .dot.ok { background:var(--ok); }
   .panel { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:18px; }
   form { display:flex; gap:12px; flex-wrap:wrap; align-items:end; }
@@ -84,10 +94,12 @@
   <h1>CLIP<span>PER</span></h1>
   <nav id="nav">
     <a href="#create">Create</a>
+    <a href="#auto">Auto<span class="n" id="n-auto"></span></a>
     <a href="#topics">Topics<span class="n" id="n-topics"></span></a>
     <a href="#jobs">Jobs<span class="n" id="n-jobs"></span></a>
     <a href="#clips">Clips<span class="n" id="n-clips"></span></a>
     <a href="#socials">Socials<span class="n" id="n-socials"></span></a>
+    <a href="#reports">Reports</a>
     <a href="#logs">Logs</a>
   </nav>
   <div class="yt"><span id="quota"></span><span id="ds"></span><span id="yt"></span></div>
@@ -122,6 +134,54 @@
     </form>
     <p class="dim" style="margin:10px 0 0;font-size:12px">Live streams: counts are per recorded chunk (default 10 min). Progress shows under <a href="#jobs">Jobs</a>.</p>
   </section>
+ </div>
+
+ <div class="page" id="page-auto">
+  <div class="page-head"><h2>Auto research</h2><p>Once a day it finds what's trending in your niche (this week's most-viewed
+    YouTube videos, read by DeepSeek), queues those topics, and the normal flow clips and uploads them. You set how many
+    videos a day; it does the rest.</p></div>
+  <section class="panel">
+    <form id="af">
+      <label class="check" style="font-size:16px"><input type="checkbox" name="enabled"> <b>Auto research ON</b></label>
+      <label>Niche (optional)<input name="niche" style="width:min(320px,100%)" placeholder="empty = anything trending, autopilot decides"></label>
+      <label title="How many candidate videos it judges (DeepSeek score + face check) before choosing. More = choosier, slower.">Videos to research / day<input type="number" name="research_per_day" min="1" max="100"></label>
+      <label title="Of the researched videos, how many get clipped and uploaded.">Videos to clip / day<input type="number" name="videos_per_day" min="1" max="30"></label>
+      <label>Shorts per video<input type="number" name="shorts" min="0" max="20"></label>
+      <label>Long per video<input type="number" name="longs" min="0" max="10"></label>
+      <label>Daily round after<select name="hour"></select></label>
+      <label title="Spreads the autopilot's uploads over the day instead of posting every clip at once.">Upload timing<select name="upload_every">
+        <option value="0">As soon as each clip is ready</option>
+        <option value="30">One clip every 30 min</option>
+        <option value="60">One clip every hour</option>
+        <option value="120">One clip every 2 hours</option>
+        <option value="240">One clip every 4 hours</option>
+        <option value="360">One clip every 6 hours</option>
+      </select></label>
+      <label>Who picks the moments<select name="mode">
+        <option value="hype">AI picks from hype curves (fast)</option>
+        <option value="ai+hype">AI reads full transcript, curves as hints</option>
+        <option value="ai">AI reads full transcript only</option>
+      </select></label>
+      <label>Framing<select name="aspect" class="aspect">
+        <option value="0.5625">Full screen 9:16 (fills the phone)</option>
+        <option value="0.8">4:5 (a bit wider, thin bars)</option>
+        <option value="1">Square 1:1 (more of the scene)</option>
+        <option value="1.7778">Whole frame 16:9 (nothing cut off)</option>
+      </select></label>
+      <label class="check"><input type="checkbox" name="subtitles"> Headline + subtitles</label>
+      <label class="check"><input type="checkbox" name="hq"> 4K quality</label>
+      <label class="check"><input type="checkbox" name="voiceover"> AI voice-over</label>
+      <label class="check"><input type="checkbox" name="face_check"> Skip videos that are mostly a person</label>
+      <fieldset class="pf" data-default=""><legend>Upload to (none = don't upload)</legend></fieldset>
+      <button>Save</button>
+      <button type="button" class="ghost" id="autorun" onclick="runAuto(this)">▶ Run now</button>
+    </form>
+  </section>
+  <section class="panel"><h3 style="margin-top:0">Now</h3><div id="autonow"></div><div id="autolast"></div></section>
+  <section class="panel"><h3 style="margin-top:0">Activity</h3>
+    <p class="dim" style="margin-top:0;font-size:13px">Every round: what it searched, what it saw trending, what it decided,
+      and what happened to each topic, video and clip. Click a section to open it.</p>
+    <div id="activity"></div></section>
  </div>
 
  <div class="page" id="page-topics">
@@ -166,6 +226,13 @@
   <div class="page-head"><h2>Clips</h2><p>Rendered clips, newest first. Upload a clip to any connected platform from its card,
     or every clip at once below.</p></div>
   <section class="panel"><div class="row" id="bulk" style="margin-bottom:14px"></div><div class="clips" id="clips"></div></section>
+ </div>
+
+ <div class="page" id="page-reports">
+  <div class="page-head"><h2>Reports</h2><p>The views report: views per platform, best platform, top clips. Made every
+    hour (and on demand). The same text is sent on WhatsApp when it's set up; here you always see it.</p></div>
+  <section class="panel"><div class="row" style="margin-bottom:12px">
+    <button class="ghost" onclick="makeReport(this)">Make report now</button></div><div id="reports"></div></section>
  </div>
 
  <div class="page" id="page-logs">
@@ -394,6 +461,167 @@ function tick() {
 }
 setInterval(tick, 1000);
 
+// ---- Auto research ----
+$("#af").hour.innerHTML = Array.from({length: 24}, (_, h) => `<option value="${h}">${String(h).padStart(2, "0")}:00</option>`).join("");
+let autoLoaded = false;
+function fillAuto(st) {
+  const f = $("#af"), a = st.settings;
+  for (const k of ["niche", "research_per_day", "videos_per_day", "shorts", "longs", "mode", "hour", "upload_every"]) f[k].value = a[k];
+  for (const k of ["enabled", "subtitles", "hq", "voiceover", "face_check"]) f[k].checked = !!a[k];
+  f.aspect.value = [...f.aspect.options].reduce((b, o) => Math.abs(o.value - a.aspect) < Math.abs(b.value - a.aspect) ? o : b).value;
+  f.querySelectorAll("input[name=pf]").forEach(i => i.checked = i.value.split(",").every(p => a.platforms.includes(p)));
+}
+function showAuto(st, s) {
+  const l = st.last, when = t => new Date(t * 1000).toLocaleString();
+  $("#n-auto").textContent = st.settings.enabled ? "ON" : "";
+  $("#autorun").disabled = st.running; $("#autorun").textContent = st.running ? "Finding trends…" : "▶ Run now";
+  const lim = Object.entries(s.limit_timers || {}).filter(([p]) => st.settings.platforms.includes(p));
+  const paused = st.settings.platforms.length && lim.length === st.settings.platforms.length;
+  const limitNote = lim.length ? `<p style="color:${paused ? "#f66" : "var(--warn)"}">⏱ ${paused ? "<b>Autopilot paused</b>: every"
+    : "Upload limit reached on"} ${lim.map(([p, t]) => `${PLATFORMS[p]} (until ${new Date(t.until * 1000).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"})})`).join(", ")}${
+    paused ? " platform it uploads to is at its limit. It resumes by itself when the timers end." : ". Autopilot skips it until then."}</p>` : "";
+  $("#autolast").innerHTML = limitNote;  // rounds themselves are in the Activity view
+  renderActivity(st, s);
+}
+async function loadAuto(s) {
+  const st = await (await fetch("/api/auto")).json();
+  st.rounds = await (await fetch("/api/auto/rounds")).json();
+  if (!autoLoaded || !$("#af").contains(document.activeElement) && !autoDirty) { fillAuto(st); autoLoaded = true; }
+  showAuto(st, s);
+}
+// ---- Activity view: one card per round, sections you can open ----
+// Which sections are open survives the 2s refresh. The newest round starts fully open; anything you close stays closed.
+const openAct = new Set(), closedAct = new Set();
+let actKey = "", defOpen = false;
+const isOpen = id => openAct.has(id) || (defOpen && !closedAct.has(id));
+const toggleAct = (id, open) => open ? (openAct.add(id), closedAct.delete(id)) : (openAct.delete(id), closedAct.add(id));
+const det = (id, title, body, cls = "") => `<details class="${cls}" ${isOpen(id) ? "open" : ""}
+  ontoggle="toggleAct('${id}', this.open)"><summary>${title}</summary>${body}</details>`;
+const yt = id => `https://www.youtube.com/watch?v=${id}`;
+const num = n => (n || 0).toLocaleString();
+function parseTopic(t) {  // the topic log already records every decision; pull it into rows
+  const L = (t.log || "").split("\n"), m = (re) => L.map(l => l.match(re)).filter(Boolean);
+  return {
+    searches: m(/search '(.+?)' \((.+?)\): (\d+) videos/).map(x => ({q: x[1], when: x[2], n: +x[3]})),
+    judged: m(/\] (OK|skipped)\s+(\d+)\/10 (.+?) \(([\d,]+) views, (\d+) min\): (.*)$/)
+      .map(x => ({ok: x[1] === "OK", score: x[2], title: x[3], views: x[4], min: x[5], why: x[6]})),
+    faces: m(/face check (.+?): face fills screen (\d+)%, still picture (\d+)%/).map(x => ({title: x[1], face: x[2], still: x[3]})),
+    picked: m(/picked: (.+?) \(([\d,]+) views, (\d+) min, clippable (\d+)\/10/).map(x => ({title: x[1], views: x[2], min: x[3], score: x[4]})),
+    errors: L.filter(l => / ERROR|failed|no suitable/.test(l)),
+  };
+}
+function jobSection(j, s) {
+  const L = (j.log || "").split("\n");
+  const steps = L.filter(l => / done in |FAILED| ready: |source file:|source quality|transcript:/.test(l))
+    .map(l => `<div>${esc(l.replace(/^\[(.+?)\] /, "$1 · "))}</div>`).join("");
+  const clips = s.clips.filter(c => c.job_id === j.id);
+  const rows = clips.map(c => {
+    const up = JSON.parse(c.uploads || "{}");
+    const where = Object.entries(up).map(([p, u]) => u.id ? `<a href="${esc(u.url)}" target="_blank" class="ok">✓ ${PLATFORMS[p]}</a>`
+      : `<span class="no" title="${esc(u.error)}">✕ ${PLATFORMS[p]}</span>`).join(" ");
+    const skipped = L.filter(l => l.includes(`#${c.id} not uploaded to`)).map(l => `<div class="dim">${esc(l.split("] ")[1])}</div>`).join("");
+    return `<tr><td>#${c.id} <span class="pill">${c.kind}</span></td><td><b>${esc(c.title)}</b><br><span class="dim">${fmt(c.start)}–${fmt(c.end)}
+      · score ${Math.round(c.score)} · ${esc(c.headline || "")}</span><br><span class="dim">${esc(c.reason)}</span></td>
+      <td>${where || `<span class="dim">${esc(c.status)}</span>`}${skipped}</td></tr>`;
+  }).join("");
+  const cls = j.status === "done" ? "ok" : j.status === "failed" ? "no" : "";
+  return det(`j${j.id}`, `🎬 Job #${j.id}: ${esc(j.title || j.url)} <span class="${cls}">· ${esc(j.status)}</span> · ${clips.length} clip(s)`,
+    `<div style="font-size:12px;margin:6px 0">${steps || '<span class="dim">starting…</span>'}</div>
+     ${rows ? `<table><tr><th>Clip</th><th>What & why</th><th>Uploaded</th></tr>${rows}</table>` : ""}
+     <a href="#jobs" style="font-size:12px">full log on Jobs</a>`);
+}
+function topicSection(rt, s) {
+  const t = s.topics.find(x => x.id === rt.topic_id);
+  if (!t) return `<div class="dim">T${rt.topic_id} ${esc(rt.topic)} (removed)</div>`;
+  const P = parseTopic(t), jobs = s.jobs.filter(j => j.topic_id === t.id).reverse();
+  const cls = t.status === "done" ? "ok" : t.status === "failed" ? "no" : "";
+  return det(`t${t.id}`, `📌 T${t.id} "${esc(t.topic)}" × ${t.videos} video(s) <span class="${cls}">· ${esc(t.status)}</span>`,
+    `<div class="dim" style="font-size:12px;margin-top:6px">Why: ${esc(rt.why)}</div>`
+    + det(`t${t.id}-s`, `🔎 Searched YouTube: ${P.searches.length} search(es)`, P.searches.length ? `<table><tr><th>Query</th><th>When</th><th>Found</th></tr>${
+        P.searches.map(x => `<tr><td>${esc(x.q)}</td><td>${esc(x.when)}</td><td>${x.n}</td></tr>`).join("")}</table>` : `<div class="dim">not yet</div>`)
+    + det(`t${t.id}-j`, `⚖️ Judged ${P.judged.length} video(s): ${P.judged.filter(x => x.ok).length} kept, ${P.judged.filter(x => !x.ok).length} skipped`,
+        P.judged.length ? `<table><tr><th></th><th>Score</th><th>Video</th><th>Reason</th></tr>${P.judged.map(x =>
+          `<tr><td class="${x.ok ? "ok" : "no"}">${x.ok ? "✓" : "✕"}</td><td>${x.score}/10</td><td>${esc(x.title)}<br><span class="dim">${x.views} views · ${x.min} min</span></td>
+           <td>${esc(x.why)}</td></tr>`).join("")}</table>` : `<div class="dim">not yet</div>`)
+    + (P.faces.length ? det(`t${t.id}-f`, `🙂 Face check on ${P.faces.length} video(s)`, `<table><tr><th>Video</th><th>Face fills screen</th><th>Still picture</th></tr>${
+        P.faces.map(x => `<tr><td>${esc(x.title)}</td><td>${x.face}%</td><td>${x.still}%</td></tr>`).join("")}</table>`) : "")
+    + det(`t${t.id}-p`, `✅ Picked ${P.picked.length} video(s) to clip`, P.picked.length ? `<table>${P.picked.map(x =>
+        `<tr><td>${esc(x.title)}</td><td>${x.views} views</td><td>${x.min} min</td><td>clippable ${x.score}/10</td></tr>`).join("")}</table>` : `<div class="dim">not yet</div>`)
+    + jobs.map(j => jobSection(j, s)).join("")
+    + (P.errors.length ? `<div class="no" style="font-size:12px">${P.errors.map(esc).join("<br>")}</div>` : ""));
+}
+function renderActivity(st, s) {
+  const stage = st.running ? `<span class="spin">⟳</span> <b>Finding trends</b>: ${esc(st.stage || "starting")}` : "";
+  const active = s.topics.filter(t => t.source === "auto" && !["done","failed","stopped","interrupted","queued"].includes(t.status));
+  const queued = s.topics.filter(t => t.source === "auto" && t.status === "queued");
+  const nxt = st.settings.enabled ? `next daily round after ${String(st.settings.hour).padStart(2, "0")}:00` : "auto research is OFF";
+  $("#autonow").innerHTML = `<div class="now">${stage || (active.length ? `<span class="spin">⟳</span> <b>Working on</b> T${active[0].id}
+    "${esc(active[0].topic)}": ${esc(active[0].status)}` : `💤 Idle · ${nxt}`)}${queued.length ? ` · ${queued.length} topic(s) waiting` : ""}</div>
+    ${st.scheduled ? `<div class="dim" style="margin-top:6px">⏰ ${st.scheduled} clip(s) scheduled · next upload ${st.next_upload
+      ? (st.next_upload - Date.now() / 1000 < 60 ? "within a minute" : "at " + new Date(st.next_upload * 1000).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"}))
+      : "within a minute"} (one every ${st.settings.upload_every || 0} min)</div>` : ""}`;
+  const key = JSON.stringify([st.rounds.map(r => r.id), s.topics.filter(t => t.source === "auto").map(t => [t.id, t.status, t.log.length]),
+    s.jobs.map(j => [j.id, j.status, (j.log || "").length]), s.clips.map(c => [c.id, c.status, c.uploads])]);
+  if (key === actKey) return;
+  actKey = key;
+  $("#activity").innerHTML = st.rounds.length ? st.rounds.map((r, i) => {
+    const R = r.research || {}, id = `r${r.id}`;
+    defOpen = i === 0;  // newest round: every section open unless you closed it
+    const head = `<b>${new Date(r.at * 1000).toLocaleString()}</b> · ${esc(r.reason)} · ${r.error ? `<span class="no">${esc(r.error)}</span>`
+      : `${r.topics.length} topic(s)${r.seconds != null ? ` · ${r.seconds}s` : ""}`}`;
+    if (r.error) return `<div class="act">${head}</div>`;
+    const body = (!R.queries ? "" :
+      det(`${id}-q`, `🔎 Searched YouTube for ${(r.settings || {}).niche ? `"${esc(r.settings.niche)}"` : "anything trending (no niche set)"}: ${(R.queries || []).length} queries, ${R.seen || 0} videos this week`,
+        `<table><tr><th>Query (from DeepSeek)</th><th>Videos found</th></tr>${(R.queries || []).map(q =>
+          `<tr><td>${esc(q.q)}</td><td>${q.error ? `<span class="no">${esc(q.error)}</span>` : q.found}</td></tr>`).join("")}</table>`)
+      + det(`${id}-t`, `📈 What's trending: the ${(R.top || []).length} most-viewed videos it read`,
+        `<table><tr><th>Views</th><th>Video</th><th>Channel</th></tr>${(R.top || []).slice(0, 25).map(v =>
+          `<tr><td>${num(v.views)}</td><td><a href="${yt(v.id)}" target="_blank">${esc(v.title)}</a> <span class="dim">${v.minutes} min</span></td>
+           <td class="dim">${esc(v.channel || "")}</td></tr>`).join("")}</table>`))
+      + det(`${id}-d`, `🧠 Decided: ${r.topics.map(t => `"${esc(t.topic)}"`).join(", ")}`,
+        `<table><tr><th>Topic</th><th>Videos</th><th>Why (DeepSeek)</th></tr>${r.topics.map(t =>
+          `<tr><td><b>${esc(t.topic)}</b></td><td>${t.research ? `research ${t.research} → clip ` : ""}${t.videos}</td><td>${esc(t.why)}</td></tr>`).join("")}</table>
+         <div class="dim" style="font-size:12px">Uploads to: ${(r.platforms || (r.settings || {}).platforms || []).map(p => PLATFORMS[p]).join(", ") || "nowhere"}${
+          (r.skipped_platforms || []).length ? ` · <span class="no">skipped (limit reached): ${r.skipped_platforms.map(p => PLATFORMS[p]).join(", ")}</span>` : ""}</div>`)
+      + r.topics.map(t => topicSection(t, s)).join("");
+    return `<details class="act" ${isOpen(id) ? "open" : ""} ontoggle="toggleAct('${id}', this.open)">
+      <summary>${head}</summary>${body}</details>`;
+  }).join("") : `<p class="empty">No rounds yet. Press ▶ Run now to see it work.</p>`;
+}
+let autoDirty = false;
+$("#af").oninput = () => autoDirty = true;
+$("#af").onsubmit = async e => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  const body = {enabled: f.has("enabled"), niche: f.get("niche"), research_per_day: +f.get("research_per_day"), upload_every: +f.get("upload_every"), videos_per_day: +f.get("videos_per_day"),
+    shorts: +f.get("shorts"), longs: +f.get("longs"), hour: +f.get("hour"), mode: f.get("mode"), aspect: +f.get("aspect"),
+    subtitles: f.has("subtitles"), hq: f.has("hq"), voiceover: f.has("voiceover"), face_check: f.has("face_check"),
+    platforms: picked(e.target)};
+  const r = await post("/api/auto", body);
+  if (!r.ok) return alertBox(await r.text());
+  autoDirty = false; e.target.querySelector("button").textContent = "Saved ✓";
+  setTimeout(() => e.target.querySelector("button").textContent = "Save", 1500); refresh();
+};
+async function runAuto(btn) {
+  btn.disabled = true; btn.textContent = "Finding trends…";
+  const r = await post("/api/auto/run");
+  if (!r.ok) alertBox((await r.json()).detail);
+  setTimeout(refresh, 1000);
+}
+// ---- Reports ----
+async function loadReports() {
+  if (location.hash !== "#reports") return;
+  const list = await (await fetch("/api/reports")).json();
+  $("#reports").innerHTML = list.length ? list.map(r => `<div class="job"><div class="row"><b>#${r.id}</b>
+    <span>${new Date(r.at * 1000).toLocaleString()}</span><span class="dim">${esc(r.sent)}</span></div>
+    <pre>${esc(r.text)}</pre></div>`).join("") : `<p class="empty">No reports yet. They're made every hour, or press Make report now.</p>`;
+}
+async function makeReport(btn) {
+  btn.disabled = true; btn.textContent = "Making…";
+  await post("/api/report"); btn.disabled = false; btn.textContent = "Make report now"; loadReports();
+}
+window.addEventListener("hashchange", loadReports);
+
 let clipKey = "";
 async function refresh() {
   const s = await (await fetch("/api/state")).json();
@@ -452,6 +680,8 @@ async function refresh() {
 
   defaultAspect(s.crop_aspect);
   loadLogs();
+  loadReports();
+  loadAuto(s);
   const logScroll = saveLogs();
   $("#topics").innerHTML = s.topics.length ? s.topics.map(t => {
     const running = !["done","failed","stopped","interrupted","queued"].includes(t.status);

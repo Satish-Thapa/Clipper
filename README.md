@@ -102,6 +102,37 @@ It's sent with Meta's official **WhatsApp Cloud API**, from the Meta app you use
 YouTube views need read access: click **Reconnect YouTube** once (older logins could only upload).
 TikTok doesn't give view counts for private app posts, so it's listed as unavailable until your TikTok app is audited.
 
+## Auto research (hands-off mode)
+
+The **Auto** page runs the whole thing by itself, once a day. Settings:
+
+- **Niche** (optional), e.g. "GTA 5, GTA 6 and gaming". Leave it empty and the autopilot decides: it searches broadly
+  (gaming, streamers, podcasts, sports, viral moments) and picks whatever has the most momentum this week.
+- **Videos to research / day**: how many candidate videos it judges (DeepSeek score + face check) before choosing.
+- **Videos to clip / day**: of those, how many get clipped and uploaded. **Shorts / Long per video**: clips from each.
+- **Upload timing**: as soon as each clip is ready, or one clip every 30 min / 1 h / 2 h / 4 h / 6 h (clips wait as
+  "scheduled" and go up one at a time, spreading posts over the day).
+- Framing, 4K, subtitles, voice-over, face check, where to upload, and the hour the daily round starts.
+
+Tick **Auto research ON** and **Save**.
+After the chosen hour each day it:
+
+1. searches YouTube (US, this week) for the niche and collects the most-viewed videos,
+2. asks DeepSeek which 1-3 topics are trending in them (YouTube's Trending page no longer exists),
+3. splits your videos-per-day over those topics and queues them as normal topics,
+4. and the topic flow does the rest: clippability + face check, download, clip, render, upload.
+
+**Run now** does a round immediately. The Auto page shows what it's doing right **now** (e.g. "searching YouTube: gta 6
+leaks", "working on T12: clipping 1/2", "idle"), and an **Activity** view of every round, section by section: the
+searches it ran and how many videos each found, the most-viewed videos it read, the topics it decided on and why, and
+per topic which videos it judged (score + reason, kept or skipped), the face check numbers, which videos it clipped,
+each job's steps with timings, the clips it made (and why), and where each clip was uploaded.
+
+**Upload limits:** when a platform's API says its upload limit is reached, the autopilot leaves that platform out
+until its 24h timer ends (the clip can still be uploaded by hand later). If every platform it uploads to is at its
+limit, it pauses rounds altogether and resumes by itself when the timers end. Manual uploads are never held back. Reports (views per platform, best platform, top clips) are made every hour and listed
+on the **Reports** page, and also sent on WhatsApp when that's set up.
+
 ## Topics (auto-find videos)
 
 In the UI, **+ Add topic** takes a topic, how many videos to clip, shorts and long clips per video, and where to upload.

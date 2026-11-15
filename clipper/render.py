@@ -18,6 +18,8 @@ Style: Cap,Arial Black,{size},&H00FFFFFF,&H00000000,&H80000000,1,1,6,2,2,{margin
 Style: Top,Arial Black,{top_size},&H00000000,&H0000E5FF,&H0000E5FF,1,3,14,0,8,{top_margin}
 Style: EndBox,Arial Black,{end_size},&H00FFFFFF,&H002E2EFF,&H002E2EFF,1,3,22,0,5,0
 Style: End,Arial Black,{end_sub},&H00FFFFFF,&H00000000,&H80000000,1,1,7,3,5,0
+Style: EndSmall,Arial Black,{end_small},&H00FFFFFF,&H00000000,&H80000000,1,1,6,3,5,0
+Style: EndHi,Arial Black,{end_hi},&H0000E5FF,&H00000000,&H80000000,1,1,7,3,5,0
 
 [Events]
 Format: Layer, Start, End, Style, Text
@@ -38,12 +40,24 @@ def bar_height(aspect=CROP_ASPECT):
 END_SECONDS = 2.6  # end card length; only on clips of at least 3x this
 
 
+def end_seconds(text=END_CARD):
+    """How long the end card stays: long enough to read (~0.3s a word), 2.6-5s."""
+    return min(max(0.3 * len(text.replace("|", " ").split()) + 0.8, END_SECONDS), 5.0)
+
+
 def end_card(length, text=END_CARD, w=1080, h=1920):
-    """Animated call to action for the last END_SECONDS: the first word ("FOLLOW") pops in on a red box with an
-    overshoot and then pulses; the rest ("FOR MORE") slides up and fades in under it."""
-    if not text.strip() or length < END_SECONDS * 3:
+    """Animated call to action at the end of the clip.
+    With "|" in the text (e.g. "IF YOU MADE IT TO|THE END OF THIS VIDEO,|YOU LEGALLY HAVE TO|FOLLOW ME"):
+    the video dims, the lines come in one after another (white lines slide up, the second-to-last pops in yellow),
+    and the LAST line slams in on a red box with an overshoot and keeps pulsing.
+    Without "|": the first word pops on the red box and the rest slides up under it (the original card)."""
+    text = text.upper().replace("{", "").replace("}", "").strip()
+    secs = end_seconds(text)
+    if not text or length < secs * 3:
         return []
-    first, _, rest = text.upper().replace("{", "").replace("}", "").strip().partition(" ")
+    if "|" in text:
+        return _end_lines([x.strip() for x in text.split("|") if x.strip()], length, secs, w, h)
+    first, _, rest = text.partition(" ")
     a, b, cx, cy = _t(length - END_SECONDS), _t(length), w // 2, h // 2
     pop = (rf"{{\an5\pos({cx},{cy - 70})\fad(100,180)\fscx20\fscy20\t(0,220,\fscx118\fscy118)\t(220,380,\fscx100\fscy100)"
            r"\t(700,1000,\fscx108\fscy108)\t(1000,1300,\fscx100\fscy100)\t(1300,1600,\fscx108\fscy108)"
@@ -51,6 +65,33 @@ def end_card(length, text=END_CARD, w=1080, h=1920):
     out = [f"Dialogue: 2,{a},{b},EndBox,{pop}{first}"]
     if rest:
         out.append(f"Dialogue: 2,{a},{b},End," + rf"{{\an5\move({cx},{cy + 160},{cx},{cy + 90},250,550)\fad(450,180)}}" + rest)
+    return out
+
+
+def _end_lines(lines, length, secs, w, h):
+    """The multi-line end card (see end_card). Each line is its own event so it can start later (the stagger)."""
+    k = w / 1080  # 16:9 renders are 1920 wide: scale positions, sizes come from the styles
+    start, end, cx = length - secs, length, w // 2
+    hi = len(lines) - 2  # second-to-last line: yellow accent
+    heights = [int((170 if i == len(lines) - 1 else 100 if i == hi else 82) * k) for i in range(len(lines))]
+    y = h // 2 - sum(heights) // 2  # whole block centred on the screen
+    out = [  # dim the video behind the text (a full-screen 55%-black rectangle, fading in)
+        f"Dialogue: 1,{_t(start)},{_t(end)},End,"
+        + rf"{{\an7\pos(0,0)\bord0\shad0\1c&H000000&\1a&H90&\fad(300,150)\p1}}m 0 0 l {w} 0 {w} {h} 0 {h}{{\p0}}"]
+    for i, (line, lh) in enumerate(zip(lines, heights)):
+        cy, t0 = y + lh // 2, start + 0.15 + i * 0.38  # each line 0.38s after the one before
+        if i == len(lines) - 1:  # the punchline on the red box: slam in from big, overshoot, then keep pulsing
+            pulse = "".join(rf"\t({ms},{ms + 300},\fscx{106 if j % 2 == 0 else 100}\fscy{106 if j % 2 == 0 else 100})"
+                            for j, ms in enumerate(range(650, int((end - t0) * 1000), 300)))
+            tags = rf"{{\an5\q2\pos({cx},{cy})\fad(80,150)\fscx260\fscy260\t(0,180,\fscx92\fscy92)\t(180,320,\fscx100\fscy100){pulse}}}"
+            out.append(f"Dialogue: 3,{_t(t0)},{_t(end)},EndBox,{tags}{line}")
+        elif i == hi:  # yellow accent: pops from small
+            tags = rf"{{\an5\q2\pos({cx},{cy})\fad(120,150)\fscx40\fscy40\t(0,200,\fscx112\fscy112)\t(200,330,\fscx100\fscy100)}}"
+            out.append(f"Dialogue: 2,{_t(t0)},{_t(end)},EndHi,{tags}{line}")
+        else:  # white lines: slide up a little and fade in
+            tags = rf"{{\an5\q2\move({cx},{cy + int(40 * k)},{cx},{cy},0,260)\fad(220,150)}}"
+            out.append(f"Dialogue: 2,{_t(t0)},{_t(end)},EndSmall,{tags}{line}")
+        y += lh
     return out
 
 
@@ -70,9 +111,9 @@ def ass(words, start, end, vertical=True, headline="", per_line=3, aspect=CROP_A
     # Captions: just under the video, so they stay above YouTube's title/channel overlay at the very bottom.
     bar = bar_height(aspect)
     size = (dict(w=1080, h=1920, size=86, margin=max(250, bar - 120), top_size=78, top_margin=max(120, (bar - 106) // 2),
-                 end_size=120, end_sub=84)
+                 end_size=120, end_sub=84, end_small=62, end_hi=76)
             if vertical
-            else dict(w=1920, h=1080, size=64, margin=70, top_size=60, top_margin=50, end_size=90, end_sub=64))
+            else dict(w=1920, h=1080, size=64, margin=70, top_size=60, top_margin=50, end_size=90, end_sub=64, end_small=56, end_hi=68))
     lines += end_card(end - start, w=size["w"], h=size["h"])
     return ASS_HEAD.format(**size) + "\n".join(lines) + "\n"
 

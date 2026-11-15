@@ -31,6 +31,15 @@ CREATE TABLE IF NOT EXISTS clips (
   score REAL, title TEXT, description TEXT, tags TEXT, reason TEXT,
   path TEXT, youtube_id TEXT, status TEXT DEFAULT 'rendered', headline TEXT DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY, value TEXT
+);
+CREATE TABLE IF NOT EXISTS auto_rounds (
+  id INTEGER PRIMARY KEY, at REAL, data TEXT
+);
+CREATE TABLE IF NOT EXISTS reports (
+  id INTEGER PRIMARY KEY, at REAL, text TEXT, sent TEXT DEFAULT ''
+);
 CREATE TABLE IF NOT EXISTS limit_hits (
   platform TEXT PRIMARY KEY, hit_at REAL, message TEXT
 );
@@ -56,7 +65,8 @@ def init():
                            ("jobs", "topic_id INTEGER"), ("jobs", """platforms TEXT DEFAULT '["youtube"]'"""),
                            ("clips", "uploads TEXT DEFAULT '{}'"), ("clips", "views TEXT DEFAULT '{}'"), ("topics", "face_check INTEGER DEFAULT 1"),
                            ("jobs", "aspect REAL"), ("topics", "aspect REAL"),
-                           ("jobs", "hq INTEGER DEFAULT 0"), ("topics", "hq INTEGER DEFAULT 0")):  # columns added after v0.1
+                           ("jobs", "hq INTEGER DEFAULT 0"), ("topics", "hq INTEGER DEFAULT 0"),
+                           ("topics", "source TEXT DEFAULT 'manual'"), ("topics", "pool INTEGER")):  # columns added after v0.1
             try:
                 c.execute(f"ALTER TABLE {table} ADD COLUMN {col}")
             except sqlite3.OperationalError:
@@ -105,6 +115,17 @@ def log(job_id, msg, table="jobs", exc=False):
     _file.log(logging.ERROR if exc else logging.INFO, f"[{who}] {msg}" + (f"\n{traceback.format_exc()}" if exc else ""))
     with conn() as c:
         c.execute(f"UPDATE {table} SET log = log || ? WHERE id=?", (line, job_id))
+
+
+def get_setting(key):
+    with conn() as c:
+        r = c.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        return r[0] if r else None
+
+
+def set_setting(key, value):
+    with conn() as c:
+        c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
 
 
 def syslog(msg, exc=False):

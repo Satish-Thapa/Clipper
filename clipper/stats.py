@@ -49,8 +49,7 @@ def send_whatsapp(text):
 
 
 def start_loop():
-    if whatsapp_ready():
-        threading.Thread(target=_loop, daemon=True).start()
+    threading.Thread(target=_loop, daemon=True).start()  # reports are always made (shown in the UI); WhatsApp if set up
 
 
 def _loop():
@@ -59,7 +58,7 @@ def _loop():
         try:
             send_report()
         except Exception as e:
-            db.syslog(f"whatsapp report failed: {e!r}", exc=True)
+            db.syslog(f"report failed: {e!r}", exc=True)
 
 
 def _insight(media, metric, token):
@@ -149,17 +148,23 @@ def report_text(clips, now_totals, before, errors, top=5):
 
 
 def send_report():
-    """Refresh views, build the message, send it on WhatsApp. Returns the text that was sent."""
-    if not whatsapp_ready():
-        raise RuntimeError("set WA_PHONE_NUMBER_ID, WA_TOKEN and WA_TO in .env (SOCIALS.md: WhatsApp report)")
+    """Refresh views, build the report, save it (Reports page), send it on WhatsApp if set up. -> the report row."""
     errors = refresh()
     clips = db.all("clips")
     now = totals(clips)
     text = report_text(clips, now, LAST["totals"], errors)
     LAST.update(totals=now, at=time.time())
-    how = send_whatsapp(text)
-    db.syslog(f"WhatsApp report sent as {how} ({len(text)} chars)")
-    return text
+    rid = db.insert("reports", at=time.time(), text=text)
+    if not whatsapp_ready():
+        sent = "not sent: WhatsApp not set up (shown here only)"
+    else:
+        try:
+            sent = f"sent on WhatsApp as {send_whatsapp(text)}"
+        except Exception as e:
+            sent = f"WhatsApp failed: {e}"[:300]
+    db.update("reports", rid, sent=sent)
+    db.syslog(f"report #{rid} made ({len(text)} chars): {sent}")
+    return db.get("reports", rid)
 
 
 if __name__ == "__main__":

@@ -17,7 +17,8 @@ SHORT_MIN, SHORT_MAX = int(os.getenv("SHORT_MIN", "15")), min(int(os.getenv("SHO
 LONG_MIN, LONG_MAX = int(os.getenv("LONG_MIN", "60")), min(int(os.getenv("LONG_MAX", "180")), SHORT_HARD_MAX)
 _logo = os.getenv("LOGO", str(ROOT / "clipper" / "assets" / "logo.png"))
 LOGO = Path(_logo) if _logo else None  # watermark on every clip; LOGO= (empty) in .env turns it off
-END_CARD = os.getenv("END_CARD", "FOLLOW FOR MORE")  # animated call to action at the end of every clip; empty = off
+END_CARD = os.getenv("END_CARD", "IF YOU MADE IT TO|THE END OF THIS VIDEO,|YOU LEGALLY HAVE TO|FOLLOW ME")
+# ^ animated call to action at the end of every clip; "|" = new line, the last line goes on the red box; empty = off
 VOICE = os.getenv("VOICE", "")  # voice-over voice (macOS 'say' / Windows SAPI name); empty = system default
 CROP_ASPECT = min(max(float(os.getenv("CROP_ASPECT", "1")), 9 / 16), 16 / 9)  # kept part of the frame, w/h
 STRETCH_SHORT, STRETCH_LONG = int(os.getenv("STRETCH_SHORT", "10")), int(os.getenv("STRETCH_LONG", "10"))

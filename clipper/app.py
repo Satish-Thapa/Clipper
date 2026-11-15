@@ -9,13 +9,14 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import db, pick, social, stats, topics, upload, worker
+from . import autopilot, db, pick, social, stats, topics, upload, worker
 from .config import CROP_ASPECT, DATA, IG_MAX_SECONDS, SHORT_HARD_MAX
 
 app = FastAPI(title="Clipper")
 db.init()
 db.syslog(f"server started, data in {DATA}")
 topics.start_loop()  # picks up topics still queued from before a restart
+autopilot.start_loop()  # daily auto research round, when switched on in the UI
 stats.start_loop()  # hourly WhatsApp report, if WA_PHONE_NUMBER_ID/WA_TOKEN/WA_TO are set
 social.backfill_times()  # give old uploads a time so the 24h upload counter includes them
 social.backfill_limit_hits()  # start the 24h timer of a limit error logged before timers existed
@@ -209,11 +210,57 @@ def logs(lines: int = 400):
 
 @app.post("/api/report")
 def send_report():
-    """Refresh view counts now and send the WhatsApp report. Returns the message text."""
-    try:
-        return {"text": stats.send_report()}
-    except Exception as e:
-        raise HTTPException(400, str(e))
+    """Refresh view counts, make a report (saved for the Reports page), send it on WhatsApp if set up."""
+    return stats.send_report()
+
+
+@app.get("/api/reports")
+def reports(limit: int = 50):
+    return db.all("reports")[:limit]
+
+
+class AutoSettings(BaseModel):
+    enabled: bool = False
+    niche: str = Field("GTA 5, GTA 6 and gaming", max_length=200)  # "" = anything trending, its choice
+    research_per_day: int = Field(10, ge=1, le=100)  # candidate videos judged per day (split over topics)
+    videos_per_day: int = Field(3, ge=1, le=30)  # of those, how many get clipped
+    shorts: int = Field(2, ge=0, le=20)
+    longs: int = Field(0, ge=0, le=10)
+    mode: Literal["hype", "ai+hype", "ai"] = "hype"
+    aspect: float = Field(CROP_ASPECT, ge=0.56, le=1.78)
+    hq: bool = False
+    face_check: bool = True
+    subtitles: bool = True
+    voiceover: bool = False
+    platforms: list[Platform] = ["youtube"]
+    hour: int = Field(9, ge=0, le=23)  # local hour after which the daily round runs
+    upload_every: int = Field(0, ge=0, le=1440)  # minutes between autopilot uploads; 0 = as soon as ready
+
+
+@app.get("/api/auto")
+def auto_status():
+    return autopilot.status()
+
+
+@app.post("/api/auto")
+def auto_save(s: AutoSettings):
+    if s.shorts + s.longs == 0:
+        raise HTTPException(400, "ask for at least one clip per video")
+    return autopilot.save(s.model_dump())
+
+
+@app.get("/api/auto/rounds")
+def auto_rounds(limit: int = 20):
+    return autopilot.rounds(limit)
+
+
+@app.post("/api/auto/run")
+def auto_run():
+    """Run a round now (finds trends + queues topics) in the background; the topic queue then clips and uploads."""
+    if autopilot.LOCK.locked():
+        raise HTTPException(409, "a round is already running")
+    threading.Thread(target=autopilot.run_round, args=("run now",), daemon=True).start()
+    return {"ok": True}
 
 
 @app.post("/api/views/refresh")

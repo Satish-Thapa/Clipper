@@ -68,7 +68,8 @@ def error_text(err):
 # When a platform's API says the upload limit is exceeded, remember when (table limit_hits) so the UI can count down
 # 24 hours from that moment. Information only: uploads are never held back.
 LIMIT_RE = re.compile(r"uploadLimitExceeded|exceeded the number of videos|quotaExceeded|dailyLimitExceeded|"
-                      r"spam_risk_too_many_posts|too many posts", re.I)
+                      r"spam_risk_too_many_posts|too many posts|request limit reached|publishing limit|"
+                      r"reached the (?:maximum|limit)|rate.?limit", re.I)
 
 
 def note_limit(platform, message):

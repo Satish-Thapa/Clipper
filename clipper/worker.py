@@ -289,7 +289,18 @@ def _render_one(job, src, d, c, words, subtitles):
     db.log(jid, f"clip #{cid} ready: {out.name}, {out.stat().st_size / 1e6:.1f} MB")
     db.update("clips", cid, path=str(out.relative_to(DATA)), status="rendered")
     if job["auto_upload"]:
-        upload_clip(cid)
+        topic = db.get("topics", job["topic_id"]) if job.get("topic_id") else None
+        spacing = _auto_spacing() if topic and topic.get("source") == "auto" else 0
+        if spacing:  # autopilot with upload timing: autopilot.upload_tick() posts it when its turn comes
+            db.update("clips", cid, status="scheduled")
+            db.log(jid, f"clip #{cid} scheduled: autopilot uploads one clip every {spacing} min")
+        else:
+            upload_clip(cid)
+
+
+def _auto_spacing():
+    from . import autopilot  # late import: autopilot imports topics, which imports worker
+    return int(autopilot.settings().get("upload_every") or 0)
 
 
 def _voiceover(job, c, words, out):
@@ -382,9 +393,15 @@ def upload_clip(cid, platforms=None):
     job = db.get("jobs", c["job_id"]) or {}
     platforms = platforms or json.loads(job.get("platforms") or '["youtube"]') or ["youtube"]
     done = json.loads(c.get("uploads") or "{}")
+    topic = db.get("topics", job["topic_id"]) if job.get("topic_id") else None
+    auto, limited = bool(topic and topic.get("source") == "auto"), social.limit_timers()
     db.update("clips", cid, status="uploading")
     for p in platforms:
         if done.get(p, {}).get("id"):
+            continue
+        if auto and p in limited:  # autopilot only: manual uploads are always attempted (user's rule)
+            db.log(c["job_id"], f"#{cid} not uploaded to {p} by autopilot: upload limit reached, timer ends "
+                                f"{time.strftime('%H:%M', time.localtime(limited[p]['until']))}. Upload it later from the clip card.")
             continue
         if p == "instagram" and IG_MAX_SECONDS and c["end"] - c["start"] > IG_MAX_SECONDS:
             db.log(c["job_id"], f"#{cid} not uploaded to instagram: {c['end'] - c['start']:.0f}s is over IG_MAX_SECONDS "
@@ -404,6 +421,6 @@ def upload_clip(cid, platforms=None):
         db.update("clips", cid, uploads=json.dumps(done))
     tried = list(done)  # every platform this clip was ever sent to, not just this call's (e.g. later "↑ Facebook")
     ok = [p for p in tried if done[p].get("id")]
-    status = ("uploaded" if len(ok) == len(tried) else f"uploaded {len(ok)}/{len(tried)}" if ok
-              else "upload failed")
+    status = ("not uploaded (skipped)" if not tried else  # every platform skipped (limit / too long): nothing went up
+              "uploaded" if len(ok) == len(tried) else f"uploaded {len(ok)}/{len(tried)}" if ok else "upload failed")
     db.update("clips", cid, status=status, youtube_id=done.get("youtube", {}).get("id"))
