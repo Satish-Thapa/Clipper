@@ -166,7 +166,9 @@ def upload_tick(now=None):
     db.set_setting("auto_posts", json.dumps(posts))
     db.log(c["job_id"], f"autopilot: posting #{c['id']} (post {schedule(s)['posted_today']}/{s['posts_per_day']} "
                         f"today, {len(waiting) - 1} more waiting)")
-    worker.upload_clip(c["id"], s["platforms"])  # today's platforms, even if they changed after it was made
+    # today's platforms, even if they changed after it was made. force: Instagram is tried even for clips over
+    # IG_MAX_SECONDS (it may fail; the error shows on the clip card, with the red button to retry)
+    worker.upload_clip(c["id"], s["platforms"], force=True)
     return c["id"]
 
 

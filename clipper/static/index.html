@@ -554,7 +554,7 @@ function planText() {  // the plan in plain words, updated as you type
      <span class="dim">From ${hh(o.hour)} it researches ~${videos * o.choosy} trending videos, clips the best ${videos} (${per} clip${per > 1 ? "s" : ""} each),
      and tops up later if the day runs short. Clips not posted by the end of the window go first tomorrow.
      ${o.platforms.includes("youtube") && n > 6 ? `<br><span style="color:var(--warn)">YouTube usually allows ~6-10 API uploads a day; past that it says "limit exceeded" and the autopilot skips YouTube until the 24h timer ends.</span>` : ""}
-     ${o.platforms.includes("instagram") ? `<br>Instagram only gets clips up to ${igMax}s (longer ones often fail there).` : ""}</span>`;
+     ${o.platforms.includes("instagram") ? `<br>Instagram gets every clip, also ones over ${igMax}s: those may fail there (the error shows on the clip card, with a red button to retry).` : ""}</span>`;
 }
 function showAuto(st, s) {
   autoSt = st;

@@ -129,6 +129,9 @@ The **Today** panel shows posts done / planned, the next post, the posting slots
 **Activity** view shows every round section by section: searches, the most-viewed videos it read, the topics it chose
 and why, each video it judged, face checks, jobs, clips and where each was posted.
 
+**Instagram:** the autopilot tries every clip on Instagram, also ones over `IG_MAX_SECONDS`. Those may fail; the error
+shows on the clip card and in the banner, and the red **↑ Instagram (may fail)** button retries it.
+
 **Upload limits:** when a platform's API says its limit is reached, the autopilot skips that platform until its 24h
 timer ends. If every platform is at its limit, rounds pause. Manual uploads are never held back.
 
