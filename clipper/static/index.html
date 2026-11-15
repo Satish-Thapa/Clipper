@@ -163,8 +163,9 @@
  </div>
 
  <div class="page" id="page-clips">
-  <div class="page-head"><h2>Clips</h2><p>Rendered clips, newest first. Upload or retry from each card.</p></div>
-  <section class="panel"><div class="clips" id="clips"></div></section>
+  <div class="page-head"><h2>Clips</h2><p>Rendered clips, newest first. Upload a clip to any connected platform from its card,
+    or every clip at once below.</p></div>
+  <section class="panel"><div class="row" id="bulk" style="margin-bottom:14px"></div><div class="clips" id="clips"></div></section>
  </div>
 
  <div class="page" id="page-logs">
@@ -203,11 +204,19 @@ const SETUP = {
   tiktok: "<code>TIKTOK_CLIENT_KEY</code>, <code>TIKTOK_CLIENT_SECRET</code>, <code>TIKTOK_REFRESH_TOKEN</code> in .env (README). Private posts until TikTok audits the app.",
 };
 const PLATFORMS = {youtube: "YouTube", facebook: "Facebook", instagram: "Instagram", tiktok: "TikTok"};
-// Platform checkboxes in both forms; data-default = which start ticked.
-document.querySelectorAll("fieldset.pf").forEach(fs => fs.insertAdjacentHTML("beforeend", Object.entries(PLATFORMS).map(([k, n]) =>
-  `<label class="check"><input type="checkbox" name="pf" value="${k}" ${fs.dataset.default.split(",").includes(k) ? "checked" : ""}> ${n}
-   <span class="off" data-p="${k}"></span></label>`).join("")));
-const picked = form => [...form.querySelectorAll("input[name=pf]:checked")].map(i => i.value);
+// Upload targets shown in the UI (one per platform; a target can hold several platforms if they should go together).
+const TARGETS = {youtube: ["youtube"], facebook: ["facebook"], instagram: ["instagram"], tiktok: ["tiktok"]};
+const TARGET_NAMES = {youtube: "YouTube", facebook: "Facebook", instagram: "Instagram", tiktok: "TikTok"};
+let igMax = 30;  // from the server (IG_MAX_SECONDS): Instagram rejects longer Reels right now, so no button for them
+// Platform checkboxes in both forms; data-default = which targets start ticked.
+document.querySelectorAll("fieldset.pf").forEach(fs => fs.insertAdjacentHTML("beforeend", Object.entries(TARGETS).map(([t, ps]) =>
+  `<label class="check"><input type="checkbox" name="pf" value="${ps.join(",")}" ${fs.dataset.default.split(",").includes(t) ? "checked" : ""}>
+   ${TARGET_NAMES[t]} <span class="off" data-t="${t}"></span></label>`).join("")));
+const picked = form => [...form.querySelectorAll("input[name=pf]:checked")].flatMap(i => i.value.split(","));
+// connected members of a target, and the ones a clip isn't on yet
+const live = (s, t) => TARGETS[t].filter(p => s.platforms[p]);
+const fitsIG = c => !igMax || c.end - c.start <= igMax;
+const notOn = (s, c, t) => live(s, t).filter(p => !(JSON.parse(c.uploads || "{}")[p] || {}).id && (p !== "instagram" || fitsIG(c)));
 
 $("#f").onsubmit = async e => {
   e.preventDefault();
@@ -250,6 +259,18 @@ async function connectYT(btn) {
   const r = await post("/api/youtube/connect");
   if (!r.ok) alertBox((await r.json()).detail);
   refresh();
+}
+// Upload one clip to one platform (waits for the result), or every clip that isn't on a platform yet (background).
+async function uploadTo(id, platforms, btn) {
+  btn.disabled = true; btn.textContent = "Uploading…";
+  await post(`/api/clips/${id}/upload`, platforms.split(",")); clipKey = ""; refresh();
+}
+async function uploadAll(t, n, btn) {
+  if (!confirm(`Upload ${n} clip(s) to ${TARGET_NAMES[t]}? They go up one by one in the background.`)) return;
+  btn.disabled = true; btn.textContent = "Queued…";
+  const r = await post("/api/clips/upload_all", TARGETS[t]);
+  if (!r.ok) alertBox(await r.text());
+  clipKey = ""; refresh();
 }
 async function uploadClip(id, btn) { btn.disabled = true; btn.textContent = "Uploading…"; await post(`/api/clips/${id}/upload`); clipKey = ""; refresh(); }
 async function deleteClip(id) {
@@ -425,7 +446,9 @@ async function refresh() {
         ${s.whatsapp ? `<button class="ghost" onclick="sendReport(this)">Send report now</button>` : ""}</div>
       ${lastReport ? `<pre>${esc(lastReport)}</pre>` : ""}
     </div>`;
-  document.querySelectorAll(".off[data-p]").forEach(el => el.textContent = s.platforms[el.dataset.p] ? "" : "(not set up)");
+  igMax = s.ig_max_seconds;
+  document.querySelectorAll(".off[data-t]").forEach(el => el.textContent = !live(s, el.dataset.t).length ? "(not set up)"
+    : el.dataset.t === "instagram" && igMax ? `(clips ≤${igMax}s only)` : "");
 
   defaultAspect(s.crop_aspect);
   loadLogs();
@@ -476,7 +499,15 @@ async function refresh() {
   openCurves.forEach(loadCurves);
 
   // Only re-render clips when something changed, so playing videos don't restart.
-  const key = JSON.stringify(s.clips.map(c => [c.id, c.status, c.path, c.uploads, c.views]));
+  const ready = c => c.path && !["rendering","uploading"].includes(c.status);
+  const bulk = Object.keys(TARGETS).filter(t => live(s, t).length)
+    .map(t => [t, s.clips.filter(c => ready(c) && notOn(s, c, t).length).length]);
+  $("#bulk").innerHTML = bulk.length ? `<span class="dim">Upload all clips not on…</span>` + bulk.map(([t, n]) =>
+    `<button class="ghost" ${n ? "" : "disabled"} onclick="uploadAll('${t}', ${n}, this)"
+      ${t === "instagram" && igMax ? `title="only clips up to ${igMax}s: Instagram's API rejects longer Reels right now"` : ""}>${TARGET_NAMES[t]}${
+      t === "instagram" && igMax ? ` ≤${igMax}s` : ""} (${n})</button>`).join("")
+    : `<span class="dim">Connect a platform on the <a href="#socials">Socials</a> page to upload.</span>`;
+  const key = JSON.stringify([s.platforms, igMax, s.clips.map(c => [c.id, c.status, c.path, c.uploads, c.views])]);
   if (key === clipKey) return;
   clipKey = key;
   $("#clips").innerHTML = s.clips.length ? s.clips.map(c => {
@@ -499,6 +530,11 @@ async function refresh() {
           ${ups ? `<span class="ups">${ups}</span>` : c.youtube_id ? `<a href="https://youtu.be/${esc(c.youtube_id)}" target="_blank">▶ on YouTube</a>` : `<span class="dim">${esc(c.status)}</span>`}
           ${canUpload ? `<button class="ghost" onclick="uploadClip(${c.id}, this)" title="to the job's platforms; only retries the ones not done yet">${ups ? "Retry upload" : "Upload"}</button>` : ""}
           ${c.path ? `<a href="/media/${esc(c.path)}" target="_blank">Open</a>` : ""}
+        </div>
+        <div class="row">
+          ${ready(c) ? Object.keys(TARGETS).filter(t => notOn(s, c, t).length).map(t =>
+            `<button class="ghost" title="uploads to: ${notOn(s, c, t).map(p => PLATFORMS[p]).join(", ")}"
+              onclick="uploadTo(${c.id}, '${notOn(s, c, t).join(",")}', this)">↑ ${TARGET_NAMES[t]}</button>`).join("") : ""}
           ${!["rendering","uploading"].includes(c.status) ? `<button class="ghost danger" onclick="deleteClip(${c.id})">Delete</button>` : ""}
         </div>
       </div></div>`;

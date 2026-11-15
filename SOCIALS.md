@@ -129,7 +129,12 @@ IG_USER_ID=17841400000000000
 
 Instagram uses `FB_PAGE_TOKEN` automatically. Only set `IG_TOKEN=` if you want a different token for Instagram.
 
-Every clip is posted as a **Reel**. Instagram limits API posting to about 50 posts a day.
+Every clip is posted as a **Reel**. Your account can post 100 Reels a day through the API.
+
+**Clips over 30 seconds skip Instagram (for now).** In November 2026, Instagram's API rejected every Reel longer than
+about 30 s from this account (`ProcessingFailedError`, or error `2207076`), even plain test videos. Shorter ones upload
+fine. So clips longer than `IG_MAX_SECONDS` (30 in `.env`) get no Instagram button and are skipped on auto-upload,
+with a line in the job log. When Meta fixes it, raise `IG_MAX_SECONDS` or set it to `0` (no limit) and restart.
 
 ---
 

@@ -6,7 +6,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from . import db, download, pick, render, signals, social, transcribe
-from .config import DATA, LIVE_CHUNK_SECONDS
+from .config import DATA, IG_MAX_SECONDS, LIVE_CHUNK_SECONDS
 
 STOPS = {}  # job_id -> threading.Event
 RENDER_JOBS = 2  # clips rendered at once (GPU encoder + CPU side by side)
@@ -386,6 +386,10 @@ def upload_clip(cid, platforms=None):
     for p in platforms:
         if done.get(p, {}).get("id"):
             continue
+        if p == "instagram" and IG_MAX_SECONDS and c["end"] - c["start"] > IG_MAX_SECONDS:
+            db.log(c["job_id"], f"#{cid} not uploaded to instagram: {c['end'] - c['start']:.0f}s is over IG_MAX_SECONDS "
+                                f"({IG_MAX_SECONDS:.0f}s, Instagram's API rejects longer Reels right now)")
+            continue
         t = time.time()
         db.log(c["job_id"], f"uploading #{cid} to {p}...")
         try:
@@ -398,7 +402,8 @@ def upload_clip(cid, platforms=None):
             if social.note_limit(p, str(e)):
                 db.log(c["job_id"], f"{p} says the upload limit is exceeded: 24h timer started")
         db.update("clips", cid, uploads=json.dumps(done))
-    ok = [p for p in platforms if done.get(p, {}).get("id")]
-    status = ("uploaded" if len(ok) == len(platforms) else f"uploaded {len(ok)}/{len(platforms)}" if ok
+    tried = list(done)  # every platform this clip was ever sent to, not just this call's (e.g. later "↑ Facebook")
+    ok = [p for p in tried if done[p].get("id")]
+    status = ("uploaded" if len(ok) == len(tried) else f"uploaded {len(ok)}/{len(tried)}" if ok
               else "upload failed")
     db.update("clips", cid, status=status, youtube_id=done.get("youtube", {}).get("id"))

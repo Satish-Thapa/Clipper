@@ -29,6 +29,9 @@ YT_TOKEN = DATA / "youtube_token.json"
 GRAPH_VERSION = os.getenv("GRAPH_VERSION", "v23.0")
 FB_PAGE_ID, FB_PAGE_TOKEN = os.getenv("FB_PAGE_ID", ""), os.getenv("FB_PAGE_TOKEN", "")
 IG_USER_ID, IG_TOKEN = os.getenv("IG_USER_ID", ""), os.getenv("IG_TOKEN", "") or FB_PAGE_TOKEN
+# Instagram's API currently rejects Reels longer than ~30s for this account (ProcessingFailedError / 2207076, tested
+# 2026-11-15 with plain test videos too). Longer clips skip Instagram. Raise it, or 0 = no limit, once Meta fixes it.
+IG_MAX_SECONDS = float(os.getenv("IG_MAX_SECONDS", "30"))
 # TikTok Content Posting API. The refresh token rotates, so the current one lives in data/tiktok_token.json.
 TIKTOK_CLIENT_KEY, TIKTOK_CLIENT_SECRET = os.getenv("TIKTOK_CLIENT_KEY", ""), os.getenv("TIKTOK_CLIENT_SECRET", "")
 TIKTOK_REFRESH_TOKEN = os.getenv("TIKTOK_REFRESH_TOKEN", "")

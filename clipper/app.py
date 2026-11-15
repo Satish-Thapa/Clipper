@@ -1,4 +1,5 @@
 import json
+import threading
 import time
 from pathlib import Path
 from typing import Literal
@@ -9,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import db, pick, social, stats, topics, upload, worker
-from .config import CROP_ASPECT, DATA, SHORT_HARD_MAX
+from .config import CROP_ASPECT, DATA, IG_MAX_SECONDS, SHORT_HARD_MAX
 
 app = FastAPI(title="Clipper")
 db.init()
@@ -148,7 +149,7 @@ def state():
     return {"jobs": db.all("jobs"), "clips": db.all("clips"), "topics": db.all("topics"), "platforms": social.connected(),
             "deepseek": pick.balance(), "whatsapp": stats.whatsapp_ready(), "report_minutes": stats.REPORT_MINUTES,
             "view_errors": stats.LAST["errors"], "crop_aspect": CROP_ASPECT,
-            "uploads": social.upload_status(), "limit_timers": social.limit_timers()}
+            "uploads": social.upload_status(), "limit_timers": social.limit_timers(), "ig_max_seconds": IG_MAX_SECONDS}
 
 
 @app.post("/api/jobs/{jid}/stop")
@@ -162,6 +163,27 @@ def upload_clip(cid: int, platforms: list[Platform] | None = None):
     """Body: optional list of platforms; default = the ones chosen for the clip's job."""
     worker.upload_clip(cid, platforms)
     return db.get("clips", cid)
+
+
+@app.post("/api/clips/upload_all")
+def upload_all(platforms: list[Platform]):
+    """Upload every rendered clip to whichever of `platforms` it isn't on yet (the UI sends Facebook + Instagram
+    together), oldest first, one clip at a time in the background."""
+    todo = []
+    for c in reversed(db.all("clips")):
+        on = json.loads(c.get("uploads") or "{}")
+        missing = [p for p in platforms if not on.get(p, {}).get("id")
+                   and not (p == "instagram" and IG_MAX_SECONDS and c["end"] - c["start"] > IG_MAX_SECONDS)]
+        if c["path"] and c["status"] not in ("rendering", "uploading") and missing:
+            todo.append((c["id"], missing))
+
+    def run():
+        db.syslog(f"bulk upload to {', '.join(platforms)}: {len(todo)} clips")
+        for cid, missing in todo:
+            worker.upload_clip(cid, missing)
+        db.syslog(f"bulk upload to {', '.join(platforms)} finished")
+    threading.Thread(target=run, daemon=True).start()
+    return {"queued": len(todo)}
 
 
 @app.delete("/api/clips/{cid}")
