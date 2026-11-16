@@ -114,13 +114,13 @@ def _clean_hook(t):
     return " ".join(str(t).replace("{", "(").replace("}", ")").replace("\\", "/").split())
 
 
-def hook_lines(text, width=34):
+def hook_lines(text, width=44):
     """The follow message wrapped for its box (2-3 short lines read better than one long one)."""
     import textwrap
     return textwrap.wrap(text, width)[:3] if text else []
 
 
-HOOK_LINE_H, HEAD_H = 54, 106  # one follow-message line / the headline box (px) on a 1080x1920 canvas
+HOOK_LINE_H, HEAD_H = 42, 106  # one follow-message line / the headline box (px) on a 1080x1920 canvas
 
 
 def top_block(aspect=CROP_ASPECT, lines=1):
@@ -160,12 +160,10 @@ def ass(words, start, end, vertical=True, headline="", per_line=3, aspect=CROP_A
     # Captions: just under the video, so they stay above YouTube's title/channel overlay at the very bottom.
     bar = bar_height(aspect)
     size = (dict(w=1080, h=1920, size=86, margin=max(250, bar - 120), top_size=78, top_margin=max(120, (bar - 106) // 2),
-                 end_size=120, end_sub=84, end_small=62, end_hi=76, hook_size=40)
+                 end_size=120, end_sub=84, end_small=62, end_hi=76, hook_size=31)
             if vertical
             else dict(w=1920, h=1080, size=64, margin=70, top_size=60, top_margin=50, end_size=90, end_sub=64, end_small=56, end_hi=68,
                       hook_size=40))
-    if split and vertical:  # captions sit on the seam between the clip (top) and the background video (bottom)
-        size["margin"] = 905
     lines += end_card(end - start, w=size["w"], h=size["h"])
     return ASS_HEAD.format(**size) + "\n".join(lines) + "\n"
 
@@ -234,7 +232,7 @@ def encoder_name():
     return "GPU NVENC" if "h264_nvenc" in encoder() else "CPU x264"
 
 
-SPLIT_ASPECT = 1080 / 960  # split layout: the clip's half is 1080x960, wider than a 9:16 crop = more of the scene
+SPLIT_CLIP_H = 608  # split layout: the clip is shown whole (16:9 at 1080 wide = 1080x608), nothing cut off
 
 
 def filler_path(layout):
@@ -267,9 +265,6 @@ def cut(src, out, start, end, vertical, words=(), headline="", voice=(), aspect=
     # ponytail: plain center crop; facecam/subject tracking is the upgrade if gameplay gets cut off
     vf = (f"crop='min(iw,ih*{aspect})':ih,scale=1080:1920:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos,"
           "pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,setsar=1" if vertical else "scale=-2:1080")
-    if filler:  # top half: a wide slice of the clip, filled edge to edge
-        vf = (f"crop='min(iw,ih*{SPLIT_ASPECT})':ih,scale=1080:960:force_original_aspect_ratio=increase:flags=lanczos,"
-              "crop=1080:960,setsar=1")
     hook = follow_line() if headline and vertical else ""
     subs = ""
     if words or headline or END_CARD.strip():
@@ -278,8 +273,19 @@ def cut(src, out, start, end, vertical, words=(), headline="", voice=(), aspect=
                        encoding="utf-8")
         subs = f",subtitles={sub.name}"  # relative name + cwd avoids ffmpeg path escaping
     n_in = 1 + (1 if LOGO and LOGO.exists() else 0) + len(voice)  # the background video is the last input
-    head = (f"[0:v]{vf}[top];[{n_in}:v]scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960,setsar=1,"
-            f"fps=30[bot];[top][bot]vstack=inputs=2:shortest=1{subs}" if filler else f"[0:v]{vf}{subs}")
+    if filler:
+        # Split, top to bottom: follow message + headline (over a blurred, darkened copy of the clip), then the clip
+        # WHOLE (16:9 at full width, the centre and everything around it visible), then your video filling the rest.
+        top = top_block(9 / 16, len(hook_lines(hook)))[2] + 24 if headline else 140
+        bot_h = 1920 - top - SPLIT_CLIP_H
+        head = (f"[0:v]split=2[a][b];[a]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
+                f"boxblur=24:2,eq=brightness=-0.35,setsar=1[bg];"
+                f"[b]scale=1080:{SPLIT_CLIP_H}:force_original_aspect_ratio=decrease:flags=lanczos,"
+                f"pad=1080:{SPLIT_CLIP_H}:(ow-iw)/2:(oh-ih)/2:black,setsar=1[clip];"
+                f"[{n_in}:v]scale=1080:{bot_h}:force_original_aspect_ratio=increase,crop=1080:{bot_h},setsar=1,fps=30[fill];"
+                f"[bg][clip]overlay=0:{top}[t];[t][fill]overlay=0:{top + SPLIT_CLIP_H}:shortest=1{subs}")
+    else:
+        head = f"[0:v]{vf}{subs}"
     graph, logo_in = f"{head}[o]", []
     if LOGO and LOGO.exists():
         # Small logo top-right. Vertical with bars: in the top bar just above the video (clear of the headline and
@@ -332,7 +338,7 @@ Style: Head,Arial Black,84,&H00FFFFFF,&H00FFFFFF,&H00000000,&H90000000,1,0,0,0,1
 Style: Line,Arial,52,&H00FFFFFF,&H00FFFFFF,&H00000000,&HA0000000,1,0,0,0,100,100,0,0,3,14,0,8,0,0,0,1
 Style: Dot,Arial Black,52,&H0000E5FF,&H0000E5FF,&H00000000,&H00000000,1,0,0,0,100,100,0,0,1,0,0,8,0,0,0,1
 Style: Src,Arial,38,&H00DDDDDD,&H00DDDDDD,&H00000000,&H80000000,1,0,0,0,100,100,1,0,1,3,0,5,0,0,0,1
-Style: Hook,Arial Black,34,&H00FFFFFF,&H00FFFFFF,&H002E2EFF,&H002E2EFF,1,0,0,0,100,100,0,0,3,9,0,8,0,0,0,1
+Style: Hook,Arial Black,28,&H00FFFFFF,&H00FFFFFF,&H002E2EFF,&H002E2EFF,1,0,0,0,100,100,0,0,3,8,0,8,0,0,0,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -356,10 +362,10 @@ def news_ass(post, source, age_h, length, picture, h=1920, hook=None):
     ev = lambda layer, a, b, style, text: f"Dialogue: {layer},{_t(a)},{_t(b)},{style},,0,0,0,,{text}"
     out, end = [], length
     hook = follow_line() if hook is None else hook
-    hl = hook_lines(hook, 30)  # narrow, so it never runs under the logo (top-right)
+    hl = hook_lines(hook, 36)  # narrow, so it never runs under the logo (top-right)
     if hl:
         out.append(ev(2, 0, end, "Hook", rf"{{\an8\pos(540,{L['hook']})\fad(200,0)}}" + r"\N".join(hl)))
-    badge = max(L["badge"], L["hook"] + len(hl) * 46 + 48)
+    badge = max(L["badge"], L["hook"] + len(hl) * 38 + 48)
     out.append(ev(2, 0.1, end, "Badge", rf"{{\an5\pos(540,{badge})\fscx30\fscy30\t(0,220,\fscx112\fscy112)\t(220,360,\fscx100\fscy100)}}"
                   + f" {_clean(post['badge'])} "))
     y = L["head"][0] if picture else L["head"][1]
@@ -451,7 +457,7 @@ if __name__ == "__main__":
     assert "0:00:00.00,0:00:02.00,Cap,NO WAY BRO" in a and "WHAT" in a and "PlayResY: 1920" in a, a
     assert "PlayResX: 1920" in ass([], 0, 1, vertical=False)
     a = ass([], 10, 20, headline="Cops remember you", hook="FOLLOW NOW")
-    assert r"Top,{\an8\pos(540,178)}COPS REMEMBER YOU" in a and "Hook," in a and "}FOLLOW NOW" in a, a  # hook above
+    assert r"Top,{\an8\pos(540,166)}COPS REMEMBER YOU" in a and "Hook," in a and "}FOLLOW NOW" in a, a  # hook above
     assert r"Top,{\an8\pos(540,110)}X" in ass([], 0, 9, headline="x", hook="")  # no hook: headline on top
     assert len(hook_lines(FOLLOW_LINES[1])) in (2, 3)  # long messages wrap
     assert bar_height(1) == 420 and bar_height(9 / 16) == 0

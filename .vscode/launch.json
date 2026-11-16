@@ -13,6 +13,17 @@
       "jinja": true
     },
     {
+      "name": "Clipper server (hot reload)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "clipper",
+      "python": "${workspaceFolder}/.venv/Scripts/python.exe",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "subProcess": true
+    },
+    {
       "name": "Clipper server",
       "type": "debugpy",
       "request": "launch",

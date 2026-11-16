@@ -107,10 +107,17 @@ cp .env.example .env                        # FFMPEG=/opt/homebrew/opt/ffmpeg-fu
 ### Run it
 
 ```powershell
-.venv\Scripts\uvicorn clipper.app:app --port 8000      # macOS: .venv/bin/uvicorn ...
+.venv\Scripts\python -m clipper              # hot reload: restarts by itself when you change the code
 ```
 
-Open **http://127.0.0.1:8000**. After changing `.env` or the code, stop the server (Ctrl+C) and start it again.
+Open **http://127.0.0.1:8000**.
+- **Hot reload:** it watches `clipper/*.py` and restarts when one changes. A video being clipped at that moment is
+  marked "interrupted"; queued topics carry on. The UI page needs only a browser refresh.
+- **Changing `.env`:** stop the server (Ctrl+C) and start it again.
+- **Options:** `--port 8080`, or `--no-reload` for a plain server.
+- **The old way still works:** `.venv\Scripts\uvicorn clipper.app:app --port 8000`.
+- **In VS Code:** Run and Debug → **Clipper server (hot reload)**.
+- **macOS:** use `.venv/bin/python -m clipper`.
 
 **GPU:** with an NVIDIA card, Whisper runs on CUDA (float16) and clips are encoded with NVENC (the log says
 `render: GPU encoder (h264_nvenc)`). Without one, both fall back to the CPU, which is slower but works the same.
@@ -137,11 +144,12 @@ Open **http://127.0.0.1:8000**. After changing `.env` or the code, stop the serv
 - *4:5*, *Square* and *Whole frame 16:9* keep more of the scene, with black bars above and below that hold the
   headline and captions.
 - ***Split: clip on top + your video below*** (split-screen):
-  - **Top half (1080x960):** the clip, as a wider slice than a phone crop, so more of the scene fits.
-  - **Bottom half:** a **background video you provide** (gameplay, satisfying clips, parkour...), muted, starting
+  - **Top:** the follow message and headline on a blurred strip, then the clip **whole** (16:9 at full width, so
+    the centre and everything around it is visible; nothing is cut off).
+  - **Below it:** a **background video you provide** (gameplay, satisfying clips, parkour...), muted, starting
     at a random point and looped if it's shorter than the clip.
-  - **Text:** the follow message, headline, logo and end card are the same as other clips; captions sit on the seam
-    between the halves.
+  - **Text:** the follow message, headline, logo, captions and end card are the same as other clips (captions at the
+    bottom, over the background video).
   - **Your library:** on **⚙ Settings → Background videos**, upload a file or **paste a YouTube link**; it
     downloads in the background (video only, up to 1080p, since it plays muted) and shows "downloading…" until it's
     ready. Delete any you don't want. Stored in `data/fillers/`, kept by "Reset everything". When Split is picked, a **Your video below** dropdown appears
