@@ -422,6 +422,10 @@
       Any video works (gameplay, satisfying clips, parkour…); it's cropped to fill the half.</p>
     <div class="row"><label class="ghost" style="cursor:pointer;color:var(--hot);font-size:14px">➕ Add a background video
       <input type="file" accept="video/*" style="display:none" onchange="addFiller(this)"></label><span class="dim" id="fillmsg"></span></div>
+    <form id="fyt" class="row" style="margin-top:10px">
+      <label style="flex:1;min-width:260px">…or from a YouTube link<input type="url" name="url" required placeholder="https://www.youtube.com/watch?v=..." style="width:100%"></label>
+      <label>Name (optional)<input name="name" placeholder="e.g. parkour" style="width:160px"></label>
+      <button>⬇ Download</button></form>
     <div id="fillers" style="margin-top:8px"></div></section>
   <section class="panel"><h3>Storage</h3><div id="storage" class="dim">…</div></section>
   <section class="panel danger-zone">
@@ -1089,8 +1093,14 @@ function framing(form) {  // -> {aspect, layout} for the API
   if (!name) { alertBox("Add a background video first (Settings → Background videos)."); throw new Error("no filler"); }
   return {aspect: 0.5625, layout: "split:" + name};
 }
+let fillKey = "";
 async function loadFillers() {
-  fillers = await (await fetch("/api/fillers")).json();
+  const all = await (await fetch("/api/fillers")).json();
+  const key = JSON.stringify(all);
+  if (key === fillKey) return;
+  fillKey = key;
+  fillers = all.filter(f => !f.downloading);
+  const pending = all.filter(f => f.downloading);
   document.querySelectorAll("select.filler").forEach(sel => {
     const cur = sel.value || fillerWanted;
     sel.innerHTML = fillers.length ? fillers.map(f => `<option value="${esc(f.name)}">${esc(f.name)} (${f.seconds}s)</option>`).join("")
@@ -1102,14 +1112,26 @@ async function loadFillers() {
       <b>${esc(f.name)}</b><span class="dim">${f.seconds}s · ${f.mb} MB</span>
       <button class="ghost danger" onclick="dropFiller('${esc(f.name)}')">Delete</button></div>`).join("")
     : `<p class="empty">No background videos yet.</p>`;
+  $("#fillers").insertAdjacentHTML("beforeend", pending.map(p => `<div class="row" style="padding:6px 0;border-top:1px solid var(--line)">
+      ${p.downloading === "failed" ? `<span class="no">✕</span>` : `<span class="spin">⟳</span>`}
+      <b>${esc(p.name)}</b><span class="${p.downloading === "failed" ? "no" : "dim"}">${esc(p.downloading)}${p.error ? ": " + esc(p.error) : ""}</span>
+      ${p.downloading === "failed" ? `<button class="ghost" onclick="forgetFiller('${esc(p.url)}')">Dismiss</button>` : ""}</div>`).join(""));
 }
+$("#fyt").onsubmit = async e => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  const r = await post("/api/fillers/youtube", {url: f.get("url"), name: f.get("name")});
+  if (!r.ok) return alertBox((await r.json()).detail || "could not start the download");
+  e.target.reset(); fillKey = ""; loadFillers();
+};
+async function forgetFiller(url) { await fetch("/api/fillers/youtube?" + new URLSearchParams({url}), {method: "DELETE"}); fillKey = ""; loadFillers(); }
 async function addFiller(el) {
   const f = el.files[0]; if (!f) return;
   $("#fillmsg").textContent = `Uploading ${f.name}…`;
   const r = await fetch("/api/fillers?" + new URLSearchParams({name: f.name}), {method: "POST", body: f});
-  $("#fillmsg").textContent = r.ok ? `Added ${f.name} ✓` : "Upload failed"; el.value = ""; loadFillers();
+  $("#fillmsg").textContent = r.ok ? `Added ${f.name} ✓` : "Upload failed"; el.value = ""; fillKey = ""; loadFillers();
 }
-async function dropFiller(name) { if (confirm(`Delete ${name}?`)) { await fetch(`/api/fillers/${encodeURIComponent(name)}`, {method: "DELETE"}); loadFillers(); } }
+async function dropFiller(name) { if (confirm(`Delete ${name}?`)) { await fetch(`/api/fillers/${encodeURIComponent(name)}`, {method: "DELETE"}); fillKey = ""; loadFillers(); } }
 loadFillers();
 // ---- Settings: storage + reset ----
 const gb = b => b >= 1e9 ? (b / 1e9).toFixed(2) + " GB" : (b / 1e6).toFixed(1) + " MB";
@@ -1264,6 +1286,7 @@ async function refresh() {
   loadLogs();
   loadReports();
   loadStorage();
+  if (location.hash === "#settings" || document.querySelector("select.filler") && !fillers.length) loadFillers();
   loadAuto(s);
   renderPosts(s);
   loadNewsRuns();

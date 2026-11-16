@@ -142,8 +142,9 @@ Open **http://127.0.0.1:8000**. After changing `.env` or the code, stop the serv
     at a random point and looped if it's shorter than the clip.
   - **Text:** the follow message, headline, logo and end card are the same as other clips; captions sit on the seam
     between the halves.
-  - **Your library:** add and delete background videos on **⚙ Settings → Background videos** (stored in
-    `data/fillers/`, kept by "Reset everything"). When Split is picked, a **Your video below** dropdown appears
+  - **Your library:** on **⚙ Settings → Background videos**, upload a file or **paste a YouTube link**; it
+    downloads in the background (video only, up to 1080p, since it plays muted) and shows "downloading…" until it's
+    ready. Delete any you don't want. Stored in `data/fillers/`, kept by "Reset everything". When Split is picked, a **Your video below** dropdown appears
     next to Framing.
 
 **Who picks the moments:**

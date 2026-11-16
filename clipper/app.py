@@ -420,12 +420,66 @@ def _filler_name(name):
     return n if n.lower().endswith((".mp4", ".mov", ".mkv", ".webm")) else n + ".mp4"
 
 
+FILLER_DL = {}  # url -> {"title", "status", "error"} for YouTube downloads in progress / failed (shown in the list)
+
+
 @app.get("/api/fillers")
 def list_fillers():
+    """Background videos you can pick, then any YouTube downloads still running or failed ("downloading": status)."""
     FILLERS.mkdir(parents=True, exist_ok=True)
     from . import render
-    return [{"name": f.name, "mb": round(f.stat().st_size / 1e6, 1), "seconds": round(render._duration(f))}
-            for f in sorted(FILLERS.iterdir()) if f.is_file()]
+    done = [{"name": f.name, "mb": round(f.stat().st_size / 1e6, 1), "seconds": round(render._duration(f))}
+            for f in sorted(FILLERS.iterdir()) if f.is_file() and f.suffix.lower() in (".mp4", ".mov", ".mkv", ".webm")]
+    return done + [{"name": d["title"], "url": u, "downloading": d["status"], "error": d.get("error")}
+                   for u, d in FILLER_DL.items()]
+
+
+class FillerLink(BaseModel):
+    url: str = Field(pattern=r"^https?://")
+    name: str = Field("", max_length=120)  # optional; default = the video's title
+
+
+@app.post("/api/fillers/youtube")
+def filler_from_youtube(f: FillerLink):
+    """Download a YouTube video as a background video (video only, up to 1080p; it plays muted) in the background."""
+    if f.url in FILLER_DL and FILLER_DL[f.url]["status"] != "failed":
+        raise HTTPException(409, "already downloading that one")
+    FILLER_DL[f.url] = {"title": f.name or f.url, "status": "getting info"}
+
+    def run():
+        import shutil
+        import tempfile
+        from .config import FFMPEG
+        d = FILLER_DL[f.url]
+        try:
+            i = download.info(f.url)
+            if i.get("is_live"):
+                raise RuntimeError("that's a live stream; use a normal video")
+            name = _filler_name((f.name or i.get("title") or "background")[:100])
+            d.update(title=name, status=f"downloading ({round((i.get('duration') or 0) / 60)} min video)")
+            db.syslog(f"background video: downloading '{i.get('title')}' from {f.url}")
+            with tempfile.TemporaryDirectory() as tmp:
+                with download.ydl({"quiet": True, "noprogress": True, "outtmpl": f"{tmp}/v.%(ext)s",
+                                   "format": "bv*[height<=1080][ext=mp4]/bv*[height<=1080]/b[height<=1080]/b",
+                                   "concurrent_fragment_downloads": download.FRAGMENTS, "ffmpeg_location": FFMPEG}) as y:
+                    y.download([f.url])
+                got = next(p for p in Path(tmp).iterdir() if p.is_file() and not p.name.endswith(".part"))
+                out = FILLERS / (Path(name).stem + got.suffix)
+                shutil.move(str(got), out)
+            db.syslog(f"background video added from YouTube: {out.name} ({out.stat().st_size / 1e6:.0f} MB)")
+            FILLER_DL.pop(f.url, None)
+        except Exception as e:
+            download.bot_checked(e)
+            d.update(status="failed", error=db.scrub(e)[:200])
+            db.syslog(f"background video from {f.url} failed: {e!r}")
+    threading.Thread(target=run, daemon=True).start()
+    return {"ok": True}
+
+
+@app.delete("/api/fillers/youtube")
+def forget_failed_filler(url: str):
+    FILLER_DL.pop(url, None)
+    return list_fillers()
 
 
 @app.post("/api/fillers")
