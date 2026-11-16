@@ -171,19 +171,8 @@ def _run(t):
 
 
 def _tidy(tid, jid):
-    """Autopilot jobs: delete the downloaded source video once clipped (sources are ~0.5-2 GB each), unless the
-    autopilot's 'keep source videos' is on. Clips are kept; only re-cutting that video by hand needs the source."""
-    from . import autopilot
-    from .config import DATA
-    if autopilot.settings()["keep_sources"]:
-        return
-    freed = 0
-    for f in (DATA / "jobs" / str(jid)).glob("source.*"):
-        try:
-            freed += f.stat().st_size
-            f.unlink()
-        except OSError as e:
-            db.log(tid, f"could not delete {f.name} of job #{jid}: {e!r}", "topics")
+    """Autopilot jobs: also drop the source when the job failed or stopped (successful jobs already did it)."""
+    freed = worker.drop_source(jid)
     if freed:
         db.log(tid, f"deleted job #{jid}'s source video ({freed / 1e6:.0f} MB freed)", "topics")
 

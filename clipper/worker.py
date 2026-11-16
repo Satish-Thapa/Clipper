@@ -47,6 +47,7 @@ def _run(job_id):
             _process(job, src, job["title"] or src.name, d)
             db.update("jobs", job_id, status="done")
             db.log(job_id, f"job finished in {(time.time() - t0) / 60:.1f} min")
+            drop_source(job_id)
             return
         db.update("jobs", job_id, status="fetching info")
         with db.step(job_id, "fetching video info"):
@@ -58,6 +59,8 @@ def _run(job_id):
         status = "stopped" if STOPS[job_id].is_set() else "done"
         db.update("jobs", job_id, status=status)
         db.log(job_id, f"job {status} in {(time.time() - t0) / 60:.1f} min")
+        if status == "done":
+            drop_source(job_id)
     except Exception as e:
         if download.bot_checked(e):
             db.log(job_id, "ERROR: YouTube bot check ('Sign in to confirm you're not a bot'). YouTube wants a signed-in "
@@ -65,6 +68,24 @@ def _run(job_id):
         else:
             db.log(job_id, f"ERROR: {e!r}", exc=True)
         db.update("jobs", job_id, status="failed")
+
+
+def drop_source(jid):
+    """Delete a job's downloaded source video (~0.5-2 GB) unless 'keep source videos' is on (Auto page).
+    Clips are kept; only re-cutting that video by hand needs the source. -> bytes freed."""
+    from . import autopilot
+    if autopilot.settings()["keep_sources"]:
+        return 0
+    freed = 0
+    for f in (DATA / "jobs" / str(jid)).glob("source.*"):
+        try:
+            freed += f.stat().st_size
+            f.unlink()
+        except OSError as e:
+            db.log(jid, f"could not delete {f.name}: {e!r}")
+    if freed:
+        db.log(jid, f"deleted source video ({freed / 1e6:.0f} MB freed)")
+    return freed
 
 
 def _vod(job, i, d):
