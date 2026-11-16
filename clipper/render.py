@@ -229,6 +229,103 @@ def cut(src, out, start, end, vertical, words=(), headline="", voice=(), aspect=
                    check=True, cwd=out.parent)
 
 
+NEWS_HEAD = """[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 2
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Badge,Arial Black,58,&H00FFFFFF,&H00FFFFFF,&H002E2EFF,&H002E2EFF,1,0,0,0,100,100,2,0,3,18,0,5,0,0,0,1
+Style: Head,Arial Black,84,&H00FFFFFF,&H00FFFFFF,&H00000000,&H90000000,1,0,0,0,100,100,0,0,1,6,3,8,0,0,0,1
+Style: Line,Arial,52,&H00FFFFFF,&H00FFFFFF,&H00000000,&HA0000000,1,0,0,0,100,100,0,0,3,14,0,8,0,0,0,1
+Style: Dot,Arial Black,52,&H0000E5FF,&H0000E5FF,&H00000000,&H00000000,1,0,0,0,100,100,0,0,1,0,0,8,0,0,0,1
+Style: Src,Arial,38,&H00DDDDDD,&H00DDDDDD,&H00000000,&H80000000,1,0,0,0,100,100,1,0,1,3,0,5,0,0,0,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+
+
+def _clean(t):
+    return " ".join(str(t).replace("{", "(").replace("}", ")").replace("\\", "/").split())
+
+
+def news_ass(post, source, age_h, length, picture):
+    """Badge pops in, headline lines slide up one by one, then each key fact, source line at the bottom."""
+    import textwrap
+    ev = lambda layer, a, b, style, text: f"Dialogue: {layer},{_t(a)},{_t(b)},{style},,0,0,0,,{text}"
+    out, end = [], length
+    out.append(ev(2, 0.1, end, "Badge", r"{\an5\pos(540,200)\fscx30\fscy30\t(0,220,\fscx112\fscy112)\t(220,360,\fscx100\fscy100)}"
+                  + f" {_clean(post['badge'])} "))
+    y = 920 if picture else 560
+    head = _clean(post["headline"]).upper()
+    # fewest lines, then the most even ones (no lone word on the last line)
+    best = min((textwrap.wrap(head, w) for w in range(13, 21)),
+               key=lambda ls: (len(ls), max(map(len, ls)) - min(map(len, ls))))
+    for i, line in enumerate(best[:4]):
+        t0 = 0.35 + i * 0.22
+        out.append(ev(3, t0, end, "Head", rf"{{\an8\move(540,{y + 40},540,{y},0,300)\fad(250,0)}}{line}"))
+        y += 100
+    y += 36
+    for i, fact in enumerate(post["lines"][:3]):
+        t0 = 1.3 + i * 1.6
+        wrapped = textwrap.wrap(_clean(fact), 34)[:3]
+        out.append(ev(1, t0, end, "Dot", rf"{{\an8\pos(80,{y + 4})\fad(200,0)}}▶"))
+        out.append(ev(2, t0, end, "Line", rf"{{\an7\move(150,{y + 30},130,{y},0,280)\fad(250,0)}}" + r"\N".join(wrapped)))
+        y += 70 * len(wrapped) + 34
+    when = "" if age_h is None else f"  ·  {age_h * 60:.0f} min ago" if age_h < 1 else f"  ·  {age_h:.0f} h ago" if age_h < 48 else ""
+    out.append(ev(2, 0.6, end, "Src", r"{\an5\pos(540,1856)\fad(400,0)}" + f"Source: {_clean(source)}{when}"))
+    return NEWS_HEAD + "\n".join(out) + "\n"
+
+
+def news_seconds(post, voice_len=0):
+    words = len(post["headline"].split()) + sum(len(x.split()) for x in post["lines"])
+    return round(min(max(voice_len + 1.5 if voice_len else 2.5 + 0.33 * words, 7), 15), 2)
+
+
+def news_video(out, post, source, age_h, picture=None, voice=None):
+    """A 1080x1920 news/fact post: the article's picture (sharp, slow zoom) over a blurred copy of it, or an animated
+    gradient when there's no picture; badge, headline, key facts, "Source: ..." and the logo; voice-over or silence.
+    -> its length in seconds."""
+    voice_len = 0
+    if voice:
+        import wave
+        with wave.open(str(voice)) as w:
+            voice_len = w.getnframes() / w.getframerate()
+    length = news_seconds(post, voice_len)
+    sub = out.with_suffix(".ass")
+    sub.write_text(news_ass(post, source, age_h, length, bool(picture)), encoding="utf-8")
+    if picture:
+        ins = ["-loop", "1", "-t", str(length), "-i", str(picture.resolve())]
+        graph = (f"[0:v]split=2[a][b];[a]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
+                 f"boxblur=28:2,eq=brightness=-0.32:saturation=1.2[bg];"
+                 f"[b]scale=w='min(1000,iw*560/ih)*(1+0.05*t/{length})':h=-2:eval=frame[fg];"
+                 f"[bg][fg]overlay=(W-w)/2:300+(560-h)/2:format=auto,fps=30,format=yuv420p")
+    else:
+        ins = ["-f", "lavfi", "-t", str(length), "-i",
+               "gradients=s=1080x1920:c0=0x14061f:c1=0x4a0f2e:c2=0x0b1a3a:n=3:speed=0.015:r=30"]
+        graph = "[0:v]format=yuv420p"
+    graph += f",subtitles={sub.name}"
+    logo = []
+    if LOGO and LOGO.exists():
+        logo = ["-i", str(LOGO.resolve())]
+        graph += "[v];[1:v]scale=190:-1[l];[v][l]overlay=W-w-28:36"
+    graph += "[o]"
+    k = 1 + len(logo) // 2
+    if voice:
+        aud, amap = ["-i", str(voice.resolve())], ["-map", f"{k}:a"]
+        graph += f";[{k}:a]aformat=sample_rates=48000:channel_layouts=stereo,adelay=600:all=1,volume=1.5,apad[a]"
+        amap = ["-map", "[a]"]
+    else:
+        aud, amap = ["-f", "lavfi", "-t", str(length), "-i", "anullsrc=r=48000:cl=stereo"], ["-map", f"{k}:a"]
+    subprocess.run([FFMPEG, "-y", "-loglevel", "error", *ins, *logo, *aud, "-filter_complex", graph, "-map", "[o]",
+                    *amap, "-t", str(length), *encoder(), "-pix_fmt", "yuv420p", "-r", "30", "-c:a", "aac",
+                    "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart", out.name], check=True, cwd=out.parent)
+    return length
+
+
 if __name__ == "__main__":
     a = ass([{"w": "no", "s": 10, "e": 10.4}, {"w": "way", "s": 10.4, "e": 11}, {"w": "{bro}", "s": 11, "e": 12},
              {"w": "what", "s": 12, "e": 13}], 10, 20)

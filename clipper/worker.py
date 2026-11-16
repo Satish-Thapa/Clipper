@@ -6,7 +6,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from . import db, download, pick, render, signals, social, transcribe
-from .config import DATA, IG_MAX_SECONDS, LIVE_CHUNK_SECONDS
+from .config import DATA, IG_MAX_SECONDS, KEEP_SOURCES, LIVE_CHUNK_SECONDS
 
 STOPS = {}  # job_id -> threading.Event
 RENDER_JOBS = 2  # clips rendered at once (GPU encoder + CPU side by side)
@@ -54,17 +54,44 @@ def _run(job_id):
         db.update("jobs", job_id, title=i.get("title"), is_live=int(bool(i.get("is_live"))))
         db.log(job_id, f"{'LIVE' if i.get('is_live') else 'video'}: {i.get('title')} | channel {i.get('channel')}, "
                        f"{(i.get('duration') or 0) / 60:.1f} min, {i.get('view_count') or 0:,} views")
-        (_live if i.get("is_live") else _vod)(job, i, d)
-        status = "stopped" if STOPS[job_id].is_set() else "done"
+        if i.get("is_live"):
+            stopped = _live(job, i, d)  # True only when Stop was pressed (not when the pieces asked for are done)
+        else:
+            _vod(job, i, d)
+            stopped = STOPS[job_id].is_set()
+        status = "stopped" if stopped else "done"
         db.update("jobs", job_id, status=status)
         db.log(job_id, f"job {status} in {(time.time() - t0) / 60:.1f} min")
     except Exception as e:
-        if download.bot_checked(e):
-            db.log(job_id, "ERROR: YouTube bot check ('Sign in to confirm you're not a bot'). YouTube wants a signed-in "
-                           "browser: add YouTube cookies on the Socials page, then run it again.")
-        else:
-            db.log(job_id, f"ERROR: {e!r}", exc=True)
-        db.update("jobs", job_id, status="failed")
+        _fail(job_id, e)
+    finally:
+        drop_sources(job_id)
+
+
+def drop_sources(job_id):
+    """Delete the job's source video (+ half-downloaded parts) and live recordings once it's finished: 0.5-2 GB each.
+    Clips, subtitles and the hype-curve data stay. KEEP_SOURCES=1 in .env turns this off."""
+    if KEEP_SOURCES:
+        return
+    freed = 0
+    for f in [*(DATA / "jobs" / str(job_id)).glob("source.*"), *(DATA / "jobs" / str(job_id)).glob("live_*.ts")]:
+        try:
+            size = f.stat().st_size
+            f.unlink()
+            freed += size
+        except OSError as e:
+            db.log(job_id, f"could not delete {f.name}: {e!r}")
+    if freed:
+        db.log(job_id, f"source video deleted ({freed / 1e6:.0f} MB freed; KEEP_SOURCES=1 in .env keeps it)")
+
+
+def _fail(job_id, e):
+    if download.bot_checked(e):
+        db.log(job_id, "ERROR: YouTube bot check ('Sign in to confirm you're not a bot'). YouTube wants a signed-in "
+                       "browser: add YouTube cookies on the Socials page, then run it again.")
+    else:
+        db.log(job_id, f"ERROR: {e!r}", exc=True)
+    db.update("jobs", job_id, status="failed")
 
 
 def _vod(job, i, d):
@@ -98,7 +125,9 @@ def _live(job, i, d):
         chat thread (LiveChat)      collects the wall-clock time of every chat message the whole time
 
     So clips from chunk 0 can already be rendered/uploaded while chunk 1 is still being recorded.
-    The job's shorts/longs counts apply PER CHUNK (default chunk = 10 min, LIVE_CHUNK_SECONDS in .env).
+    The job's shorts/longs counts apply PER CHUNK. Chunk length (chunk_minutes, default LIVE_CHUNK_SECONDS in .env)
+    and how many chunks to clip (max_chunks, 0 = until the stream ends) are per job, set in the UI. The job row is read
+    again before every chunk, so changes made on the Jobs page while it records apply from the next chunk.
     Live streams have no "most replayed" heatmap and no comments yet, so only audio + chat are used.
     """
     jid, stop = job["id"], STOPS[job["id"]]  # stop = the Event set by the UI's Stop button (see stop())
@@ -110,8 +139,14 @@ def _live(job, i, d):
 
     workers, k = [], 0  # k = chunk number
     while not stop.is_set():
+        job = db.get("jobs", jid)  # fresh: chunk length / chunk count / clips per chunk can change while it records
+        if job.get("max_chunks") and k >= job["max_chunks"]:
+            db.log(jid, f"recorded {k} chunk(s), the number asked for: stopping the recording")
+            break
+        seconds = int((job.get("chunk_minutes") or 0) * 60) or LIVE_CHUNK_SECONDS
         out = d / f"live_{k:04d}.ts"  # .ts = raw MPEG-TS, safe to write while streaming (no header to finalise)
-        db.update("jobs", jid, status=f"recording chunk {k}")
+        db.update("jobs", jid, status=f"recording chunk {k + 1}" + (f"/{job['max_chunks']}" if job.get("max_chunks") else ""))
+        db.log(jid, f"recording chunk {k + 1}: {seconds / 60:g} min, then {job['shorts']} shorts + {job['longs']} long from it")
 
         # Remember when this chunk starts (wall clock), so chat times can be turned into "seconds into this chunk".
         # Not exact: record_live_chunk first asks YouTube for fresh stream URLs (a few seconds) before ffmpeg
@@ -122,13 +157,13 @@ def _live(job, i, d):
         # (no re-encode). Returns False if the stream is already over. If Stop is pressed mid-chunk, ffmpeg is
         # told to quit gracefully and the partial chunk is kept and still processed below.
         # Small gaps (a few seconds) between chunks are lost while the next recording starts.
-        if not download.record_live_chunk(job["url"], out, LIVE_CHUNK_SECONDS, stop,
+        if not download.record_live_chunk(job["url"], out, seconds, stop,
                                            download.height_for(job.get("hq"))):
             db.log(jid, "stream ended")
             break
         if not out.exists() or out.stat().st_size == 0:  # ffmpeg produced nothing: stream died mid-chunk
             break
-        db.log(jid, f"chunk {k} recorded in {time.time() - t0:.0f}s ({out.stat().st_size / 1e6:.0f} MB), "
+        db.log(jid, f"chunk {k + 1} recorded in {time.time() - t0:.0f}s ({out.stat().st_size / 1e6:.0f} MB), "
                     f"chat msgs so far: {len(chat.times)}, processing in background")
 
         # ponytail: chunks are processed independently, so a moment straddling a boundary gets split.
@@ -141,6 +176,7 @@ def _live(job, i, d):
         # Hand the chunk to _process in a background thread (same pipeline as a VOD: loudness + chat ->
         # hype curve -> transcribe -> DeepSeek -> render -> upload), then immediately go record the next chunk.
         # Transcription is behind a lock in transcribe.py, so chunks queue up there instead of fighting for CPU.
+        job = db.get("jobs", jid)  # clips-per-piece changed while this piece recorded apply to it too
         w = threading.Thread(target=_process, args=(job, out, f"{i.get('title', '')} (part {k + 1})", d),
                              kwargs={"chat": times}, daemon=True)
         w.start()
@@ -149,10 +185,12 @@ def _live(job, i, d):
 
     # Stream is over (or Stop was pressed). Setting stop also ends the chat thread: it checks the flag after
     # each new message (if chat goes quiet it just lingers; it's a daemon thread so it dies with the server).
+    stopped = stop.is_set()
     stop.set()
     db.update("jobs", jid, status="finishing clips")
     for w in workers:  # wait for every chunk's clips to finish, then _run() marks the job done/stopped
         w.join()
+    return stopped
 
 
 def _process(job, src, title, d, heatmap=None, chat=None, comments=None):
@@ -423,3 +461,6 @@ def upload_clip(cid, platforms=None, force=False):
     status = ("not uploaded (skipped)" if not tried else  # every platform skipped (limit / too long): nothing went up
               "uploaded" if len(ok) == len(tried) else f"uploaded {len(ok)}/{len(tried)}" if ok else "upload failed")
     db.update("clips", cid, status=status, youtube_id=done.get("youtube", {}).get("id"))
+    if job.get("kind") in ("news", "fact"):  # also into the News page's run log
+        from . import news
+        news.note_upload(cid, {p: done[p] for p in platforms if p in done})

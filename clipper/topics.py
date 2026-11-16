@@ -157,8 +157,6 @@ def _run(t):
             CURRENT[tid] = jid
             t0 = time.time()
             worker.run(jid)
-            if t.get("source") == "auto":
-                _tidy(tid, jid)
             if float(db.get_setting("yt_bot_check") or 0) >= t0:  # every next video would hit the same wall
                 db.log(tid, "YouTube bot check: stopping this topic. Add YouTube cookies on the Socials page.", "topics")
                 STOPS[tid].set()
@@ -168,24 +166,6 @@ def _run(t):
         db.update("topics", tid, status="failed")
     finally:
         CURRENT.pop(tid, None)
-
-
-def _tidy(tid, jid):
-    """Autopilot jobs: delete the downloaded source video once clipped (sources are ~0.5-2 GB each), unless the
-    autopilot's 'keep source videos' is on. Clips are kept; only re-cutting that video by hand needs the source."""
-    from . import autopilot
-    from .config import DATA
-    if autopilot.settings()["keep_sources"]:
-        return
-    freed = 0
-    for f in (DATA / "jobs" / str(jid)).glob("source.*"):
-        try:
-            freed += f.stat().st_size
-            f.unlink()
-        except OSError as e:
-            db.log(tid, f"could not delete {f.name} of job #{jid}: {e!r}", "topics")
-    if freed:
-        db.log(tid, f"deleted job #{jid}'s source video ({freed / 1e6:.0f} MB freed)", "topics")
 
 
 if __name__ == "__main__":

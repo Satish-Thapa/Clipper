@@ -24,13 +24,15 @@ import math
 import threading
 import time
 
-from . import db, download, pick, social, topics, worker
+from . import db, download, insights, news, pick, social, stats, topics, worker
 from .config import CROP_ASPECT
 
 DEFAULTS = {"enabled": False, "niche": "", "posts_per_day": 6, "post_from": 10, "post_to": 22,
-            "shorts": 3, "longs": 0, "choosy": 3, "hour": 9, "keep_sources": False,
+            "shorts": 3, "longs": 0, "choosy": 3, "hour": 9,
             "mode": "hype", "aspect": CROP_ASPECT, "hq": False, "face_check": True, "subtitles": True,
-            "voiceover": False, "platforms": ["youtube"]}
+            "voiceover": False, "platforms": ["youtube"],
+            "news_per_day": 0, "news_kind": "news", "news_picture": True}  # news/fact posts, on top of the clips
+NEWS_KINDS = ("news", "fact")
 # No niche set = it's up to the autopilot: search broadly for what clips well and is big this week.
 ANY_NICHE = ("anything trending this week that makes great short clips: gaming (GTA, Fortnite, Minecraft...), "
              "streamer moments, podcasts, sports highlights, viral events")
@@ -90,15 +92,21 @@ def _day_start(now):
     return time.mktime(time.localtime(now)[:3] + (0, 0, 0, 0, 0, -1))
 
 
+def _post_log():
+    """[(time, kind)] of every autopilot post (older entries are bare times = clips)."""
+    return [(p, "clip") if isinstance(p, (int, float)) else (p[0], p[1])
+            for p in json.loads(db.get_setting("auto_posts") or "[]")]
+
+
 def _posts():
-    return json.loads(db.get_setting("auto_posts") or "[]")  # when each autopilot post went up
+    return [t for t, _ in _post_log()]  # when each autopilot post went up
 
 
 def schedule(s, now=None, posts=None):
     """Today's posting plan: window, spacing, how many are due / done, and when the next post may go up."""
     now = now or time.time()
     posts = _posts() if posts is None else posts
-    n, day = max(1, int(s["posts_per_day"])), _day_start(now)
+    n, day = max(1, int(s["posts_per_day"]) + int(s.get("news_per_day") or 0)), _day_start(now)
     w0, w1 = day + int(s["post_from"]) * 3600, day + int(s["post_to"]) * 3600
     every = (w1 - w0) / n
     today = [p for p in posts if p >= day]
@@ -113,9 +121,24 @@ def schedule(s, now=None, posts=None):
             "due": due, "next_at": nxt, "can_post_now": len(today) < due and now >= last + every / 2 and now < w1}
 
 
+def _today(kinds):
+    day = _day_start(time.time())
+    return len([t for t, k in _post_log() if t >= day and (k in NEWS_KINDS) == (kinds == "news")])
+
+
+def news_waiting():
+    return len([c for c in db.all("clips", "status='scheduled'") if c["kind"] in NEWS_KINDS])
+
+
+def news_need(s=None):
+    """News/fact posts today still needs that aren't posted or waiting."""
+    s = s or settings()
+    return max(0, int(s.get("news_per_day") or 0) - _today("news") - news_waiting())
+
+
 def pipeline():
     """(clips waiting to be posted, clips the queued/running autopilot topics will still make, roughly)."""
-    waiting = len(db.all("clips", "status='scheduled'"))
+    waiting = len([c for c in db.all("clips", "status='scheduled'") if c["kind"] not in NEWS_KINDS])
     coming = 0
     for t in _active_topics():
         jobs = db.all("jobs", f"topic_id={int(t['id'])}")
@@ -127,8 +150,8 @@ def pipeline():
 def need(s=None):
     """Clips today still needs that aren't posted, waiting or being made."""
     s = s or settings()
-    sch, (waiting, coming) = schedule(s), pipeline()
-    return max(0, sch["posts_per_day"] - sch["posted_today"] - waiting - coming)
+    waiting, coming = pipeline()
+    return max(0, int(s["posts_per_day"]) - _today("clips") - waiting - coming)
 
 
 def bot_paused():
@@ -144,9 +167,10 @@ def status():
     today = time.strftime("%Y-%m-%d")
     return {"settings": s, "last": json.loads(raw) if raw else None, "running": LOCK.locked(),
             "stage": STAGE[0] if LOCK.locked() else "", "schedule": schedule(s), "scheduled": waiting,
-            "coming": coming, "need": need(s), "max_rounds": MAX_ROUNDS,
+            "coming": coming, "need": need(s), "max_rounds": MAX_ROUNDS, "news_waiting": news_waiting(),
+            "news_need": news_need(s), "news_today": _today("news"), "clips_today": _today("clips"),
             "rounds_today": len([r for r in rounds(MAX_ROUNDS + 5) if r.get("day") == today and r.get("topics")]),
-            "bot_check": bot_paused(), "cookies": download.cookies_state()["source"]}
+            "bot_check": bot_paused(), "cookies": download.cookies_state()["source"], "learned": insights.learned()}
 
 
 def upload_tick(now=None):
@@ -162,8 +186,13 @@ def upload_tick(now=None):
     if all(p in limited for p in s["platforms"]):
         return None
     c = waiting[0]
-    posts = [p for p in _posts() if p > time.time() - 3 * 86400] + [time.time()]
-    db.set_setting("auto_posts", json.dumps(posts))
+    kinds = {c["kind"] in NEWS_KINDS for c in waiting}
+    if len(kinds) == 2:  # clips and news both waiting: post whichever is furthest behind its share of the day
+        total = max(1, int(s["posts_per_day"]) + int(s.get("news_per_day") or 0))
+        want_news = _today("news") < round((_today("news") + _today("clips") + 1) * int(s.get("news_per_day") or 0) / total)
+        c = next(x for x in waiting if (x["kind"] in NEWS_KINDS) == want_news)
+    log = [[t, k] for t, k in _post_log() if t > time.time() - 3 * 86400]
+    db.set_setting("auto_posts", json.dumps(log + [[time.time(), "news" if c["kind"] in NEWS_KINDS else "clip"]]))
     db.log(c["job_id"], f"autopilot: posting #{c['id']} (post {schedule(s)['posted_today']}/{s['posts_per_day']} "
                         f"today, {len(waiting) - 1} more waiting)")
     # today's platforms, even if they changed after it was made. force: Instagram is tried even for clips over
@@ -208,7 +237,7 @@ def _step(text):
     STAGE[0] = text
 
 
-def trending_topics(niche, k, research=None):
+def trending_topics(niche, k, research=None, history=""):
     """-> [{"topic", "why"}] from this week's most-viewed YouTube videos for the niche (empty niche = anything).
     `research` (a dict) is filled with what was searched and seen, for the activity view."""
     research = research if research is not None else {}
@@ -238,7 +267,10 @@ def trending_topics(niche, k, research=None):
     _step(f"DeepSeek reading {len(top)} top videos to spot trends")
     out = []
     for t in pick._ask(f"Niche: {niche}\nMost-viewed videos this week:\n{json.dumps(rows, indent=1)}\n"
-                       f"Return at most {k} topics.", TREND_SYSTEM, "topics"):
+                       f"Return at most {k} topics."
+                       + (f"\n\nHow this channel's past clips did. Lean toward topics like the ones that got views, away "
+                          f"from what flopped; one topic may still be something new that's clearly trending:\n{history}"
+                          if history else ""), TREND_SYSTEM, "topics"):
         if isinstance(t, dict) and str(t.get("topic", "")).strip():
             out.append({"topic": str(t["topic"]).strip()[:100], "why": str(t.get("why", ""))[:200]})
     fallback = top[0]["title"] if niche == ANY_NICHE and top else niche  # nothing clear: the biggest video's subject
@@ -270,13 +302,29 @@ def run_round(reason="scheduled"):
                             f"{time.strftime('%d %b %H:%M', time.localtime(until))}"}
             db.syslog(f"autopilot round ({reason}) skipped: {rec['error']}")
             return _save(rec)
-        missing = need(s)
+        missing, news_missing = need(s), news_need(s)
+        clips_too = missing > 0 or not news_missing  # a news-only top-up doesn't queue videos
         n, pool = plan(s, missing or max(1, int(s["shorts"]) + int(s["longs"])))  # "Run now" with nothing missing: 1 video
         db.syslog(f"autopilot round ({reason}): niche '{s['niche'] or 'anything (up to the autopilot)'}', "
                   f"{missing} clip(s) missing today -> clip {n} video(s), research {pool}"
                   + (f"; {', '.join(blocked)} at upload limit" if blocked else ""))
-        research = {}
-        found = trending_topics(s["niche"], min(3, n), research)
+        research, learned = {}, None
+        niche, history = s["niche"].strip(), ""
+        try:  # what worked so far (views from every platform), so the round can lean on it
+            if time.time() - float(db.get_setting("views_at") or 0) > 1800:
+                _step("checking views on every platform")
+                stats.refresh()
+            perf = insights.performance()
+            history = insights.history_text(perf)
+            if not niche and history:
+                _step(f"learning from your views ({perf['measured']} clips, {perf['views']:,} views)")
+                learned = insights.learn_niche(perf)
+                niche = learned["niche"] if learned else ""
+        except Stopped:
+            raise
+        except Exception as e:
+            db.syslog(f"autopilot: couldn't use the view history ({e!r}), going on without it", exc=True)
+        found = trending_topics(niche, min(3, n), research, history) if clips_too else []
         _step("queueing topics")
         split = lambda total: [total // len(found) + (1 if i < total % len(found) else 0) for i in range(len(found))]
         queued = []
@@ -290,9 +338,13 @@ def run_round(reason="scheduled"):
             db.log(tid, f"queued by autopilot ({reason}): {t['why']}", "topics")
             queued.append({**t, "videos": k, "research": max(kp, k), "topic_id": tid})
             db.syslog(f"autopilot: queued T{tid} '{t['topic']}' x{k} videos: {t['why']}")
-        rec = {"at": time.time(), "day": time.strftime("%Y-%m-%d"), "reason": reason, "topics": queued,
+        news_rec = None
+        if int(s.get("news_per_day") or 0) and (news_missing or reason == "run now"):
+            news_rec = _news_round(s, [t["topic"] for t in found] or [niche or ANY_NICHE], news_missing or 1)
+        rec = {"at": time.time(), "day": time.strftime("%Y-%m-%d"), "reason": reason, "topics": queued, "news": news_rec,
                "seconds": round(time.time() - t0), "skipped_platforms": blocked, "platforms": platforms,
-               "missing": missing, "settings": s, "research": research}
+               "missing": missing, "settings": s, "research": research, "learned": learned, "niche_used": niche,
+               "history": history}
         return _save(rec)
     except Stopped:
         db.syslog("autopilot round stopped by user")
@@ -308,6 +360,57 @@ def run_round(reason="scheduled"):
         LOCK.release()
 
 
+def _news_round(s, subjects, n):
+    """Make today's missing news/fact posts about the round's topics; they wait as 'scheduled' for the slots.
+    -> what it searched, saw, picked and made (shown in the Activity view)."""
+    rid = news.new_run(s.get("news_kind") or "news", " / ".join(subjects)[:200], "auto")
+    info = {"subjects": subjects, "want": n, "log": [], "made": [], "candidates": [], "run_id": rid}
+    run_say = news.run_logger(rid)
+
+    def say(m):
+        info["log"].append(f"{time.strftime('%H:%M:%S')} {m}")
+        run_say(m)
+    kind = s.get("news_kind") or "news"
+    n_fact = n if kind == "facts" else n // 2 if kind == "both" else 0
+    n_news = n - n_fact
+    posted = [r["headline"] for r in db.all("news")]
+    try:
+        if n_news:
+            _step("searching news portals: " + ", ".join(subjects)[:80])
+            queries = [x for x in subjects if x != ANY_NICHE] or news.queries_for(ANY_NICHE)
+            stories = news.find_news(queries, say)
+            info["found"] = len(stories)
+            info["candidates"] = [{k: x.get(k) for k in ("title", "source", "age_h", "link")} for x in stories[:15]]
+            _step(f"DeepSeek picking {n_news} of {len(stories)} stories")
+            picked = news.pick_stories(" / ".join(subjects), stories, n_news, posted) if stories else []
+            for x in picked:
+                say(f"   ★ {x['title'][:100]} ({x['source']}): {x.get('why', '')}")
+            for st in picked:
+                _step(f"writing + rendering news post: {st['title'][:60]}")
+                cid = news.make_post(st, "news", s["platforms"], bool(s["voiceover"]), bool(s.get("news_picture", True)),
+                                     say, status="scheduled", auto=True, run_id=rid)
+                info["made"].append({"kind": "news", "title": st["title"], "source": st["source"], "link": st["link"],
+                                     "why": st.get("why", ""), "clip_id": cid})
+        if n_fact:
+            _step(f"finding facts about {subjects[0]}")
+            fact_stories = news.facts(subjects[0] if subjects[0] != ANY_NICHE else "video games", n_fact, say)
+            info["found"] = info.get("found", 0) + len(fact_stories)
+            for st in fact_stories:
+                _step("writing + rendering a fact post")
+                cid = news.make_post(st, "fact", s["platforms"], bool(s["voiceover"]), bool(s.get("news_picture", True)),
+                                     say, status="scheduled", auto=True, run_id=rid)
+                info["made"].append({"kind": "fact", "title": st["title"], "source": st["source"], "link": st["link"],
+                                     "clip_id": cid})
+    except Stopped:
+        db.update("news_runs", rid, status="stopped")
+        raise
+    except Exception as e:
+        say(f"news part failed: {e!r}")
+        info["error"] = str(e)[:200]
+    db.update("news_runs", rid, status="failed" if info.get("error") else "made")
+    return info
+
+
 def due_round(s, now=None):
     """Why a round should start now ('daily' / 'top-up'), or None."""
     now = now or time.time()
@@ -316,10 +419,10 @@ def due_round(s, now=None):
         return None
     today = [r for r in rounds(MAX_ROUNDS + 5) if r.get("day") == time.strftime("%Y-%m-%d", lt)]
     if not today:
-        return "daily" if need(s) > 0 else None
+        return "daily" if need(s) > 0 or news_need(s) > 0 else None
     if len(today) >= MAX_ROUNDS or now - today[0]["at"] < TOPUP_GAP or _active_topics():
         return None  # enough tries today / too soon / the last round's topics are still working
-    return "top-up" if need(s) > 0 else None
+    return "top-up" if need(s) > 0 or news_need(s) > 0 else None
 
 
 def _loop():
@@ -327,6 +430,7 @@ def _loop():
     while True:
         try:
             upload_tick()  # every minute: is a post due?
+            news.timed_tick()  # ... and any post scheduled by hand for a set time (also while OFF)
             if tick % 5 == 0:  # every 5 minutes: is a round due?
                 why = due_round(settings())
                 if why:

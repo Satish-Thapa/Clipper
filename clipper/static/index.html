@@ -86,6 +86,22 @@
   #tf { margin-top:14px; padding-top:14px; border-top:1px solid var(--line); }
   #tf[hidden] { display:none; }
   input[name=topic] { width:min(420px, 100%); }
+  fieldset.livef { border:1px solid var(--line); border-radius:8px; padding:6px 10px; display:flex; gap:12px; flex-wrap:wrap; margin:0; align-items:end; }
+  fieldset.livef legend { font-size:12px; color:var(--dim); padding:0 4px; } fieldset.livef label { font-size:12px; }
+  .livectl { font-size:13px; gap:8px; margin-top:8px; padding:8px 10px; border:1px solid var(--line); border-radius:8px; }
+  .livectl input, .livectl select { padding:5px 6px; } .livectl input[type=number] { width:64px; }
+  .nrow { display:grid; grid-template-columns:24px 1fr auto; gap:10px; padding:8px 0; border-top:1px solid var(--line); font-size:14px; align-items:start; }
+  .nrow:first-child { border-top:0; } .nrow .src { font-size:12px; color:var(--dim); } .nrow .why { font-size:12px; color:var(--ok); }
+  .npost { display:grid; grid-template-columns:150px 1fr; gap:14px; padding:12px 0; border-top:1px solid var(--line); }
+  .npost video { width:150px; aspect-ratio:9/16; background:#000; border-radius:8px; }
+  .npost .acts { display:flex; gap:8px; flex-wrap:wrap; align-items:center; font-size:13px; }
+  .npost input[type=datetime-local] { padding:5px 6px; font-size:13px; }
+  #nm .nat { display:none; } #nm.at .nat { display:flex; }
+  .danger-zone { border-color:#7a2a2a; } .danger-zone h3 { color:#f66; }
+  button.danger-btn { background:#c0283c; } button.danger-btn:disabled { opacity:.4; cursor:not-allowed; }
+  .nrun { border:1px solid var(--line); border-radius:10px; padding:8px 12px; margin-bottom:10px; background:var(--bg); }
+  .nrun > summary { font-size:14px; color:var(--text); }
+  .nrun pre { max-height:420px; color:var(--text); }
   .ap-top { display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
   .switch { position:relative; width:58px; height:32px; flex:none; cursor:pointer; }
   .switch input { opacity:0; width:0; height:0; }
@@ -120,8 +136,10 @@
     <a href="#jobs">Jobs<span class="n" id="n-jobs"></span></a>
     <a href="#clips">Clips<span class="n" id="n-clips"></span></a>
     <a href="#socials">Socials<span class="n" id="n-socials"></span></a>
+    <a href="#news">News<span class="n" id="n-news"></span></a>
     <a href="#reports">Reports</a>
     <a href="#logs">Logs</a>
+    <a href="#settings">⚙ Settings</a>
   </nav>
   <div class="yt"><span id="quota"></span><span id="ds"></span><span id="yt"></span></div>
 </header>
@@ -151,9 +169,14 @@
       <label class="check" title="Downloads up to 4K instead of 1080p. Sharper, mostly for full-screen 9:16 framing, but about 10x the data, so slower."><input type="checkbox" name="hq"> 4K quality (slower download)</label>
       <label class="check"><input type="checkbox" name="voiceover"> AI voice-over</label>
       <fieldset class="pf" data-default="youtube"><legend>Upload to (none = don't upload)</legend></fieldset>
+      <fieldset class="livef"><legend>If it's a live stream</legend>
+        <label>Record it in pieces of<select name="chunk_minutes"><option value="2">2 min</option><option value="5">5 min</option><option value="10">10 min</option><option value="15">15 min</option><option value="20">20 min</option><option value="30">30 min</option><option value="60">60 min</option></select></label>
+        <label>Pieces to clip<input type="number" name="max_chunks" value="0" min="0" max="500" title="0 = keep going until the stream ends (or you press Stop)"></label>
+        <div class="dim" id="livePlan" style="font-size:12px;align-self:center;max-width:420px"></div>
+      </fieldset>
       <button>Start clipping</button>
     </form>
-    <p class="dim" style="margin:10px 0 0;font-size:12px">Live streams: counts are per recorded chunk (default 10 min). Progress shows under <a href="#jobs">Jobs</a>.</p>
+    <p class="dim" style="margin:10px 0 0;font-size:12px">Progress shows under <a href="#jobs">Jobs</a>. A live job's pieces and clips per piece can be changed there while it records.</p>
   </section>
  </div>
 
@@ -178,7 +201,9 @@
       </div>
       <div class="grp"><h4>2 · How much and when</h4>
         <div class="row" style="align-items:end">
-          <label>Posts per day<input type="number" name="posts_per_day" min="1" max="48"></label>
+          <label>Clips per day<input type="number" name="posts_per_day" min="1" max="48"></label>
+          <label title="News or did-you-know posts made from news portals, posted on the same slots as the clips">+ News/fact posts per day<input type="number" name="news_per_day" min="0" max="24"></label>
+          <label>News kind<select name="news_kind"><option value="news">Latest news</option><option value="facts">Did-you-know facts</option><option value="both">Both</option></select></label>
           <label>Between<select name="post_from"></select></label>
           <label>and<select name="post_to"></select></label>
           <label>Clips per video<input type="number" name="shorts" min="0" max="20"></label>
@@ -219,7 +244,7 @@
             <option value="ai">AI reads full transcript only</option>
           </select></label>
           <label class="check"><input type="checkbox" name="face_check"> Skip videos that are mostly a person</label>
-          <label class="check" title="Source videos are 0.5-2 GB each. Off = deleted once clipped (clips are kept)."><input type="checkbox" name="keep_sources"> Keep source videos</label>
+          <label class="check"><input type="checkbox" name="news_picture"> News posts: use the article's picture</label>
         </div>
       </details>
       <div class="row"><button>Save</button><span class="dim" id="apSaved" style="font-size:13px">Applies right away, also to videos already queued or being clipped.</span></div>
@@ -275,11 +300,77 @@
   <section class="panel"><div class="row" id="bulk" style="margin-bottom:14px"></div><div class="clips" id="clips"></div></section>
  </div>
 
+ <div class="page" id="page-news">
+  <div class="page-head"><h2>News & facts posts</h2><p>Give a topic (e.g. "GTA 5"), or leave it empty to use the autopilot's
+    niche / what your views say works / what's trending. It searches news portals (Google News, Bing News), reads the
+    articles, and DeepSeek writes a short post from their facts only, credited to the source. Each post is a 7-15s
+    vertical video (picture, headline, key facts, "Source: ...") that you post now, at a set time, or on the autopilot's slots.</p></div>
+  <section class="panel">
+    <h3>1 · Find</h3>
+    <form id="nf">
+      <label>Topic (optional)<input name="topic" style="width:min(360px,100%)" placeholder="e.g. GTA 5 · empty = autopilot niche / trending"></label>
+      <label>Kind<select name="kind"><option value="news">Latest news (last 3 days)</option><option value="facts">Did-you-know facts</option></select></label>
+      <label>How many posts<input type="number" name="n" value="3" min="1" max="10"></label>
+      <button>Find</button>
+    </form>
+    <div id="nfound" style="margin-top:14px"></div>
+  </section>
+  <section class="panel" id="nmake" hidden>
+    <h3>2 · Make posts from the ticked stories</h3>
+    <form id="nm">
+      <fieldset class="pf" data-default="youtube,facebook,instagram"><legend>Post to</legend></fieldset>
+      <label class="check"><input type="checkbox" name="picture" checked> Use the article's picture</label>
+      <label class="check"><input type="checkbox" name="voiceover"> AI voice-over</label>
+      <label>When<select name="when" onchange="nmWhen()">
+        <option value="hold">Make them, I'll post them myself</option>
+        <option value="now">Post each right away</option>
+        <option value="at">At a time…</option>
+        <option value="autopilot">On the autopilot's posting slots</option>
+      </select></label>
+      <label class="nat">First post at<input type="datetime-local" name="at"></label>
+      <label class="nat">then one every<select name="every_min"><option value="30">30 min</option><option value="60" selected>1 hour</option>
+        <option value="120">2 hours</option><option value="240">4 hours</option><option value="0">all at once</option></select></label>
+      <button id="nmBtn">Make posts</button>
+    </form>
+  </section>
+  <section class="panel"><h3>Posts</h3><div id="nposts"></div></section>
+  <section class="panel"><h3>Activity</h3>
+    <p class="dim" style="margin-top:0;font-size:13px">Every search (yours and the autopilot's), live: the queries, what each
+      portal returned, what was skipped and why, DeepSeek's picks, each article read, what was written and rendered,
+      and where each post went up.</p>
+    <div id="nruns"></div></section>
+ </div>
+
  <div class="page" id="page-reports">
   <div class="page-head"><h2>Reports</h2><p>The views report: views per platform, best platform, top clips. Made every
     hour (and on demand). The same text is sent on WhatsApp when it's set up; here you always see it.</p></div>
-  <section class="panel"><div class="row" style="margin-bottom:12px">
+  <section class="panel"><div class="head"><h3 style="margin:0">📊 What works</h3>
+    <span class="dim" style="font-size:13px" id="insAt"></span>
+    <button class="ghost" style="margin-left:auto" onclick="learnNow(this)" title="refresh views on every platform, then let DeepSeek say what to post">Refresh views + learn</button></div>
+    <p class="dim" style="font-size:13px;margin:6px 0 12px">Learned from the views of everything posted, on every platform. When the
+      autopilot has no niche, it uses this to choose one, and every round leans toward what got views here.</p>
+    <div id="insights"></div></section>
+  <section class="panel"><h3>Reports</h3><div class="row" style="margin-bottom:12px">
     <button class="ghost" onclick="makeReport(this)">Make report now</button></div><div id="reports"></div></section>
+ </div>
+
+ <div class="page" id="page-settings">
+  <div class="page-head"><h2>Settings</h2><p>What's stored, and a clean start. Platform keys live in <code>.env</code>;
+    autopilot settings are on the <a href="#auto">Auto</a> page.</p></div>
+  <section class="panel"><h3>Storage</h3><div id="storage" class="dim">…</div></section>
+  <section class="panel danger-zone">
+    <h3>⚠ Reset everything</h3>
+    <p style="margin-top:0">Stops all work (autopilot, topics, jobs) and <b>deletes every video, clip, news post, topic,
+      autopilot round, report, view count, upload-limit timer and log</b>, on this PC. Posts already on YouTube,
+      Facebook, Instagram or TikTok stay online. <code>.env</code> is never touched. This can't be undone.</p>
+    <form id="rf">
+      <label class="check"><input type="checkbox" name="keep_settings" checked> Keep the autopilot settings (it's switched OFF)</label>
+      <label class="check"><input type="checkbox" name="keep_logins" checked> Keep YouTube / TikTok logins and YouTube cookies</label>
+      <label><span>Type <b>RESET</b> to confirm</span><input name="confirm" autocomplete="off" style="width:140px" oninput="$('#rbtn').disabled = this.value !== 'RESET'"></label>
+      <button id="rbtn" class="danger-btn" disabled>Reset everything</button>
+    </form>
+    <div id="rres" style="margin-top:10px"></div>
+  </section>
  </div>
 
  <div class="page" id="page-logs">
@@ -293,7 +384,7 @@
  </div>
 
  <div class="page" id="page-socials">
-  <div class="page-head"><h2>Socials</h2><p>Where clips get uploaded. Pick platforms per job or topic when you create it. How to connect each one: <code>SOCIALS.md</code> in the project folder.</p></div>
+  <div class="page-head"><h2>Socials</h2><p>Where clips get uploaded. Pick platforms per job or topic when you create it. How to connect each one: <code>README.md</code> → Connecting your socials.</p></div>
   <div class="socials" id="socials"></div>
  </div>
 </main>
@@ -337,6 +428,7 @@ $("#f").onsubmit = async e => {
   e.preventDefault();
   const f = new FormData(e.target), file = f.get("file");
   const opts = {shorts: +f.get("shorts"), longs: +f.get("longs"), aspect: +f.get("aspect"), hq: f.has("hq"), mode: f.get("mode"), subtitles: f.has("subtitles"), voiceover: f.has("voiceover")};
+  const live = {chunk_minutes: +f.get("chunk_minutes"), max_chunks: +f.get("max_chunks")};
   const btn = e.target.querySelector("button");
   let r;
   if (file && file.size) {
@@ -344,7 +436,7 @@ $("#f").onsubmit = async e => {
     r = await fetch("/api/jobs/file?" + new URLSearchParams({...opts, platforms: picked(e.target).join(","), filename: file.name}), {method: "POST", body: file});
     btn.disabled = false; btn.textContent = "Start clipping";
   } else if (f.get("url")) {
-    r = await post("/api/jobs", {url: f.get("url"), ...opts, platforms: picked(e.target)});
+    r = await post("/api/jobs", {url: f.get("url"), ...opts, ...live, platforms: picked(e.target)});
   } else return alertBox("Paste a URL or choose a file.");
   if (!r.ok) return alertBox(await r.text());
   e.target.url.value = ""; e.target.file.value = ""; location.hash = "#jobs"; refresh();
@@ -394,6 +486,34 @@ async function sendCookies(el) {
   alertBox("YouTube cookies saved ✓ Downloads use them from now on (no restart needed)."); refresh();
 }
 async function dropCookies() { if (confirm("Remove the YouTube cookies?")) { await fetch("/api/cookies", {method: "DELETE"}); refresh(); } }
+let liveMin = null;
+function livePlan() {
+  const f = $("#f"), m = +f.chunk_minutes.value, n = +f.max_chunks.value, sh = +f.shorts.value, lo = +f.longs.value;
+  const per = [sh && `${sh} short${sh > 1 ? "s" : ""}`, lo && `${lo} long`].filter(Boolean).join(" + ") || "no clips";
+  $("#livePlan").textContent = `Records ${m}-min pieces and makes ${per} from each, ` + (n
+    ? `for ${n} piece${n > 1 ? "s" : ""} (${n * m >= 60 ? (n * m / 60).toFixed(n * m % 60 ? 1 : 0) + " h" : n * m + " min"} of stream, up to ${n * (sh + lo)} clips), then stops.`
+    : `until the stream ends or you press Stop. Clips come out while it's still live.`);
+}
+["chunk_minutes", "max_chunks", "shorts", "longs"].forEach(k => $("#f")[k].addEventListener("input", livePlan));
+$("#f").chunk_minutes.addEventListener("change", e => e.target.dataset.touched = 1);
+const liveSel = (id, v) => `<select id="${id}">${[2, 5, 10, 15, 20, 30, 60].concat([v]).filter((x, i, a) => a.indexOf(x) === i)
+  .sort((a, b) => a - b).map(m => `<option value="${m}" ${m === v ? "selected" : ""}>${m} min</option>`).join("")}</select>`;
+function liveCtl(j) {
+  const m = j.chunk_minutes || liveMin || 10, k = +((j.status.match(/recording chunk (\d+)/) || [])[1] || 0);
+  return `<div class="row livectl">🔴 <b>Live</b>${k ? ` · piece ${k}${j.max_chunks ? ` of ${j.max_chunks}` : ""}` : ""} ·
+    pieces of ${liveSel(`lc-${j.id}`, m)}
+    · clip <input type="number" id="lm-${j.id}" min="0" max="500" value="${j.max_chunks || 0}" title="0 = until the stream ends"> pieces (0 = until it ends)
+    · per piece <input type="number" id="ls-${j.id}" min="0" max="20" value="${j.shorts}"> shorts
+    <input type="number" id="ll-${j.id}" min="0" max="10" value="${j.longs}"> long
+    <button class="ghost" onclick="saveLive(${j.id}, this)">Apply</button>
+    <span class="dim">length: from the next piece · clips: from this one</span></div>`;
+}
+async function saveLive(id, btn) {
+  const v = k => +$(`#${k}-${id}`).value;
+  const r = await post(`/api/jobs/${id}/live`, {chunk_minutes: v("lc"), max_chunks: v("lm"), shorts: v("ls"), longs: v("ll")});
+  if (!r.ok) return alertBox((await r.json()).detail || "could not save");
+  btn.textContent = "Applied ✓"; btn.blur(); setTimeout(refresh, 800);
+}
 async function uploadClip(id, btn) { btn.disabled = true; btn.textContent = "Uploading…"; await post(`/api/clips/${id}/upload`); clipKey = ""; refresh(); }
 async function deleteClip(id) {
   if (!confirm("Delete this clip file? (A YouTube copy, if any, stays up.)")) return;
@@ -524,8 +644,8 @@ $("#af").post_to.innerHTML = Array.from({length: 24}, (_, h) => `<option value="
 const clock = t => new Date(t * 1000).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"});
 const dur = m => m >= 60 ? `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ""}` : `${m} min`;
 let autoLoaded = false, autoSt = null;
-const AUTO_KEYS = ["niche", "posts_per_day", "post_from", "post_to", "shorts", "longs", "choosy", "hour", "mode"];
-const AUTO_CHECKS = ["subtitles", "hq", "voiceover", "face_check", "keep_sources"];
+const AUTO_KEYS = ["niche", "posts_per_day", "news_per_day", "news_kind", "post_from", "post_to", "shorts", "longs", "choosy", "hour", "mode"];
+const AUTO_CHECKS = ["subtitles", "hq", "voiceover", "face_check", "news_picture"];
 function fillAuto(st) {
   const f = $("#af"), a = st.settings;
   for (const k of AUTO_KEYS) f[k].value = a[k];
@@ -536,7 +656,8 @@ function fillAuto(st) {
 }
 function formAuto() {
   const f = $("#af"), d = new FormData(f), o = {niche: d.get("niche"), mode: d.get("mode"), aspect: +d.get("aspect"), platforms: picked(f)};
-  for (const k of AUTO_KEYS.filter(k => !["niche", "mode"].includes(k))) o[k] = +d.get(k);
+  for (const k of AUTO_KEYS.filter(k => !["niche", "mode", "news_kind"].includes(k))) o[k] = +d.get(k);
+  o.news_kind = d.get("news_kind");
   for (const k of AUTO_CHECKS) o[k] = d.has(k);
   return o;
 }
@@ -545,15 +666,20 @@ function preset(n, from, to) {
   autoDirty = true; planText(); return false;
 }
 function planText() {  // the plan in plain words, updated as you type
-  const o = formAuto(), n = Math.max(1, o.posts_per_day || 1), hours = o.post_to - o.post_from;
-  const per = Math.max(1, (o.shorts || 0) + (o.longs || 0)), videos = Math.ceil(n / per);
+  const o = formAuto(), nc = Math.max(1, o.posts_per_day || 1), nn = o.news_per_day || 0, n = nc + nn, hours = o.post_to - o.post_from;
+  const per = Math.max(1, (o.shorts || 0) + (o.longs || 0)), videos = Math.ceil(nc / per);
   const where = o.platforms.length ? o.platforms.map(p => PLATFORMS[p]).join(", ") : "nowhere (clips only)";
+  const L = autoSt && autoSt.learned;
+  const learnTxt = o.niche.trim() ? "" : `<br>🧠 No niche: it picks one from your views (<a href="#reports">What works</a>)${L
+    ? ` · last time: <b>${esc(L.niche)}</b>` : ""}, then picks topics trending in it.`;
   $("#apPlan").innerHTML = hours <= 0 ? `<span class="no">The posting window must end after it starts.</span>` :
-    `Posts <b>${n} clip${n > 1 ? "s" : ""} a day</b> to ${esc(where)}, between <b>${hh(o.post_from)}</b> and <b>${o.post_to === 24 ? "midnight" : hh(o.post_to)}</b>
+    `Posts <b>${nc} clip${nc > 1 ? "s" : ""}${nn ? ` + ${nn} ${o.news_kind === "facts" ? "fact" : o.news_kind === "both" ? "news/fact" : "news"} post${nn > 1 ? "s" : ""}` : ""} a day</b> to ${esc(where)}, between <b>${hh(o.post_from)}</b> and <b>${o.post_to === 24 ? "midnight" : hh(o.post_to)}</b>
      → <b>one every ${dur(Math.round(hours * 60 / n))}</b>${n / hours > 2 ? ` <span style="color:var(--warn)">(that's ${(n / hours).toFixed(1)} an hour: fast for one channel)</span>` : ""}.<br>
      <span class="dim">From ${hh(o.hour)} it researches ~${videos * o.choosy} trending videos, clips the best ${videos} (${per} clip${per > 1 ? "s" : ""} each),
      and tops up later if the day runs short. Clips not posted by the end of the window go first tomorrow.
      ${o.platforms.includes("youtube") && n > 6 ? `<br><span style="color:var(--warn)">YouTube usually allows ~6-10 API uploads a day; past that it says "limit exceeded" and the autopilot skips YouTube until the 24h timer ends.</span>` : ""}
+     ${nn ? `<br>📰 News posts come from news portals about the day's trending topics (or the niche), with the source credited, and alternate with the clips.` : ""}
+     ${learnTxt}
      ${o.platforms.includes("instagram") ? `<br>Instagram gets every clip, also ones over ${igMax}s: those may fail there (the error shows on the clip card, with a red button to retry).` : ""}</span>`;
 }
 function showAuto(st, s) {
@@ -586,11 +712,11 @@ function showAuto(st, s) {
   const nextTxt = !a.enabled ? "off" : !st.scheduled ? (sc.posted_today >= sc.posts_per_day ? "done for today" : "waiting for clips")
     : sc.next_at - now < 60 ? "any moment" : (sc.next_at > w1 ? "tomorrow " : "") + clock(sc.next_at);
   $("#apToday").innerHTML = `<div class="stats">
-      <div><b>${sc.posted_today} / ${sc.posts_per_day}</b>posted today</div>
+      <div><b>${sc.posted_today} / ${sc.posts_per_day}</b>posted today${a.news_per_day ? ` <span style="font-size:11px">(${st.clips_today} clips · ${st.news_today} news)</span>` : ""}</div>
       <div><b>${nextTxt}</b>next post</div>
-      <div><b>${st.scheduled}</b>clips waiting</div>
+      <div><b>${st.scheduled + (st.news_waiting || 0)}</b>waiting${st.news_waiting ? ` <span style="font-size:11px">(${st.news_waiting} news)</span>` : ""}</div>
       <div><b>${st.coming ? "~" + st.coming : 0}</b>clips being made</div>
-      <div><b>${st.need}</b>still to find today</div>
+      <div><b>${st.need + (st.news_need || 0)}</b>still to find today</div>
       <div><b>${st.rounds_today} / ${st.max_rounds}</b>rounds today</div></div>
     <div class="slots">${slots.map((t, i) => `<span class="${i < sc.posted_today ? "done" : i === nextIdx ? "next" : ""}"
       title="slot ${i + 1}">${clock(t)}</span>`).join("")}</div>
@@ -692,7 +818,10 @@ function renderActivity(st, s) {
       : `${r.topics.length} topic(s)${r.seconds != null ? ` · ${r.seconds}s` : ""}`}`;
     if (r.error) return `<div class="act">${head}</div>`;
     const body = (!R.queries ? "" :
-      det(`${id}-q`, `🔎 Searched YouTube for ${(r.settings || {}).niche ? `"${esc(r.settings.niche)}"` : "anything trending (no niche set)"}: ${(R.queries || []).length} queries, ${R.seen || 0} videos this week`,
+      (r.learned ? det(`${id}-l`, `📊 No niche set: learned from your views → "${esc(r.learned.niche)}"`,
+        `<div style="font-size:13px;margin:6px 0">${esc(r.learned.why)}${r.learned.avoid ? `<br><span class="dim">Avoid: ${esc(r.learned.avoid)}</span>` : ""}</div>
+         <pre>${esc(r.history || "")}</pre>`) : r.history ? det(`${id}-l`, `📊 Used your views as a reference for picking topics`, `<pre>${esc(r.history)}</pre>`) : "")
+      + det(`${id}-q`, `🔎 Searched YouTube for ${(r.niche_used || (r.settings || {}).niche) ? `"${esc(r.niche_used || r.settings.niche)}"` : "anything trending (no niche set)"}: ${(R.queries || []).length} queries, ${R.seen || 0} videos this week`,
         `<table><tr><th>Query (from DeepSeek)</th><th>Videos found</th></tr>${(R.queries || []).map(q =>
           `<tr><td>${esc(q.q)}</td><td>${q.error ? `<span class="no">${esc(q.error)}</span>` : q.found}</td></tr>`).join("")}</table>`)
       + det(`${id}-t`, `📈 What's trending: the ${(R.top || []).length} most-viewed videos it read`,
@@ -704,7 +833,15 @@ function renderActivity(st, s) {
           `<tr><td><b>${esc(t.topic)}</b></td><td>${t.research ? `research ${t.research} → clip ` : ""}${t.videos}</td><td>${esc(t.why)}</td></tr>`).join("")}</table>
          <div class="dim" style="font-size:12px">Uploads to: ${(r.platforms || (r.settings || {}).platforms || []).map(p => PLATFORMS[p]).join(", ") || "nowhere"}${
           (r.skipped_platforms || []).length ? ` · <span class="no">skipped (limit reached): ${r.skipped_platforms.map(p => PLATFORMS[p]).join(", ")}</span>` : ""}</div>`)
-      + r.topics.map(t => topicSection(t, s)).join("");
+      + r.topics.map(t => topicSection(t, s)).join("")
+      + (r.news ? det(`${id}-n`, `📰 News & facts: ${r.news.made.length} post(s) made (wanted ${r.news.want}) from ${r.news.found ?? "?"} stories about ${r.news.subjects.map(x => `"${esc(x)}"`).join(", ")}`,
+        `${r.news.made.length ? `<table><tr><th>Post</th><th>Source</th><th>Why</th><th>Status</th></tr>${r.news.made.map(m => {
+            const c = s.clips.find(x => x.id === m.clip_id);
+            return `<tr><td>${m.kind === "fact" ? "💡" : "📰"} <a href="${esc(m.link)}" target="_blank">${esc(m.title)}</a></td><td>${esc(m.source)}</td>
+              <td class="dim">${esc(m.why || "")}</td><td>${c ? esc(c.status) : m.clip_id ? "" : '<span class="no">failed</span>'}</td></tr>`; }).join("")}</table>` : ""}
+         ${r.news.candidates.length ? det(`${id}-nc`, `Stories it saw (newest ${r.news.candidates.length})`, `<table>${r.news.candidates.map(c =>
+            `<tr><td><a href="${esc(c.link)}" target="_blank">${esc(c.title)}</a></td><td class="dim">${esc(c.source)}</td><td class="dim">${c.age_h != null ? c.age_h + " h ago" : ""}</td></tr>`).join("")}</table>`) : ""}
+         <pre>${esc(r.news.log.join("\n"))}</pre>${r.news.error ? `<div class="no">${esc(r.news.error)}</div>` : ""}`) : "");
     return `<details class="act" ${isOpen(id) ? "open" : ""} ontoggle="toggleAct('${id}', this.open)">
       <summary>${head}</summary>${body}</details>`;
   }).join("") : `<p class="empty">No rounds yet. Press ▶ Run now to see it work.</p>`;
@@ -725,13 +862,188 @@ async function runAuto(btn) {
   if (!r.ok) alertBox((await r.json()).detail);
   setTimeout(refresh, 1000);
 }
+// ---- News & facts ----
+let nfound = null;
+const ago = h => h == null ? "" : h < 1 ? `${Math.round(h * 60)} min ago` : h < 48 ? `${Math.round(h)} h ago` : `${Math.round(h / 24)} days ago`;
+$("#nf").onsubmit = async e => {
+  e.preventDefault();
+  const f = new FormData(e.target), btn = e.target.querySelector("button");
+  btn.disabled = true; btn.textContent = "Searching…";
+  const r = await post("/api/news/find", {topic: f.get("topic"), kind: f.get("kind"), n: +f.get("n")});
+  if (!r.ok) { btn.disabled = false; btn.textContent = "Find"; return alertBox((await r.json()).detail || "search failed"); }
+  nRun = {id: (await r.json()).run_id, kind: f.get("kind") === "facts" ? "fact" : "news"};
+  nfound = null; $("#nmake").hidden = true; openRuns.add(nRun.id);
+  $("#nfound").innerHTML = `<div class="dim"><span class="spin">⟳</span> Run #${nRun.id}: searching news portals… (follow it live under Activity below)</div>`;
+  runsKey = ""; loadNewsRuns();
+};
+let nRun = null, runsKey = "";
+const openRuns = new Set(), closedRuns = new Set();
+async function loadNewsRuns() {
+  if (location.hash !== "#news") return;
+  const runs = await (await fetch("/api/news/runs")).json();
+  if (nRun && !nfound) {  // the Find we started: show its stories once it's done
+    const r = runs.find(x => x.id === nRun.id);
+    if (r && r.status === "found") {
+      nfound = {...JSON.parse(r.data || "{}"), kind: nRun.kind, run_id: r.id}; renderFound();
+      const b = $("#nf button"); b.disabled = false; b.textContent = "Find";
+    } else if (r && r.status === "failed") {
+      $("#nfound").innerHTML = `<p class="no">Run #${r.id} failed: see its log below.</p>`;
+      const b = $("#nf button"); b.disabled = false; b.textContent = "Find";
+    } else if (r) {
+      const last = (r.log || "").trim().split("\n").pop() || "starting…";
+      $("#nfound").innerHTML = `<div class="dim"><span class="spin">⟳</span> Run #${r.id} (${esc(r.status)}): ${esc(last.replace(/^\[.+?\] /, ""))}</div>`;
+    }
+  }
+  const key = JSON.stringify(runs.map(r => [r.id, r.status, (r.log || "").length]));
+  if (key === runsKey) return;
+  runsKey = key;
+  const scroll = {};
+  document.querySelectorAll("#nruns pre[data-run]").forEach(p => scroll[p.dataset.run] = p.scrollHeight - p.scrollTop - p.clientHeight < 40);
+  const busy = st => !["found", "made", "failed", "stopped"].includes(st);
+  $("#nruns").innerHTML = runs.length ? runs.map((r, i) => {
+    const d = JSON.parse(r.data || "{}"), open = openRuns.has(r.id) || (i === 0 && !closedRuns.has(r.id));
+    const cls = r.status === "failed" ? "no" : busy(r.status) ? "" : "ok";
+    return `<details class="nrun" ${open ? "open" : ""} ontoggle="this.open ? (openRuns.add(${r.id}), closedRuns.delete(${r.id})) : (openRuns.delete(${r.id}), closedRuns.add(${r.id}))">
+      <summary><b>#${r.id}</b> ${new Date(r.at * 1000).toLocaleString([], {dateStyle: "short", timeStyle: "short"})} ·
+        ${r.source === "auto" ? "🤖 autopilot" : "you"} · ${r.kind === "facts" || r.kind === "fact" ? "💡 facts" : "📰 news"} · "${esc(r.topic)}"
+        · <span class="${cls}">${busy(r.status) ? `<span class="spin">⟳</span> ` : ""}${esc(r.status)}</span>
+        ${d.stories ? ` · ${d.stories.length} stories, ${d.stories.filter(x => x.pick).length} picked` : ""}</summary>
+      <pre data-run="${r.id}">${esc(r.log || "starting…")}</pre></details>`;
+  }).join("") : `<p class="empty">No searches yet.</p>`;
+  document.querySelectorAll("#nruns pre[data-run]").forEach(p => { if (scroll[p.dataset.run] !== false) p.scrollTop = p.scrollHeight; });
+}
+function renderFound() {
+  const F = nfound;
+  $("#nmake").hidden = !F.stories.length;
+  $("#nfound").innerHTML = `<div class="dim" style="font-size:13px;margin-bottom:6px">Topic: <b>${esc(F.topic || "trending")}</b> (${esc(F.how)})
+      ${F.queries ? ` · searched: ${F.queries.map(esc).join(", ")}` : ""} · ${F.stories.length} fresh stor${F.stories.length === 1 ? "y" : "ies"}
+      (already posted ones are left out). ★ = DeepSeek's picks, ticked.</div>
+    ${F.stories.length ? F.stories.map((x, i) => `<div class="nrow"><input type="checkbox" class="npick" data-i="${i}" ${x.pick ? "checked" : ""}>
+      <div>${x.pick ? "★ " : ""}<a href="${esc(x.link)}" target="_blank">${esc(x.title)}</a>
+        <div class="src">${esc(x.source)}${x.age_h != null ? " · " + ago(x.age_h) : ""}${x.snippet ? " · " + esc(x.snippet.slice(0, 140)) : ""}</div>
+        ${x.why ? `<div class="why">${esc(x.why)}</div>` : ""}</div>
+      <span class="dim" style="font-size:12px">${F.kind === "fact" ? "fact" : esc(x.via || "")}</span></div>`).join("")
+      : `<p class="empty">Nothing fresh found: see the run's log under Activity.</p>`}`;
+  updMake();
+}
+function updMake() { const n = document.querySelectorAll(".npick:checked").length; $("#nmBtn").textContent = `Make ${n} post${n === 1 ? "" : "s"}`; $("#nmBtn").disabled = !n; }
+$("#nfound").addEventListener("change", updMake);
+function nmWhen() {
+  const f = $("#nm"); f.classList.toggle("at", f.when.value === "at");
+  if (f.when.value === "at" && !f.at.value) { const d = new Date(Date.now() + 3600e3); d.setMinutes(0, 0, 0);
+    f.at.value = new Date(d - d.getTimezoneOffset() * 60e3).toISOString().slice(0, 16); }
+}
+$("#nm").onsubmit = async e => {
+  e.preventDefault();
+  const f = new FormData(e.target), stories = [...document.querySelectorAll(".npick:checked")].map(i => nfound.stories[+i.dataset.i]);
+  const body = {stories, kind: nfound.kind, platforms: picked(e.target), picture: f.has("picture"), voiceover: f.has("voiceover"),
+    when: f.get("when"), at: f.get("at") ? new Date(f.get("at")).getTime() / 1000 : null, every_min: +f.get("every_min"),
+    run_id: nfound.run_id || null};
+  const r = await post("/api/news/make", body);
+  if (!r.ok) return alertBox((await r.json()).detail || "could not make posts");
+  $("#nmBtn").textContent = `Making ${stories.length}… (they appear below)`; $("#nmBtn").disabled = true;
+  nfound.stories = nfound.stories.filter(x => !stories.includes(x)); setTimeout(renderFound, 2500);
+  if (nfound.run_id) openRuns.add(nfound.run_id); runsKey = ""; refresh();
+};
+async function schedPost(id, btn) {
+  const v = $(`#pat-${id}`).value; if (!v) return alertBox("pick a date and time");
+  const r = await post(`/api/clips/${id}/schedule`, {at: new Date(v).getTime() / 1000});
+  if (!r.ok) return alertBox((await r.json()).detail); refresh();
+}
+async function unschedPost(id) { await post(`/api/clips/${id}/schedule`, {at: null}); refresh(); }
+function renderPosts(s) {
+  const jobs = Object.fromEntries(s.jobs.filter(j => ["news", "fact"].includes(j.kind)).map(j => [j.id, j]));
+  const posts = s.clips.filter(c => jobs[c.job_id]), making = Object.values(jobs).filter(j => !["done", "failed"].includes(j.status));
+  $("#n-news").textContent = posts.filter(c => ["timed", "scheduled"].includes(c.status)).length || "";
+  if ($("#nposts").contains(document.activeElement)) return;
+  const local = new Date(Date.now() + 3600e3 - new Date().getTimezoneOffset() * 60e3).toISOString().slice(0, 16);
+  $("#nposts").innerHTML = (making.length ? `<div class="dim" style="margin-bottom:8px"><span class="spin">⟳</span> ${making.length} post(s) being written / rendered: ${making.map(j => esc(j.title)).join(" · ")}</div>` : "")
+    + (posts.length ? posts.map(c => { const j = jobs[c.job_id], up = JSON.parse(c.uploads || "{}");
+      const where = Object.entries(up).map(([p, u]) => u.id ? `<a href="${esc(u.url)}" target="_blank" class="ok">✓ ${PLATFORMS[p]}</a>`
+        : `<span class="no" title="${esc(u.error)}">✕ ${PLATFORMS[p]}</span>`).join(" ");
+      const plats = JSON.parse(j.platforms || "[]");
+      return `<div class="npost">${c.path ? `<video src="/media/${esc(c.path)}" controls preload="metadata"></video>` : `<div></div>`}
+        <div style="display:grid;gap:6px;align-content:start">
+          <div><span class="pill">${j.kind === "fact" ? "💡 fact" : "📰 news"}</span> <b>${esc(c.headline || c.title)}</b></div>
+          <div class="dim" style="font-size:12px;white-space:pre-wrap">${esc(c.description)}</div>
+          <div class="acts"><span class="badge">${esc(c.status)}</span>
+            ${c.status === "timed" ? `⏰ ${new Date(c.post_at * 1000).toLocaleString([], {dateStyle: "medium", timeStyle: "short"})} → ${plats.map(p => PLATFORMS[p]).join(", ")}
+              <button class="ghost" onclick="unschedPost(${c.id})">Cancel time</button>` : ""}
+            ${c.status === "scheduled" ? `on the autopilot's next slot <button class="ghost" onclick="unschedPost(${c.id})">Take off the schedule</button>` : ""}
+            ${where}
+            ${c.path && !["timed", "uploading", "rendering"].includes(c.status) && !Object.values(up).some(u => u.id) ? `
+              <input type="datetime-local" id="pat-${c.id}" value="${local}"><button class="ghost" onclick="schedPost(${c.id}, this)">⏰ Schedule</button>
+              <button class="ghost" onclick="uploadTo(${c.id}, '${(plats.length ? plats : ["youtube"]).join(",")}', this, true)">Post now${plats.length ? " to " + plats.map(p => PLATFORMS[p]).join(", ") : ""}</button>` : ""}
+            ${!["rendering", "uploading"].includes(c.status) ? `<button class="ghost danger" onclick="deleteClip(${c.id})">Delete</button>` : ""}</div>
+        </div></div>`; }).join("") : making.length ? "" : `<p class="empty">No posts yet. Find some news above.</p>`);
+}
+// ---- Settings: storage + reset ----
+const gb = b => b >= 1e9 ? (b / 1e9).toFixed(2) + " GB" : (b / 1e6).toFixed(1) + " MB";
+async function loadStorage() {
+  if (location.hash !== "#settings") return;
+  const st = await (await fetch("/api/storage")).json(), n = st.counts;
+  $("#storage").innerHTML = `<div class="stats">
+      <div><b>${gb(st.videos_bytes)}</b>videos & clips</div><div><b>${gb(st.db_bytes)}</b>database</div><div><b>${gb(st.logs_bytes)}</b>logs</div>
+      <div><b>${n.jobs}</b>jobs</div><div><b>${n.clips}</b>clips & posts</div><div><b>${n.topics}</b>topics</div>
+      <div><b>${n.auto_rounds}</b>autopilot rounds</div><div><b>${n.reports}</b>reports</div></div>
+    <div style="font-size:13px;margin-top:8px">Logins on this PC: ${st.logins.length ? st.logins.map(esc).join(", ") : "none"}</div>`;
+}
+$("#rf").onsubmit = async e => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  if (!confirm("Really delete everything? This can't be undone.")) return;
+  $("#rbtn").disabled = true; $("#rbtn").textContent = "Stopping everything and deleting…";
+  const r = await post("/api/reset", {confirm: f.get("confirm"), keep_settings: f.has("keep_settings"), keep_logins: f.has("keep_logins")});
+  $("#rbtn").textContent = "Reset everything"; e.target.confirm.value = "";
+  if (!r.ok) return alertBox((await r.json()).detail || "reset failed");
+  const j = await r.json(), total = Object.values(j.removed).reduce((a, b) => a + b, 0);
+  $("#rres").innerHTML = `<div class="plan">✓ Reset done: ${total} records and ${gb(j.freed_bytes)} removed.
+    ${j.kept_settings ? "Autopilot settings kept (OFF)." : "Autopilot settings back to defaults."}
+    ${j.kept_logins && j.kept_logins.length ? "Logins kept." : "Logins removed: connect YouTube again on Socials."}
+    ${j.still_running.length ? `<br><span style="color:var(--warn)">Job(s) ${j.still_running.join(", ")} were still finishing a step; anything they write now goes nowhere.</span>` : ""}
+    ${j.errors.length ? `<br><span class="no">${j.errors.map(esc).join("<br>")}</span>` : ""}</div>`;
+  clipKey = ""; actKey = ""; autoLoaded = false; refresh(); loadStorage();
+};
 // ---- Reports ----
 async function loadReports() {
   if (location.hash !== "#reports") return;
-  const list = await (await fetch("/api/reports")).json();
+  const [list, ins] = await Promise.all([fetch("/api/reports").then(r => r.json()), fetch("/api/insights").then(r => r.json())]);
+  renderInsights(ins);
   $("#reports").innerHTML = list.length ? list.map(r => `<div class="job"><div class="row"><b>#${r.id}</b>
     <span>${new Date(r.at * 1000).toLocaleString()}</span><span class="dim">${esc(r.sent)}</span></div>
     <pre>${esc(r.text)}</pre></div>`).join("") : `<p class="empty">No reports yet. They're made every hour, or press Make report now.</p>`;
+}
+function renderInsights(p) {
+  $("#insAt").textContent = p.views_at ? `views checked ${new Date(p.views_at * 1000).toLocaleString()}` : "";
+  if (!p.measured) return $("#insights").innerHTML = `<p class="empty">Nothing posted with view counts yet.</p>`;
+  const L = p.learned, bar = (v, max) => `<div class="meter" style="width:120px;display:inline-block;vertical-align:middle">
+    <span style="width:${max ? Math.max(2, 100 * v / max) : 0}%"></span></div>`;
+  const maxT = Math.max(...p.topics.map(t => t.per_clip)), maxP = Math.max(...p.platforms.map(t => t.per_clip)),
+        maxL = Math.max(...p.lengths.map(t => t.per_clip));
+  const clipRow = c => `<tr><td><b>${num(c.total)}</b></td><td>${esc(c.title)}<br><span class="dim">${c.seconds}s · ${esc(c.topic || c.source)}</span></td>
+    <td class="dim">${Object.entries(c.views).map(([k, v]) => `${PLATFORMS[k]} ${num(v)}`).join(" · ")}</td></tr>`;
+  $("#insights").innerHTML = `<div class="stats" style="margin-bottom:12px">
+      <div><b>${num(p.views)}</b>views</div><div><b>${p.measured}</b>clips measured</div>
+      <div><b>${num(Math.round(p.views / p.measured))}</b>views per clip</div></div>
+    ${L ? `<div class="plan" style="margin-bottom:12px">🧠 <b>What it would post</b> (no niche set): <b>${esc(L.niche)}</b><br>
+      <span class="dim">${esc(L.why)}${L.avoid ? `<br>Avoid: ${esc(L.avoid)}` : ""}<br>learned ${new Date(L.at * 1000).toLocaleString()} from ${L.clips} clips</span></div>`
+      : p.enough ? "" : `<p class="dim">Needs 5 posted clips with views before it learns from them (${p.measured} so far).</p>`}
+    <div class="act" style="display:grid;gap:4px">
+    ${det("ins-t", `Topics, by views per clip`, `<table><tr><th>Topic / source video</th><th>Clips</th><th>Views</th><th>Per clip</th><th>Best clip</th></tr>${
+      p.topics.map(t => `<tr><td>${esc(t.name)}</td><td>${t.clips}</td><td>${num(t.views)}</td><td>${bar(t.per_clip, maxT)} ${num(t.per_clip)}</td>
+        <td class="dim">${esc(t.best.title)} (${num(t.best.total)})</td></tr>`).join("")}</table>`)}
+    ${det("ins-p", `Platforms, by views per clip`, `<table><tr><th>Platform</th><th>Clips</th><th>Views</th><th>Per clip</th></tr>${
+      p.platforms.map(t => `<tr><td>${PLATFORMS[t.platform]}</td><td>${t.clips}</td><td>${num(t.views)}</td><td>${bar(t.per_clip, maxP)} ${num(t.per_clip)}</td></tr>`).join("")}</table>`)}
+    ${det("ins-l", `Clip length, by views per clip`, `<table><tr><th>Length</th><th>Clips</th><th>Per clip</th></tr>${
+      p.lengths.map(t => `<tr><td>${t.length}</td><td>${t.clips}</td><td>${bar(t.per_clip, maxL)} ${num(t.per_clip)}</td></tr>`).join("")}</table>`)}
+    ${det("ins-b", `🏆 Best clips`, `<table>${p.top.map(clipRow).join("")}</table>`)}
+    ${p.flops.length ? det("ins-f", `📉 Weakest clips (a day+ old)`, `<table>${p.flops.map(clipRow).join("")}</table>`) : ""}</div>`;
+}
+async function learnNow(btn) {
+  btn.disabled = true; btn.textContent = "Checking views + learning…";
+  const r = await post("/api/insights/learn");
+  if (!r.ok) alertBox((await r.json()).detail);
+  btn.disabled = false; btn.textContent = "Refresh views + learn"; loadReports();
 }
 async function makeReport(btn) {
   btn.disabled = true; btn.textContent = "Making…";
@@ -798,19 +1110,29 @@ async function refresh() {
     <div class="social"><h3><span class="dot ${s.whatsapp ? "ok" : ""}"></span>WhatsApp report</h3>
       <div class="${s.whatsapp ? "" : "dim"}">${s.whatsapp ? `Every ${s.report_minutes} min: views per platform, best platform, top clips`
         : "Not set up"}</div>
-      ${s.whatsapp ? "" : `<div class="dim" style="font-size:13px"><code>WA_PHONE_NUMBER_ID</code>, <code>WA_TOKEN</code>, <code>WA_TO</code> (+ <code>WA_TEMPLATE</code>) in .env. Free via Meta's WhatsApp Cloud API: see SOCIALS.md.</div>`}
+      ${s.whatsapp ? "" : `<div class="dim" style="font-size:13px"><code>WA_PHONE_NUMBER_ID</code>, <code>WA_TOKEN</code>, <code>WA_TO</code> (+ <code>WA_TEMPLATE</code>) in .env. Free via Meta's WhatsApp Cloud API: see README.md → WhatsApp report.</div>`}
       <div class="row"><button class="ghost" onclick="refreshViews(this)">Refresh views</button>
         ${s.whatsapp ? `<button class="ghost" onclick="sendReport(this)">Send report now</button>` : ""}</div>
       ${lastReport ? `<pre>${esc(lastReport)}</pre>` : ""}
     </div>`;
   igMax = s.ig_max_seconds;
+  if (liveMin !== s.live_chunk_minutes) {  // the .env default chunk length, once
+    liveMin = s.live_chunk_minutes;
+    const sel = $("#f").chunk_minutes;
+    if (![...sel.options].some(o => +o.value === liveMin)) sel.insertAdjacentHTML("beforeend", `<option value="${liveMin}">${liveMin} min</option>`);
+    if (!sel.dataset.touched) sel.value = liveMin;
+    livePlan();
+  }
   document.querySelectorAll(".off[data-t]").forEach(el => el.textContent = !live(s, el.dataset.t).length ? "(not set up)"
-    : el.dataset.t === "instagram" && igMax ? `(clips ≤${igMax}s only)` : "");
+    : el.dataset.t === "instagram" && igMax ? `(over ${igMax}s: may fail)` : "");
 
   defaultAspect(s.crop_aspect);
   loadLogs();
   loadReports();
+  loadStorage();
   loadAuto(s);
+  renderPosts(s);
+  loadNewsRuns();
   const logScroll = saveLogs();
   $("#topics").innerHTML = s.topics.length ? s.topics.map(t => {
     const running = !["done","failed","stopped","interrupted","queued"].includes(t.status);
@@ -829,7 +1151,7 @@ async function refresh() {
   }).join("") : `<p class="empty">No topics queued.</p>`;
 
   // Don't wipe the jobs list while you're typing cuts into it or hovering a graph.
-  const typing = $("#jobs").contains(document.activeElement) && document.activeElement.matches("textarea");
+  const typing = $("#jobs").contains(document.activeElement) && document.activeElement.matches("textarea, input, select");
   if (!typing && !$("#jobs .plot:hover")) $("#jobs").innerHTML = s.jobs.length ? s.jobs.map(j => {
     const running = !["done","failed","stopped","interrupted"].includes(j.status);
     const cls = j.status === "done" ? "done" : j.status === "failed" ? "failed" : "";
@@ -841,6 +1163,7 @@ async function refresh() {
         · ${esc(j.auto_upload ? JSON.parse(j.platforms || '["youtube"]').map(p => PLATFORMS[p]).join(", ") : "no auto-upload")}${j.topic_id ? ` · topic T${j.topic_id}` : ""}</span>
       ${running ? `<button class="ghost" onclick="stopJob(${j.id})">Stop</button>` : ""}
     </div>
+    ${j.is_live && running ? liveCtl(j) : ""}
     <details ${openLogs.has(j.id) ? "open" : ""} ontoggle="this.open ? (openLogs.add(${j.id}), toBottom(this)) : openLogs.delete(${j.id})">
       <summary>log</summary><pre class="log" data-log="j${j.id}">${esc(j.log)}</pre></details>
     <details class="curves" ${openCurves.has(j.id) ? "open" : ""} ontoggle="toggleCurves(${j.id}, this.open)">
@@ -886,6 +1209,7 @@ async function refresh() {
         ${Object.entries(JSON.parse(c.uploads || "{}")).filter(([, u]) => u.error).map(([p, u]) =>
           `<div style="color:#f88;font-size:12px"><b>${PLATFORMS[p] || p} error:</b> ${esc(u.error)}</div>`).join("")}
         <div class="row">
+          ${c.status === "timed" ? `<span class="chip">⏰ posts ${new Date(c.post_at * 1000).toLocaleString([], {dateStyle: "short", timeStyle: "short"})}</span>` : ""}
           ${ups ? `<span class="ups">${ups}</span>` : c.youtube_id ? `<a href="https://youtu.be/${esc(c.youtube_id)}" target="_blank">▶ on YouTube</a>` : `<span class="dim">${esc(c.status)}</span>`}
           ${canUpload ? `<button class="ghost" onclick="uploadClip(${c.id}, this)" title="to the job's platforms; only retries the ones not done yet">${ups ? "Retry upload" : "Upload"}</button>` : ""}
           ${c.path ? `<a href="/media/${esc(c.path)}" target="_blank">Open</a>` : ""}

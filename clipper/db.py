@@ -1,5 +1,6 @@
 import logging
 import logging.handlers
+import re
 import sqlite3
 import time
 import traceback
@@ -40,6 +41,14 @@ CREATE TABLE IF NOT EXISTS auto_rounds (
 CREATE TABLE IF NOT EXISTS reports (
   id INTEGER PRIMARY KEY, at REAL, text TEXT, sent TEXT DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS news (
+  id INTEGER PRIMARY KEY, link TEXT, title TEXT, source TEXT, kind TEXT, headline TEXT, clip_id INTEGER,
+  auto INTEGER DEFAULT 0, at REAL
+);
+CREATE TABLE IF NOT EXISTS news_runs (
+  id INTEGER PRIMARY KEY, at REAL, kind TEXT, topic TEXT, source TEXT DEFAULT 'manual', status TEXT DEFAULT 'searching',
+  log TEXT DEFAULT '', data TEXT DEFAULT '{}'
+);
 CREATE TABLE IF NOT EXISTS limit_hits (
   platform TEXT PRIMARY KEY, hit_at REAL, message TEXT
 );
@@ -66,7 +75,9 @@ def init():
                            ("clips", "uploads TEXT DEFAULT '{}'"), ("clips", "views TEXT DEFAULT '{}'"), ("topics", "face_check INTEGER DEFAULT 1"),
                            ("jobs", "aspect REAL"), ("topics", "aspect REAL"),
                            ("jobs", "hq INTEGER DEFAULT 0"), ("topics", "hq INTEGER DEFAULT 0"),
-                           ("topics", "source TEXT DEFAULT 'manual'"), ("topics", "pool INTEGER")):  # columns added after v0.1
+                           ("topics", "source TEXT DEFAULT 'manual'"), ("topics", "pool INTEGER"),
+                           ("jobs", "chunk_minutes INTEGER"), ("jobs", "max_chunks INTEGER DEFAULT 0"),
+                           ("jobs", "kind TEXT DEFAULT 'video'"), ("clips", "post_at REAL"), ("news", "run_id INTEGER")):  # columns added after v0.1
             try:
                 c.execute(f"ALTER TABLE {table} ADD COLUMN {col}")
             except sqlite3.OperationalError:
@@ -106,13 +117,33 @@ def all(table, where="1", args=()):
         return [dict(r) for r in c.execute(f"SELECT * FROM {table} WHERE {where} ORDER BY id DESC", args)]
 
 
+_SECRET = re.compile(r"((?:access_token|client_secret|refresh_token|api_key|key|token)=)[^&\s'\"]+", re.I)
+
+
+def scrub(text):
+    """Hide tokens in URLs (httpx errors include the request URL: '...?access_token=EAAM...') before anything is
+    logged, stored or shown."""
+    return _SECRET.sub(r"\1***", str(text))
+
+
+def _print(text, **kw):
+    """Console echo that never crashes: a cp1252 Windows console can't show symbols like ▶ ✓ ❌ (they're replaced)."""
+    try:
+        print(text, **kw)
+    except UnicodeEncodeError:
+        import sys
+        enc = getattr(sys.stdout, "encoding", None) or "ascii"
+        print(text.encode(enc, "replace").decode(enc), **kw)
+
+
 def log(job_id, msg, table="jobs", exc=False):
     """One line into the job's/topic's own log (shown in the UI), the terminal and data/logs/clipper.log.
-    exc=True (inside an `except`) also writes the full traceback to the file."""
+    exc=True (inside an `except`) also writes the full traceback to the file. Tokens are scrubbed (see scrub)."""
+    msg = scrub(msg)
     line = f"[{time.strftime('%H:%M:%S')}] {msg}\n"
     who = f"{table[:-1]} {job_id}"
-    print(f"{who}: {line}", end="")
-    _file.log(logging.ERROR if exc else logging.INFO, f"[{who}] {msg}" + (f"\n{traceback.format_exc()}" if exc else ""))
+    _print(f"{who}: {line}", end="")
+    _file.log(logging.ERROR if exc else logging.INFO, f"[{who}] {msg}" + (f"\n{scrub(traceback.format_exc())}" if exc else ""))
     with conn() as c:
         c.execute(f"UPDATE {table} SET log = log || ? WHERE id=?", (line, job_id))
 
@@ -130,8 +161,9 @@ def set_setting(key, value):
 
 def syslog(msg, exc=False):
     """Events that belong to no job/topic (server start, GPU/encoder choice, view stats, WhatsApp...)."""
-    print(f"system: {msg}")
-    _file.log(logging.ERROR if exc else logging.INFO, f"[system] {msg}" + (f"\n{traceback.format_exc()}" if exc else ""))
+    msg = scrub(msg)
+    _print(f"system: {msg}")
+    _file.log(logging.ERROR if exc else logging.INFO, f"[system] {msg}" + (f"\n{scrub(traceback.format_exc())}" if exc else ""))
 
 
 @contextmanager

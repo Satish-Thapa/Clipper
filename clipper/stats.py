@@ -1,4 +1,4 @@
-"""View counts for uploaded clips + an hourly WhatsApp report (Meta WhatsApp Cloud API, free: see SOCIALS.md).
+"""View counts for uploaded clips + an hourly WhatsApp report (Meta WhatsApp Cloud API, free: README → WhatsApp report).
 
 refresh() asks each platform for the views of every clip we uploaded and stores them in clips.views (JSON
 {platform: views}). report() turns that into a short message: totals per platform, the change since the last
@@ -93,14 +93,14 @@ def refresh():
             for vid, n in youtube.views(list(yt)).items():
                 views[yt[vid]]["youtube"] = n
         except Exception as e:
-            errors["youtube"] = str(e)[:150]
+            errors["youtube"] = db.scrub(e)[:150]
     for cid, u in ups.items():
         for p, fetch in (("facebook", _facebook), ("instagram", lambda m: _insight(m, "views", IG_TOKEN))):
             if u.get(p, {}).get("id"):
                 try:
                     views[cid][p] = fetch(u[p]["id"])
                 except Exception as e:
-                    errors[p] = str(e)[:150]
+                    errors[p] = db.scrub(e)[:150]
         if u.get("tiktok", {}).get("id"):
             # TikTok's API only gives view counts for public posts listed with the video.list scope; app posts stay
             # private until TikTok audits the app, so there is nothing to read yet.
@@ -108,6 +108,7 @@ def refresh():
     for cid, v in views.items():
         db.update("clips", cid, views=json.dumps(v))
     LAST["errors"] = errors
+    db.set_setting("views_at", str(time.time()))
     db.syslog(f"views refreshed for {len(views)} clips: {totals()}" + (f", errors: {errors}" if errors else ""))
     return errors
 
@@ -154,6 +155,7 @@ def send_report():
     now = totals(clips)
     text = report_text(clips, now, LAST["totals"], errors)
     LAST.update(totals=now, at=time.time())
+    text = db.scrub(text)
     rid = db.insert("reports", at=time.time(), text=text)
     if not whatsapp_ready():
         sent = "not sent: WhatsApp not set up (shown here only)"

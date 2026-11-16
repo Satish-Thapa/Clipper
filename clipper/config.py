@@ -12,6 +12,9 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-pro")
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "small")
 LIVE_CHUNK_SECONDS = int(os.getenv("LIVE_CHUNK_SECONDS", "600"))
+# The downloaded/uploaded source video (0.5-2 GB) and live recordings are deleted once a job finishes; clips stay.
+# KEEP_SOURCES=1 keeps them (needed to cut more clips from that video later by hand).
+KEEP_SOURCES = os.getenv("KEEP_SOURCES", "0").lower() in ("1", "true", "yes")
 SHORT_HARD_MAX = 180  # YouTube Shorts can't be longer than 3 min; no clip of any kind ever exceeds it
 SHORT_MIN, SHORT_MAX = int(os.getenv("SHORT_MIN", "15")), min(int(os.getenv("SHORT_MAX", "60")), SHORT_HARD_MAX)
 LONG_MIN, LONG_MAX = int(os.getenv("LONG_MIN", "60")), min(int(os.getenv("LONG_MAX", "180")), SHORT_HARD_MAX)
@@ -28,6 +31,9 @@ STRETCH_SHORT, STRETCH_LONG = int(os.getenv("STRETCH_SHORT", "10")), int(os.gete
 # Or YT_COOKIES_FROM_BROWSER=firefox (Chrome/Edge on Windows lock + encrypt their cookies, so yt-dlp can't read them).
 YT_COOKIES = Path(os.getenv("YT_COOKIES", ROOT / "cookies.txt"))
 YT_COOKIES_FROM_BROWSER = os.getenv("YT_COOKIES_FROM_BROWSER", "")
+# Wikipedia only answers tools that say who runs them (its robot policy): your email or a website. Set it to use
+# Wikipedia for fact posts; without it, facts come from news articles about the topic (also sourced).
+WIKI_CONTACT = os.getenv("WIKI_CONTACT", "")
 YT_CLIENT_SECRETS = Path(os.getenv("YT_CLIENT_SECRETS", ROOT / "client_secret.json"))
 YT_TOKEN = DATA / "youtube_token.json"
 
@@ -50,7 +56,7 @@ TIKTOK_TOKEN = DATA / "tiktok_token.json"
 # Topic search: only videos this long (minutes) are clipped. Too short = nothing to clip, too long = slow.
 TOPIC_MIN_MINUTES = float(os.getenv("TOPIC_MIN_MINUTES", "3"))
 TOPIC_MAX_MINUTES = float(os.getenv("TOPIC_MAX_MINUTES", "90"))
-# Hourly WhatsApp report of views per clip/platform, via Meta's WhatsApp Cloud API (free; see SOCIALS.md).
+# Hourly WhatsApp report of views per clip/platform, via Meta's WhatsApp Cloud API (free; README: WhatsApp report).
 WA_PHONE_NUMBER_ID, WA_TOKEN = os.getenv("WA_PHONE_NUMBER_ID", ""), os.getenv("WA_TOKEN", "")  # the sender
 WA_TO = os.getenv("WA_TO", "").lstrip("+").replace(" ", "")  # your own WhatsApp number, country code first
 WA_TEMPLATE, WA_TEMPLATE_LANG = os.getenv("WA_TEMPLATE", ""), os.getenv("WA_TEMPLATE_LANG", "en_US")

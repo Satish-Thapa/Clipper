@@ -62,7 +62,8 @@ def error_text(err):
         why = ", ".join(d.get("reason", "") for d in details if isinstance(d, dict)) if isinstance(details, list) else ""
         status = getattr(getattr(err, "resp", None), "status", "")
         return f"HTTP {status}: {reason}" + (f" ({why})" if why else "")
-    return str(err)
+    from .db import scrub
+    return scrub(err)
 
 
 # When a platform's API says the upload limit is exceeded, remember when (table limit_hits) so the UI can count down
