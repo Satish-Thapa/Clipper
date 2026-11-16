@@ -330,7 +330,7 @@ def news_find(f: NewsFind):
                 data = {"topic": topic, "how": how, "queries": queries,
                         "stories": [{**x, "pick": x["link"] in why, "why": why.get(x["link"], "")} for x in stories[:40]]}
             db.update("news_runs", rid, status="found", data=json.dumps(data))
-            say(f"✅ {len(data['stories'])} stor{'y' if len(data['stories']) == 1 else 'ies'} ready: tick the ones to post")
+            say(f"✅ {len(data['stories'])} stor{'y' if len(data['stories']) == 1 else 'ies'} ready in '1 · Find' above: tick the ones to post, then Make posts")
         except Exception as e:
             say(f"❌ failed: {e!r}"[:300])
             db.update("news_runs", rid, status="failed")

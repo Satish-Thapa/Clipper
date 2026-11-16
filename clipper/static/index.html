@@ -974,11 +974,26 @@ $("#nf").onsubmit = async e => {
   $("#nfound").innerHTML = `<div class="dim"><span class="spin">⟳</span> Run #${nRun.id}: searching news portals… (follow it live under Activity below)</div>`;
   runsKey = ""; loadNewsRuns();
 };
-let nRun = null, runsKey = "";
+let nRun = null, runsKey = "", newsRuns = [], autoShown = false;
+function showRun(id, scroll = true) {  // put a finished search's stories in "1 · Find" to tick and post
+  const r = newsRuns.find(x => x.id === id);
+  if (!r || r.status !== "found" && r.status !== "made") return;
+  const d = JSON.parse(r.data || "{}");
+  if (!d.stories) return alertBox("That search has no stories to show.");
+  nRun = {id, kind: r.kind === "facts" || r.kind === "fact" ? "fact" : "news"};
+  nfound = {...d, kind: nRun.kind, run_id: id}; renderFound();
+  if (scroll) $("#nfound").scrollIntoView({behavior: "smooth", block: "start"});
+}
 const openRuns = new Set(), closedRuns = new Set();
 async function loadNewsRuns() {
   if (location.hash !== "#news") return;
   const runs = await (await fetch("/api/news/runs")).json();
+  newsRuns = runs;
+  if (!nRun && !nfound && !autoShown) {  // page (re)loaded: show the latest search's stories again
+    autoShown = true;
+    const last = runs.find(r => r.status === "found" && r.source !== "auto");
+    if (last) showRun(last.id, false);
+  }
   if (nRun && !nfound) {  // the Find we started: show its stories once it's done
     const r = runs.find(x => x.id === nRun.id);
     if (r && r.status === "found") {
@@ -1005,7 +1020,9 @@ async function loadNewsRuns() {
       <summary><b>#${r.id}</b> ${new Date(r.at * 1000).toLocaleString([], {dateStyle: "short", timeStyle: "short"})} ·
         ${r.source === "auto" ? "🤖 autopilot" : "you"} · ${r.kind === "facts" || r.kind === "fact" ? "💡 facts" : "📰 news"} · "${esc(r.topic)}"
         · <span class="${cls}">${busy(r.status) ? `<span class="spin">⟳</span> ` : ""}${esc(r.status)}</span>
-        ${d.stories ? ` · ${d.stories.length} stories, ${d.stories.filter(x => x.pick).length} picked` : ""}</summary>
+        ${d.stories ? ` · ${d.stories.length} stories, ${d.stories.filter(x => x.pick).length} picked` : ""}
+        ${d.stories && d.stories.length && r.source !== "auto" ? ` <button class="ghost" style="padding:3px 10px;font-size:12px"
+          onclick="event.preventDefault(); showRun(${r.id})">Show these stories ↑</button>` : ""}</summary>
       <pre data-run="${r.id}">${esc(r.log || "starting…")}</pre></details>`;
   }).join("") : `<p class="empty">No searches yet.</p>`;
   document.querySelectorAll("#nruns pre[data-run]").forEach(p => { if (scroll[p.dataset.run] !== false) p.scrollTop = p.scrollHeight; });
