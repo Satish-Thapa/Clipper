@@ -31,7 +31,7 @@ DEFAULTS = {"enabled": False, "niche": "", "posts_per_day": 6, "post_from": 10, 
             "shorts": 3, "longs": 0, "choosy": 3, "hour": 9,
             "mode": "hype", "aspect": CROP_ASPECT, "hq": False, "face_check": True, "subtitles": True,
             "voiceover": False, "platforms": ["youtube"],
-            "news_per_day": 0, "news_kind": "news", "news_picture": True}  # news/fact posts, on top of the clips
+            "news_per_day": 0, "news_kind": "news", "news_picture": True, "news_format": "video"}  # news/fact posts, on top of the clips
 NEWS_KINDS = ("news", "fact")
 # No niche set = it's up to the autopilot: search broadly for what clips well and is big this week.
 ANY_NICHE = ("anything trending this week that makes great short clips: gaming (GTA, Fortnite, Minecraft...), "
@@ -360,6 +360,12 @@ def run_round(reason="scheduled"):
         LOCK.release()
 
 
+def _fmt(s, i):
+    """video / photo for the i-th news post of a round ('both' alternates, starting with a video)."""
+    f = s.get("news_format") or "video"
+    return ("video", "photo")[i % 2] if f == "both" else f
+
+
 def _news_round(s, subjects, n):
     """Make today's missing news/fact posts about the round's topics; they wait as 'scheduled' for the slots.
     -> what it searched, saw, picked and made (shown in the Activity view)."""
@@ -388,7 +394,7 @@ def _news_round(s, subjects, n):
             for st in picked:
                 _step(f"writing + rendering news post: {st['title'][:60]}")
                 cid = news.make_post(st, "news", s["platforms"], bool(s["voiceover"]), bool(s.get("news_picture", True)),
-                                     say, status="scheduled", auto=True, run_id=rid)
+                                     say, status="scheduled", auto=True, run_id=rid, fmt=_fmt(s, len(info["made"])))
                 info["made"].append({"kind": "news", "title": st["title"], "source": st["source"], "link": st["link"],
                                      "why": st.get("why", ""), "clip_id": cid})
         if n_fact:
@@ -398,7 +404,7 @@ def _news_round(s, subjects, n):
             for st in fact_stories:
                 _step("writing + rendering a fact post")
                 cid = news.make_post(st, "fact", s["platforms"], bool(s["voiceover"]), bool(s.get("news_picture", True)),
-                                     say, status="scheduled", auto=True, run_id=rid)
+                                     say, status="scheduled", auto=True, run_id=rid, fmt=_fmt(s, len(info["made"])))
                 info["made"].append({"kind": "fact", "title": st["title"], "source": st["source"], "link": st["link"],
                                      "clip_id": cid})
     except Stopped:

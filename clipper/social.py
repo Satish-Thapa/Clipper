@@ -142,7 +142,50 @@ def upload(platform, path, title, description, tags, seconds):
         vid = youtube.upload(path, title, description, tags, short=True)  # every clip is vertical and <= 180s
         return {"id": vid, "url": f"https://youtu.be/{vid}"}
     caption = "\n\n".join(x for x in (title, description, " ".join(f"#{t}" for t in tags)) if x)
+    if is_photo(path):
+        return {"facebook": facebook_photo, "instagram": instagram_photo}[platform](path, caption)
     return {"facebook": facebook, "instagram": instagram, "tiktok": tiktok}[platform](path, title, caption, seconds)
+
+
+PHOTO_PLATFORMS = ("facebook", "instagram")  # YouTube's and TikTok's APIs can't post a photo
+
+
+def is_photo(path):
+    return str(path).lower().endswith((".jpg", ".jpeg", ".png"))
+
+
+def _fb_photo(path, caption, published):
+    with open(path, "rb") as f:
+        return _ok(httpx.post(f"{GRAPH}/{FB_PAGE_ID}/photos", timeout=TIMEOUT,
+                              data={"caption": caption, "published": "true" if published else "false",
+                                    "access_token": FB_PAGE_TOKEN}, files={"source": (path.name, f, "image/jpeg")}))
+
+
+def facebook_photo(path, caption):
+    r = _fb_photo(path, caption, True)
+    pid = r.get("post_id") or r["id"]
+    return {"id": pid, "url": f"https://www.facebook.com/{pid}"}
+
+
+def instagram_photo(path, caption):
+    """Instagram's API only takes images from a public URL: put the photo on the Page unpublished (invisible) and give
+    Instagram that Facebook-hosted URL."""
+    hosted = _fb_photo(path, "", False)["id"]
+    imgs = _ok(httpx.get(f"{GRAPH}/{hosted}", params={"fields": "images", "access_token": FB_PAGE_TOKEN}))["images"]
+    url = max(imgs, key=lambda i: i.get("width", 0))["source"]
+    c = _ok(httpx.post(f"{GRAPH}/{IG_USER_ID}/media", timeout=TIMEOUT,
+                       data={"image_url": url, "caption": caption[:2200], "access_token": IG_TOKEN}))["id"]
+    for _ in range(60):
+        st = _ok(httpx.get(f"{GRAPH}/{c}", params={"fields": "status_code,status", "access_token": IG_TOKEN}))
+        if st.get("status_code") == "FINISHED":
+            break
+        if st.get("status_code") in ("ERROR", "EXPIRED"):
+            raise RuntimeError(f"instagram photo processing failed: {st.get('status')}")
+        time.sleep(3)
+    mid = _ok(httpx.post(f"{GRAPH}/{IG_USER_ID}/media_publish", data={"creation_id": c, "access_token": IG_TOKEN},
+                         timeout=TIMEOUT))["id"]
+    link = _ok(httpx.get(f"{GRAPH}/{mid}", params={"fields": "permalink", "access_token": IG_TOKEN})).get("permalink")
+    return {"id": mid, "url": link or "https://www.instagram.com/"}
 
 
 def _ok(r):

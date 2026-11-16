@@ -4,13 +4,15 @@ Clipper turns YouTube videos and live streams into short vertical clips and post
 sourced news and fact posts, and it learns from your view counts what to make next.
 
 - **Clips from any video or stream.** Paste a link or upload a file. The AI finds the best moments and renders
-  9:16 clips with a headline, captions, your logo, an end card and an optional voice-over.
+  9:16 clips with a follow line and a headline at the top, captions, your logo, a "FOLLOW" end card and an optional
+  voice-over.
 - **Topics.** Type "GTA 6". It finds this week's most-viewed videos on that topic, skips the ones that don't clip
   well, and clips the rest.
 - **Autopilot.** Say "6 clips a day between 10:00 and 22:00". Every day it finds what's trending, clips it, and posts
   one every 2 hours.
 - **News & facts.** It searches news portals for a topic, writes short posts from the articles' facts with the
-  source credited, and posts them now, at a set time, or on the autopilot's slots.
+  source credited, as videos or photos, and posts them now, at a set time, or on the autopilot's slots. Every search
+  has a live log.
 - **Posting.** Posts to YouTube Shorts, Facebook Reels, Instagram Reels and TikTok.
 - **Learning.** It reads the views of everything it posted on each platform. When you give no niche, it decides
   from what got views.
@@ -152,7 +154,7 @@ The **Auto** page. Flip the switch ON and set:
    - **Post to:** pick the platforms.
 2. **How much and when**
    - **Clips per day.**
-   - **+ News/fact posts per day**, and which kind (news, facts, both).
+   - **+ News/fact posts per day**, which kind (news, facts, both), and as videos, photos or both (alternating).
    - **Posting hours** (between ... and ...), plus **clips per video**.
    - The plan is shown in plain words as you type, e.g. *"6 clips + 2 news posts a day, 10:00-22:00, one every
      1 h 30 min"*.
@@ -229,6 +231,8 @@ The **News** page:
      before. DeepSeek then ticks the best ones (★, with why).
 2. **Make posts** from the ticked stories:
    - **Where:** pick the platforms.
+   - **Format:** **video** (a Reel/Short, every platform) or **photo** (1080x1350, Facebook and Instagram only:
+     YouTube's and TikTok's APIs can't post photos, so photos skip them with a note in the log).
    - **Options:** use the article's picture, AI voice-over.
    - **When:** *I'll post them myself* · *Post each right away* · *At a time…* (first post at a date/time, then one
      every 30 min / 1 h / 2 h / 4 h) · *On the autopilot's posting slots*.
@@ -253,6 +257,18 @@ The **News** page:
    uses the same upload path as the clips everywhere.
 5. **The caption** ends with `Source: <portal> (<age>)` and the article link.
 6. **No repeats.** Every story used is remembered, so it's never posted twice.
+
+**Photos** are the same design in Instagram's portrait size, with the 2 key facts.
+- **Facebook:** a normal photo post.
+- **Instagram:** its API only takes images from a public URL, so the photo goes to your Page first as an unpublished
+  (invisible) photo, and Instagram gets that Facebook-hosted URL.
+
+**Activity (live log).** Every search, yours and the autopilot's, is a run with its own log on the News page:
+- the search queries, and what each portal returned (with the newest story's age)
+- what was skipped and why (duplicates, too old, posted before, social-media posts)
+- the stories kept, and DeepSeek's picks with why
+- for each post: the real article link, how much text and whether a picture was read, what DeepSeek wrote, the
+  render, and where it was posted (link or error)
 
 **Facts:**
 - With `WIKI_CONTACT` set in `.env` (your email or website; Wikipedia's robot policy requires a contact), facts come
@@ -507,7 +523,8 @@ It uses Meta's official **WhatsApp Cloud API**, from the same Meta app.
 | `STRETCH_SHORT` / `STRETCH_LONG` | 10 / 10 | how far over the max the AI may go for context |
 | `CROP_ASPECT` | 1 | default framing (0.5625 = full 9:16 ... 1.78 = whole frame) |
 | `LOGO` | `clipper/assets/logo.png` | watermark; empty = none |
-| `END_CARD` | "IF YOU MADE IT TO\|THE END OF THIS VIDEO,\|YOU LEGALLY HAVE TO\|FOLLOW ME" | animated end card; `\|` = new line, last line on the red box; empty = off |
+| `END_CARD` | `FOLLOW` | animated end card; `\|` = new line, last line on the red box; empty = off |
+| `FOLLOW_LINE` | empty | the line above the headline that pushes viewers to follow; empty = one of 6 built-in lines at random per clip ("FOLLOW OR YOU'LL MISS PART 2", "FOLLOW NOW, THANK ME LATER", "NOT FOLLOWING YET? FIX THAT", "FOLLOW FOR DAILY CLIPS LIKE THIS", "SMASH FOLLOW BEFORE YOU SCROLL", "REAL ONES FOLLOW") |
 | `VOICE` | system default | voice-over voice (Windows SAPI / macOS `say` name) |
 | `LIVE_CHUNK_SECONDS` | 600 | default live piece length |
 | `KEEP_SOURCES` | 0 | 1 = keep source videos after clipping |
@@ -576,8 +593,8 @@ Autopilot settings are set on the Auto page (stored in the database), not in `.e
    headline, description, hashtags and why. `validate()` clamps everything to the windows and length limits; if
    DeepSeek fails, the raw windows are used.
 6. **Render** (2 at a time).
-   - Framing crop → 1080x1920, then the headline (yellow box), captions (3 words at a time), the logo and the
-     voice-over (ducked under the original audio).
+   - Framing crop → 1080x1920, then the follow line (red box) above the headline (yellow box), captions (3 words at
+     a time), the logo and the voice-over (ducked under the original audio).
    - The animated end card, encoded with NVENC (18 Mbps max) or x264.
    - Output: `data/jobs/<job>/clips/<clip>.mp4`.
 7. **Post.**

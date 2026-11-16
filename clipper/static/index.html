@@ -204,6 +204,7 @@
           <label>Clips per day<input type="number" name="posts_per_day" min="1" max="48"></label>
           <label title="News or did-you-know posts made from news portals, posted on the same slots as the clips">+ News/fact posts per day<input type="number" name="news_per_day" min="0" max="24"></label>
           <label>News kind<select name="news_kind"><option value="news">Latest news</option><option value="facts">Did-you-know facts</option><option value="both">Both</option></select></label>
+          <label title="Photos only go to Facebook and Instagram (YouTube and TikTok's APIs only take videos)">News as<select name="news_format"><option value="video">Videos</option><option value="photo">Photos</option><option value="both">Both (alternate)</option></select></label>
           <label>Between<select name="post_from"></select></label>
           <label>and<select name="post_to"></select></label>
           <label>Clips per video<input type="number" name="shorts" min="0" max="20"></label>
@@ -319,6 +320,9 @@
     <h3>2 · Make posts from the ticked stories</h3>
     <form id="nm">
       <fieldset class="pf" data-default="youtube,facebook,instagram"><legend>Post to</legend></fieldset>
+      <label>Format<select name="format" onchange="nmWhen()">
+        <option value="video">Video (Reel / Short, every platform)</option>
+        <option value="photo">Photo (Facebook + Instagram)</option></select></label>
       <label class="check"><input type="checkbox" name="picture" checked> Use the article's picture</label>
       <label class="check"><input type="checkbox" name="voiceover"> AI voice-over</label>
       <label>When<select name="when" onchange="nmWhen()">
@@ -644,7 +648,7 @@ $("#af").post_to.innerHTML = Array.from({length: 24}, (_, h) => `<option value="
 const clock = t => new Date(t * 1000).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"});
 const dur = m => m >= 60 ? `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ""}` : `${m} min`;
 let autoLoaded = false, autoSt = null;
-const AUTO_KEYS = ["niche", "posts_per_day", "news_per_day", "news_kind", "post_from", "post_to", "shorts", "longs", "choosy", "hour", "mode"];
+const AUTO_KEYS = ["niche", "posts_per_day", "news_per_day", "news_kind", "news_format", "post_from", "post_to", "shorts", "longs", "choosy", "hour", "mode"];
 const AUTO_CHECKS = ["subtitles", "hq", "voiceover", "face_check", "news_picture"];
 function fillAuto(st) {
   const f = $("#af"), a = st.settings;
@@ -656,8 +660,8 @@ function fillAuto(st) {
 }
 function formAuto() {
   const f = $("#af"), d = new FormData(f), o = {niche: d.get("niche"), mode: d.get("mode"), aspect: +d.get("aspect"), platforms: picked(f)};
-  for (const k of AUTO_KEYS.filter(k => !["niche", "mode", "news_kind"].includes(k))) o[k] = +d.get(k);
-  o.news_kind = d.get("news_kind");
+  for (const k of AUTO_KEYS.filter(k => !["niche", "mode", "news_kind", "news_format"].includes(k))) o[k] = +d.get(k);
+  o.news_kind = d.get("news_kind"); o.news_format = d.get("news_format");
   for (const k of AUTO_CHECKS) o[k] = d.has(k);
   return o;
 }
@@ -863,6 +867,7 @@ async function runAuto(btn) {
   setTimeout(refresh, 1000);
 }
 // ---- News & facts ----
+const isPhoto = c => /\.(jpe?g|png)$/i.test(c.path || "");
 let nfound = null;
 const ago = h => h == null ? "" : h < 1 ? `${Math.round(h * 60)} min ago` : h < 48 ? `${Math.round(h)} h ago` : `${Math.round(h / 24)} days ago`;
 $("#nf").onsubmit = async e => {
@@ -938,7 +943,7 @@ $("#nm").onsubmit = async e => {
   const f = new FormData(e.target), stories = [...document.querySelectorAll(".npick:checked")].map(i => nfound.stories[+i.dataset.i]);
   const body = {stories, kind: nfound.kind, platforms: picked(e.target), picture: f.has("picture"), voiceover: f.has("voiceover"),
     when: f.get("when"), at: f.get("at") ? new Date(f.get("at")).getTime() / 1000 : null, every_min: +f.get("every_min"),
-    run_id: nfound.run_id || null};
+    run_id: nfound.run_id || null, format: f.get("format")};
   const r = await post("/api/news/make", body);
   if (!r.ok) return alertBox((await r.json()).detail || "could not make posts");
   $("#nmBtn").textContent = `Making ${stories.length}… (they appear below)`; $("#nmBtn").disabled = true;
@@ -962,9 +967,10 @@ function renderPosts(s) {
       const where = Object.entries(up).map(([p, u]) => u.id ? `<a href="${esc(u.url)}" target="_blank" class="ok">✓ ${PLATFORMS[p]}</a>`
         : `<span class="no" title="${esc(u.error)}">✕ ${PLATFORMS[p]}</span>`).join(" ");
       const plats = JSON.parse(j.platforms || "[]");
-      return `<div class="npost">${c.path ? `<video src="/media/${esc(c.path)}" controls preload="metadata"></video>` : `<div></div>`}
+      return `<div class="npost">${c.path ? (isPhoto(c) ? `<img src="/media/${esc(c.path)}" style="width:150px;border-radius:8px">`
+        : `<video src="/media/${esc(c.path)}" controls preload="metadata"></video>`) : `<div></div>`}
         <div style="display:grid;gap:6px;align-content:start">
-          <div><span class="pill">${j.kind === "fact" ? "💡 fact" : "📰 news"}</span> <b>${esc(c.headline || c.title)}</b></div>
+          <div><span class="pill">${j.kind === "fact" ? "💡 fact" : "📰 news"}</span> <span class="pill">${isPhoto(c) ? "🖼 photo" : "🎬 video"}</span> <b>${esc(c.headline || c.title)}</b></div>
           <div class="dim" style="font-size:12px;white-space:pre-wrap">${esc(c.description)}</div>
           <div class="acts"><span class="badge">${esc(c.status)}</span>
             ${c.status === "timed" ? `⏰ ${new Date(c.post_at * 1000).toLocaleString([], {dateStyle: "medium", timeStyle: "short"})} → ${plats.map(p => PLATFORMS[p]).join(", ")}
@@ -1198,7 +1204,8 @@ async function refresh() {
     const ups = Object.entries(JSON.parse(c.uploads || "{}")).map(([p, u]) => u.id
       ? `<a href="${esc(u.url)}" target="_blank">▶ ${PLATFORMS[p] || p}${p in JSON.parse(c.views || "{}") ? ` · ${JSON.parse(c.views)[p].toLocaleString()} views` : ""}</a>` : `<span class="err">✕ ${PLATFORMS[p] || p}</span>`).join("");
     return `<div class="clip ${c.kind}">
-      ${c.path ? `<video src="/media/${esc(c.path)}" controls preload="metadata"></video>` : `<div style="aspect-ratio:9/16;display:grid;place-items:center" class="dim">${c.status.startsWith("uploaded") ? "file deleted locally (still online)" : esc(c.status) + "…"}</div>`}
+      ${c.path ? (isPhoto(c) ? `<img src="/media/${esc(c.path)}" style="width:100%;aspect-ratio:4/5;object-fit:contain;background:#000">`
+        : `<video src="/media/${esc(c.path)}" controls preload="metadata"></video>`) : `<div style="aspect-ratio:9/16;display:grid;place-items:center" class="dim">${c.status.startsWith("uploaded") ? "file deleted locally (still online)" : esc(c.status) + "…"}</div>`}
       <div class="body">
         <div class="row"><span class="score">${Math.round(c.score)}</span><span class="badge">${c.kind}</span>
           <span class="dim">job #${c.job_id} · ${fmt(c.start)}–${fmt(c.end)}</span></div>

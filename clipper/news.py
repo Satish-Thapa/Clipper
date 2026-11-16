@@ -287,7 +287,7 @@ def _download(url, out):
 
 
 def make_post(story, kind="news", platforms=(), voiceover=False, picture=True, log=None, status="rendered",
-              post_at=None, auto=False, run_id=None):
+              post_at=None, auto=False, run_id=None, fmt="video"):
     """One story -> job + rendered clip. Returns the clip id. status: 'rendered' (wait), 'scheduled' (autopilot
     slots), 'timed' (post at post_at). Every step goes to the job's log and, via `log`, to the run's log."""
     say = log or (lambda m: None)
@@ -321,10 +321,13 @@ def make_post(story, kind="news", platforms=(), voiceover=False, picture=True, l
         cid = db.insert("clips", job_id=jid, kind=kind, start=0, end=0, score=0, title=p["title"],
                         headline=p["headline"], reason=story.get("why") or f"{kind} from {story['source']}",
                         description="", tags=json.dumps(p["hashtags"]), status="rendering")
-        out = d / f"{cid}.mp4"
+        out = d / f"{cid}.{'jpg' if fmt == 'photo' else 'mp4'}"
         db.update("jobs", jid, status="rendering")
-        with db.step(jid, f"rendering post #{cid}"):
-            secs = render.news_video(out, p, story["source"], story.get("age_h"), img, voice)
+        with db.step(jid, f"rendering post #{cid} as a {fmt}"):
+            if fmt == "photo":
+                secs = render.news_image(out, p, story["source"], story.get("age_h"), img)
+            else:
+                secs = render.news_video(out, p, story["source"], story.get("age_h"), img, voice)
         when = "" if story.get("age_h") is None else f" ({_ago(story['age_h'])})"
         desc = (f"{p['caption']}\n\nSource: {story['source']}{when}\n{story['link']}").strip()
         db.update("clips", cid, path=str(out.relative_to(DATA)), end=secs, description=desc, status=status,
@@ -335,7 +338,7 @@ def make_post(story, kind="news", platforms=(), voiceover=False, picture=True, l
         db.log(jid, f"post #{cid} ready ({secs:.0f}s), " + {"rendered": "waiting for you to post it",
                                                           "scheduled": "the autopilot posts it on its next slot",
                                                           "timed": f"posts at {time.strftime('%d %b %H:%M', time.localtime(post_at or 0))}"}[status])
-        say(f"   🎬 rendered post #{cid} ({secs:.0f}s, {'with' if img else 'no'} picture{', voice-over' if voice else ''}) → " + {
+        say(f"   🎬 rendered post #{cid} as a {'photo (1080x1350)' if fmt == 'photo' else f'{secs:.0f}s video'} ({'with' if img else 'no'} picture{', voice-over' if voice else ''}) → " + {
             "rendered": "waiting for you to post it", "scheduled": "the autopilot posts it on its next slot",
             "timed": f"posts at {time.strftime('%d %b %H:%M', time.localtime(post_at or 0))} to {', '.join(platforms)}"}[status])
         return cid

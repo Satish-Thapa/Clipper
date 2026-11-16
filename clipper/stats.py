@@ -71,6 +71,11 @@ def _insight(media, metric, token):
 
 
 def _facebook(vid):
+    if "_" in str(vid):  # a photo post ("<page>_<post>"): how many people saw it
+        r = httpx.get(f"{GRAPH}/{vid}/insights", params={"metric": "post_impressions_unique", "access_token": FB_PAGE_TOKEN},
+                      timeout=20)
+        r.raise_for_status()
+        return int(((r.json().get("data") or [{}])[0].get("values") or [{}])[0].get("value") or 0)
     for metric in ("blue_reels_play_count", "total_video_views"):  # Reel, else a normal Page video
         try:
             return _insight(vid, metric, FB_PAGE_TOKEN)

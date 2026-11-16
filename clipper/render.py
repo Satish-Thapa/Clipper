@@ -6,7 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from . import db
-from .config import CROP_ASPECT, END_CARD, FFMPEG, LOGO, VOICE
+from .config import CROP_ASPECT, END_CARD, FFMPEG, FOLLOW_LINE, FOLLOW_LINES, LOGO, VOICE
 
 ASS_HEAD = """[Script Info]
 ScriptType: v4.00+
@@ -21,6 +21,7 @@ Style: EndBox,Arial Black,{end_size},&H00FFFFFF,&H002E2EFF,&H002E2EFF,1,3,22,0,5
 Style: End,Arial Black,{end_sub},&H00FFFFFF,&H00000000,&H80000000,1,1,7,3,5,0
 Style: EndSmall,Arial Black,{end_small},&H00FFFFFF,&H00000000,&H80000000,1,1,6,3,5,0
 Style: EndHi,Arial Black,{end_hi},&H0000E5FF,&H00000000,&H80000000,1,1,7,3,5,0
+Style: Hook,Arial Black,{hook_size},&H00FFFFFF,&H002E2EFF,&H002E2EFF,1,3,10,0,8,0
 
 [Events]
 Format: Layer, Start, End, Style, Text
@@ -96,7 +97,24 @@ def _end_lines(lines, length, secs, w, h):
     return out
 
 
-def ass(words, start, end, vertical=True, headline="", per_line=3, aspect=CROP_ASPECT):
+def follow_line():
+    """The line above the headline: FOLLOW_LINE from .env, else one of the built-in lines at random."""
+    import random
+    return (FOLLOW_LINE or random.choice(FOLLOW_LINES)).upper().replace("{", "").replace("}", "")
+
+
+HOOK_H, HEAD_H = 62, 106  # follow line box / headline box heights (px) on a 1080x1920 canvas
+
+
+def top_block(aspect=CROP_ASPECT):
+    """Where the follow line and the headline go: (hook_y, headline_y, bottom). Centred in the top bar when it's
+    tall enough, else from y=110 (under YouTube's top icons), on the video."""
+    bar = bar_height(aspect)
+    y = max(110, (bar - HOOK_H - 10 - HEAD_H) // 2)
+    return y, y + HOOK_H + 10, y + HOOK_H + 10 + HEAD_H
+
+
+def ass(words, start, end, vertical=True, headline="", per_line=3, aspect=CROP_ASPECT, hook=None):
     """Headline in a yellow box in the top black bar for the whole clip + big captions in the bottom black bar,
     a few words at a time. With no bars (aspect 9/16) they sit on the video instead."""
     ws = [w for w in words if start <= w["s"] < end]
@@ -107,14 +125,25 @@ def ass(words, start, end, vertical=True, headline="", per_line=3, aspect=CROP_A
         lines.append(f"Dialogue: 0,{_t(g[0]['s'] - start)},{_t(g[-1]['e'] - start)},Cap,{text}")
     if headline:
         text = headline.upper().replace("{", "").replace("}", "")
-        lines.insert(0, f"Dialogue: 0,{_t(0)},{_t(end - start)},Top,{text}")
+        if vertical:  # follow line on top, then the headline under it
+            hy, ty, _ = top_block(aspect)
+            hook = follow_line() if hook is None else hook
+            pulse = "".join(rf"\t({ms},{ms + 400},\fscx{105 if j % 2 == 0 else 100}\fscy{105 if j % 2 == 0 else 100})"
+                            for j, ms in enumerate(range(1200, min(int((end - start) * 1000), 60000), 1600)))
+            if hook:
+                lines.insert(0, f"Dialogue: 1,{_t(0)},{_t(end - start)},Hook,"
+                                + rf"{{\an8\pos(540,{hy})\fad(200,0)\fscx40\fscy40\t(0,220,\fscx108\fscy108)\t(220,360,\fscx100\fscy100){pulse}}}{hook}")
+            lines.insert(0, f"Dialogue: 0,{_t(0)},{_t(end - start)},Top,{{\\an8\\pos(540,{ty if hook else hy})}}{text}")
+        else:
+            lines.insert(0, f"Dialogue: 0,{_t(0)},{_t(end - start)},Top,{text}")
     # Headline: centred in the top bar (box is ~106px tall), but below YouTube's top icons (~120px).
     # Captions: just under the video, so they stay above YouTube's title/channel overlay at the very bottom.
     bar = bar_height(aspect)
     size = (dict(w=1080, h=1920, size=86, margin=max(250, bar - 120), top_size=78, top_margin=max(120, (bar - 106) // 2),
-                 end_size=120, end_sub=84, end_small=62, end_hi=76)
+                 end_size=120, end_sub=84, end_small=62, end_hi=76, hook_size=44)
             if vertical
-            else dict(w=1920, h=1080, size=64, margin=70, top_size=60, top_margin=50, end_size=90, end_sub=64, end_small=56, end_hi=68))
+            else dict(w=1920, h=1080, size=64, margin=70, top_size=60, top_margin=50, end_size=90, end_sub=64, end_small=56, end_hi=68,
+                      hook_size=40))
     lines += end_card(end - start, w=size["w"], h=size["h"])
     return ASS_HEAD.format(**size) + "\n".join(lines) + "\n"
 
@@ -203,7 +232,8 @@ def cut(src, out, start, end, vertical, words=(), headline="", voice=(), aspect=
         # YouTube's own top icons). Vertical without bars: just under the headline box (which sits at y 120-226),
         # so it never covers the headline. 16:9: in the video's top-right corner.
         bar = bar_height(aspect) if vertical else 0
-        y = f"{bar}-h-24" if bar >= 200 else f"{max(bar, 230) if vertical else 0}+24"  # h = logo height
+        below = top_block(aspect)[2] if headline else 230  # bottom of the follow line + headline block
+        y = f"{bar}-h-24" if bar - below >= 110 else f"{max(bar, below) if vertical else 0}+24"  # h = logo height
         logo_in = ["-i", str(LOGO.resolve())]
         graph = f"[0:v]{vf}[v];[1:v]scale={220 if vertical else 260}:-1[l];[v][l]overlay=W-w-24:{y}[o]"
     vo_in, amap = [], ["-map", "0:a?"]
@@ -232,7 +262,7 @@ def cut(src, out, start, end, vertical, words=(), headline="", voice=(), aspect=
 NEWS_HEAD = """[Script Info]
 ScriptType: v4.00+
 PlayResX: 1080
-PlayResY: 1920
+PlayResY: {h}
 WrapStyle: 2
 
 [V4+ Styles]
@@ -242,6 +272,7 @@ Style: Head,Arial Black,84,&H00FFFFFF,&H00FFFFFF,&H00000000,&H90000000,1,0,0,0,1
 Style: Line,Arial,52,&H00FFFFFF,&H00FFFFFF,&H00000000,&HA0000000,1,0,0,0,100,100,0,0,3,14,0,8,0,0,0,1
 Style: Dot,Arial Black,52,&H0000E5FF,&H0000E5FF,&H00000000,&H00000000,1,0,0,0,100,100,0,0,1,0,0,8,0,0,0,1
 Style: Src,Arial,38,&H00DDDDDD,&H00DDDDDD,&H00000000,&H80000000,1,0,0,0,100,100,1,0,1,3,0,5,0,0,0,1
+Style: Hook,Arial Black,40,&H00FFFFFF,&H00FFFFFF,&H002E2EFF,&H002E2EFF,1,0,0,0,100,100,1,0,3,10,0,5,0,0,0,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -252,14 +283,24 @@ def _clean(t):
     return " ".join(str(t).replace("{", "(").replace("}", ")").replace("\\", "/").split())
 
 
-def news_ass(post, source, age_h, length, picture):
-    """Badge pops in, headline lines slide up one by one, then each key fact, source line at the bottom."""
+# Where things go: a 1080x1920 video (Reel/Short) or a 1080x1350 photo (Instagram's portrait size).
+NEWS_LAYOUT = {1920: dict(hook=150, badge=250, pic=(330, 540), head=(930, 560), src=1856, facts=3),
+               1350: dict(hook=122, badge=205, pic=(265, 360), head=(650, 360), src=1300, facts=2)}  # hook under the logo
+
+
+def news_ass(post, source, age_h, length, picture, h=1920, hook=None):
+    """Follow line, then the badge pops in, headline lines slide up one by one, then each key fact, source line at the
+    bottom. h=1350: the photo layout (fewer facts)."""
     import textwrap
+    L = NEWS_LAYOUT[h]
     ev = lambda layer, a, b, style, text: f"Dialogue: {layer},{_t(a)},{_t(b)},{style},,0,0,0,,{text}"
     out, end = [], length
-    out.append(ev(2, 0.1, end, "Badge", r"{\an5\pos(540,200)\fscx30\fscy30\t(0,220,\fscx112\fscy112)\t(220,360,\fscx100\fscy100)}"
+    hook = follow_line() if hook is None else hook
+    if hook:
+        out.append(ev(2, 0, end, "Hook", rf"{{\an5\pos(540,{L['hook']})\fad(200,0)}} {_clean(hook)} "))
+    out.append(ev(2, 0.1, end, "Badge", rf"{{\an5\pos(540,{L['badge']})\fscx30\fscy30\t(0,220,\fscx112\fscy112)\t(220,360,\fscx100\fscy100)}}"
                   + f" {_clean(post['badge'])} "))
-    y = 920 if picture else 560
+    y = L["head"][0] if picture else L["head"][1]
     head = _clean(post["headline"]).upper()
     # fewest lines, then the most even ones (no lone word on the last line)
     best = min((textwrap.wrap(head, w) for w in range(13, 21)),
@@ -269,15 +310,15 @@ def news_ass(post, source, age_h, length, picture):
         out.append(ev(3, t0, end, "Head", rf"{{\an8\move(540,{y + 40},540,{y},0,300)\fad(250,0)}}{line}"))
         y += 100
     y += 36
-    for i, fact in enumerate(post["lines"][:3]):
+    for i, fact in enumerate(post["lines"][:L["facts"]]):
         t0 = 1.3 + i * 1.6
         wrapped = textwrap.wrap(_clean(fact), 34)[:3]
         out.append(ev(1, t0, end, "Dot", rf"{{\an8\pos(80,{y + 4})\fad(200,0)}}▶"))
         out.append(ev(2, t0, end, "Line", rf"{{\an7\move(150,{y + 30},130,{y},0,280)\fad(250,0)}}" + r"\N".join(wrapped)))
         y += 70 * len(wrapped) + 34
     when = "" if age_h is None else f"  ·  {age_h * 60:.0f} min ago" if age_h < 1 else f"  ·  {age_h:.0f} h ago" if age_h < 48 else ""
-    out.append(ev(2, 0.6, end, "Src", r"{\an5\pos(540,1856)\fad(400,0)}" + f"Source: {_clean(source)}{when}"))
-    return NEWS_HEAD + "\n".join(out) + "\n"
+    out.append(ev(2, 0.6, end, "Src", rf"{{\an5\pos(540,{L['src']})\fad(400,0)}}" + f"Source: {_clean(source)}{when}"))
+    return NEWS_HEAD.replace("{h}", str(h)) + "\n".join(out) + "\n"
 
 
 def news_seconds(post, voice_len=0):
@@ -297,15 +338,27 @@ def news_video(out, post, source, age_h, picture=None, voice=None):
     length = news_seconds(post, voice_len)
     sub = out.with_suffix(".ass")
     sub.write_text(news_ass(post, source, age_h, length, bool(picture)), encoding="utf-8")
+    return _news_render(out, sub, length, picture, voice, 1920)
+
+
+def news_image(out, post, source, age_h, picture=None):
+    """The same post as one 1080x1350 photo (Facebook / Instagram feed): the last frame, everything shown."""
+    sub = out.with_suffix(".ass")
+    sub.write_text(news_ass(post, source, age_h, 10, bool(picture), h=1350), encoding="utf-8")
+    return _news_render(out, sub, 10, picture, None, 1350, photo=True)
+
+
+def _news_render(out, sub, length, picture, voice, h, photo=False):
+    py, ph = NEWS_LAYOUT[h]["pic"]
     if picture:
         ins = ["-loop", "1", "-t", str(length), "-i", str(picture.resolve())]
-        graph = (f"[0:v]split=2[a][b];[a]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
+        graph = (f"[0:v]split=2[a][b];[a]scale=1080:{h}:force_original_aspect_ratio=increase,crop=1080:{h},"
                  f"boxblur=28:2,eq=brightness=-0.32:saturation=1.2[bg];"
-                 f"[b]scale=w='min(1000,iw*560/ih)*(1+0.05*t/{length})':h=-2:eval=frame[fg];"
-                 f"[bg][fg]overlay=(W-w)/2:300+(560-h)/2:format=auto,fps=30,format=yuv420p")
+                 f"[b]scale=w='min(1000,iw*{ph}/ih)*(1+0.05*t/{length})':h=-2:eval=frame[fg];"
+                 f"[bg][fg]overlay=(W-w)/2:{py}+({ph}-h)/2:format=auto,fps=30,format=yuv420p")
     else:
         ins = ["-f", "lavfi", "-t", str(length), "-i",
-               "gradients=s=1080x1920:c0=0x14061f:c1=0x4a0f2e:c2=0x0b1a3a:n=3:speed=0.015:r=30"]
+               f"gradients=s=1080x{h}:c0=0x14061f:c1=0x4a0f2e:c2=0x0b1a3a:n=3:speed=0.015:r=30"]
         graph = "[0:v]format=yuv420p"
     graph += f",subtitles={sub.name}"
     logo = []
@@ -314,6 +367,10 @@ def news_video(out, post, source, age_h, picture=None, voice=None):
         graph += "[v];[1:v]scale=190:-1[l];[v][l]overlay=W-w-28:36"
     graph += "[o]"
     k = 1 + len(logo) // 2
+    if photo:  # one frame, after every animation has finished
+        subprocess.run([FFMPEG, "-y", "-loglevel", "error", *ins, *logo, "-filter_complex", graph, "-map", "[o]",
+                        "-ss", str(length - 2), "-frames:v", "1", "-q:v", "2", out.name], check=True, cwd=out.parent)
+        return 0
     if voice:
         aud, amap = ["-i", str(voice.resolve())], ["-map", f"{k}:a"]
         graph += f";[{k}:a]aformat=sample_rates=48000:channel_layouts=stereo,adelay=600:all=1,volume=1.5,apad[a]"
@@ -331,7 +388,11 @@ if __name__ == "__main__":
              {"w": "what", "s": 12, "e": 13}], 10, 20)
     assert "0:00:00.00,0:00:02.00,Cap,NO WAY BRO" in a and "WHAT" in a and "PlayResY: 1920" in a, a
     assert "PlayResX: 1920" in ass([], 0, 1, vertical=False)
-    assert "Dialogue: 0,0:00:00.00,0:00:10.00,Top,COPS REMEMBER YOU" in ass([], 10, 20, headline="Cops remember you")
+    a = ass([], 10, 20, headline="Cops remember you", hook="FOLLOW NOW")
+    assert r"Top,{\an8\pos(540,182)}COPS REMEMBER YOU" in a and "Hook," in a and "}FOLLOW NOW" in a, a  # hook above
+    assert r"Top,{\an8\pos(540,110)}X" in ass([], 0, 9, headline="x", hook="")  # no hook: headline on top
+    a = ass([], 0, 9, headline="x")
+    assert any(x in a for x in FOLLOW_LINES)  # random built-in line
     assert bar_height(1) == 420 and bar_height(9 / 16) == 0
     a = ass([], 0, 1, headline="x", aspect=1)
     assert "Cap,Arial Black,86,&H00FFFFFF,&H00000000,&H80000000,1,1,6,2,2,300" in a and ",8,157" in a, a  # inside the bars

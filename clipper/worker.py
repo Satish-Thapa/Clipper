@@ -440,6 +440,9 @@ def upload_clip(cid, platforms=None, force=False):
             db.log(c["job_id"], f"#{cid} not uploaded to {p} by autopilot: upload limit reached, timer ends "
                                 f"{time.strftime('%H:%M', time.localtime(limited[p]['until']))}. Upload it later from the clip card.")
             continue
+        if social.is_photo(c.get("path") or "") and p not in social.PHOTO_PLATFORMS:
+            db.log(c["job_id"], f"#{cid} not uploaded to {p}: it's a photo, and {p}'s API only posts videos")
+            continue
         if p == "instagram" and IG_MAX_SECONDS and c["end"] - c["start"] > IG_MAX_SECONDS and not force:
             db.log(c["job_id"], f"#{cid} not uploaded to instagram: {c['end'] - c['start']:.0f}s is over IG_MAX_SECONDS "
                                 f"({IG_MAX_SECONDS:.0f}s, Instagram's API rejects longer Reels right now)")

@@ -350,6 +350,7 @@ class NewsMake(BaseModel):
     at: float | None = None  # "at": first post time (seconds since 1970); the rest every `every_min` after it
     every_min: int = Field(60, ge=0, le=1440)
     run_id: int | None = None  # the Find run these stories came from: making + posting go into its log
+    format: Literal["video", "photo"] = "video"  # photo: 1080x1350 image, Facebook + Instagram only
 
 
 @app.post("/api/news/make")
@@ -364,7 +365,8 @@ def news_make(m: NewsMake):
     say = news.run_logger(rid)
     when = {"now": "post each right away", "hold": "keep them for you to post", "autopilot": "on the autopilot's slots",
             "at": f"first at {time.strftime('%d %b %H:%M', time.localtime(m.at or 0))}, then every {m.every_min} min"}[m.when]
-    say(f"▶ make {len(m.stories)} post(s) for {', '.join(m.platforms) or 'no platform'}: {when}")
+    say(f"▶ make {len(m.stories)} {m.format} post(s) for {', '.join(m.platforms) or 'no platform'}: {when}"
+        + (" (photos only go to Facebook + Instagram)" if m.format == "photo" and set(m.platforms) - {"facebook", "instagram"} else ""))
     db.update("news_runs", rid, status="making")
 
     def run():
@@ -373,7 +375,7 @@ def news_make(m: NewsMake):
                 status = {"now": "rendered", "hold": "rendered", "at": "timed", "autopilot": "scheduled"}[m.when]
                 post_at = m.at + i * m.every_min * 60 if m.when == "at" else None
                 cid = news.make_post({"age_h": None, "snippet": "", **st}, m.kind, m.platforms, m.voiceover, m.picture,
-                                     say, status=status, post_at=post_at, run_id=rid)
+                                     say, status=status, post_at=post_at, run_id=rid, fmt=m.format)
                 if cid and m.when == "now":
                     say(f"   ⬆ posting #{cid} now…")
                     worker.upload_clip(cid, m.platforms, force=True)
@@ -452,6 +454,7 @@ class AutoSettings(BaseModel):
     news_per_day: int | None = Field(None, ge=0, le=24)  # news/fact posts a day, on top of the clips
     news_kind: Literal["news", "facts", "both"] | None = None
     news_picture: bool | None = None
+    news_format: Literal["video", "photo", "both"] | None = None
 
 
 @app.get("/api/auto")
