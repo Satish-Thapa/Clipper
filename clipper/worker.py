@@ -1,5 +1,6 @@
 """Background pipeline: download/record -> signals -> transcribe -> DeepSeek pick -> render -> upload."""
 import json
+import subprocess
 from pathlib import Path
 import threading
 import time
@@ -74,7 +75,7 @@ def drop_sources(job_id):
     if KEEP_SOURCES:
         return
     freed = 0
-    for f in [*(DATA / "jobs" / str(job_id)).glob("source.*"), *(DATA / "jobs" / str(job_id)).glob("live_*.ts")]:
+    for f in [*(DATA / "jobs" / str(job_id)).glob("source.*"), *(DATA / "jobs" / str(job_id)).glob("live_*")]:
         try:
             size = f.stat().st_size
             f.unlink()
@@ -106,7 +107,9 @@ def _vod(job, i, d):
             download.download_vod(url, d / "source.%(ext)s", h)
         with db.step(jid, "waiting for comments + chat replay"):
             comments = download.comment_times(meta.result().get("comments"))
-            chat = chat.result()
+            chat, chat_err = chat.result()
+        if chat_err:
+            db.log(jid, f"chat replay not read: {chat_err}")
     db.log(jid, f"heatmap: {'yes' if i.get('heatmap') else 'no'}, chat msgs: {len(chat)}, timestamped comments: {len(comments)}")
     src = next(d.glob("source.*"))
     db.log(jid, f"source file: {src.name}, {src.stat().st_size / 1e6:.0f} MB, {_describe(src)}")
@@ -164,23 +167,36 @@ def _live(job, i, d):
         if not out.exists() or out.stat().st_size == 0:  # ffmpeg produced nothing: stream died mid-chunk
             break
         db.log(jid, f"chunk {k + 1} recorded in {time.time() - t0:.0f}s ({out.stat().st_size / 1e6:.0f} MB), "
-                    f"chat msgs so far: {len(chat.times)}, processing in background")
+                    f"chat msgs so far: {len(chat.times)}"
+                    + (f" (live chat not readable: {chat.error})" if chat.error else "") + ", processing in background")
 
         # ponytail: chunks are processed independently, so a moment straddling a boundary gets split.
         # Upgrade: overlap chunks by ~60s.
 
-        # Convert ALL chat timestamps so far to seconds relative to this chunk's start. Messages from earlier
-        # chunks become negative and later ones fall past the end; signals.counts() simply ignores both.
-        times = [t - t0 for t in chat.times]
+        # From the 2nd piece on, process it together with the last JOIN_SECONDS of the previous piece, so a moment
+        # cut in half by the boundary can become one clip (joined across exactly two pieces, never more).
+        src, boundary = out, 0
+        if k > 0:
+            try:
+                src, boundary = _join_tail(d / f"live_{k - 1:04d}.ts", out, d / f"live_join_{k:04d}.mp4")
+            except Exception as e:
+                db.log(jid, f"[piece {k + 1}] couldn't join the previous piece's end ({e!r}), processing this piece alone")
+        # Chat timestamps -> seconds into `src` (which starts `boundary` seconds before this piece). Messages outside
+        # it become negative / past the end; signals.counts() ignores those.
+        times = [t - (t0 - boundary) for t in chat.times]
 
         # Hand the chunk to _process in a background thread (same pipeline as a VOD: loudness + chat ->
         # hype curve -> transcribe -> DeepSeek -> render -> upload), then immediately go record the next chunk.
         # Transcription is behind a lock in transcribe.py, so chunks queue up there instead of fighting for CPU.
         job = db.get("jobs", jid)  # clips-per-piece changed while this piece recorded apply to it too
-        w = threading.Thread(target=_process, args=(job, out, f"{i.get('title', '')} (part {k + 1})", d),
-                             kwargs={"chat": times}, daemon=True)
+        w = threading.Thread(target=_process, args=(job, src, f"{i.get('title', '')} (part {k + 1})", d),
+                             kwargs={"chat": times, "live": {"piece": k + 1, "boundary": boundary}}, daemon=True)
         w.start()
         workers.append(w)
+        busy = [x for x in workers if x.is_alive()]
+        db.log(jid, f"[piece {k + 1}] processing in the background"
+                    + (f" with the previous piece's last {boundary:.0f}s joined in front" if boundary else "")
+                    + f"; {len(busy)} piece(s) being processed at once while the next one records")
         k += 1
 
     # Stream is over (or Stop was pressed). Setting stop also ends the chat thread: it checks the flag after
@@ -193,7 +209,25 @@ def _live(job, i, d):
     return stopped
 
 
-def _process(job, src, title, d, heatmap=None, chat=None, comments=None):
+JOIN_SECONDS = 60  # live: how much of the previous piece's end is put in front of the next piece
+
+
+def _join_tail(prev, cur, out):
+    """[last JOIN_SECONDS of prev] + [cur] -> out (no re-encode). -> (out, seconds of prev at its start)."""
+    from .config import FFMPEG
+    dur = lambda f: float(subprocess.run([render.FFPROBE, "-v", "error", "-show_entries", "format=duration", "-of",
+                                          "csv=p=0", str(f)], capture_output=True, text=True).stdout.strip() or 0)
+    pd = dur(prev)
+    tail = min(JOIN_SECONDS, pd / 2)
+    lst = out.with_suffix(".txt")
+    lst.write_text(f"file '{prev.name}'\ninpoint {max(0, pd - tail):.2f}\nfile '{cur.name}'\n", encoding="utf-8")
+    subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", lst.name, "-c", "copy",
+                    "-avoid_negative_ts", "make_zero", out.name], check=True, cwd=out.parent, capture_output=True)
+    lst.unlink(missing_ok=True)
+    return out, max(0.0, dur(out) - dur(cur))  # keyframes: the real tail can be a little longer than asked
+
+
+def _process(job, src, title, d, heatmap=None, chat=None, comments=None, live=None):
     """Turn one video file (a whole VOD, or one recorded live chunk) into rendered clips.
 
     heatmap/chat/comments are optional audience signals (live chunks only have chat).
@@ -205,12 +239,19 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None):
     """
     jid = job["id"]
     mode = job.get("mode") or "hype"
+    # live = {"piece": N, "boundary": seconds} for a live piece: the first `boundary` seconds of `src` are the end of
+    # the previous piece (so a moment cut in half can be joined), and DeepSeek may skip the piece.
+    tag = f"[piece {live['piece']}] " if live else ""
+    B = live["boundary"] if live else 0
+
+    def say(m):
+        db.log(jid, tag + m)
     try:
         # STEP 1: Loudness. ffmpeg's ebur128 filter measures "momentary loudness" in LUFS, the
         # broadcast unit for how loud audio *feels* to a person (not raw volume). We keep one value
         # per second, roughly -35 = calm talking, -10 = screaming/explosion, floored at -70 (silence).
         # len(audio) doubles as the video length in seconds.
-        with db.step(jid, f"STEP 1 analysing loudness of {src.name}"):
+        with db.step(jid, tag + f"STEP 1 analysing loudness of {src.name}"):
             audio = signals.loudness(src)
         n = len(audio)
 
@@ -223,10 +264,10 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None):
         #   audio    x1    loudness from step 1
         # curve[t] = how "hype" second t is. parts = each normalised signal, kept for the UI graph and the AI.
         curve, parts = signals.hype_curve(n, audio, heatmap, chat, comments)
-        db.log(jid, f"STEP 2 hype curve: {n}s analysed, signals used: {', '.join(parts) or 'none'}, mode: {mode}")
+        say(f"STEP 2 hype curve: {n}s analysed, signals used: {', '.join(parts) or 'none'}, mode: {mode}")
         _save_curves(d, src, curve, parts)  # UI can show the graph while we keep working
         if mode == "manual":
-            db.log(jid, "manual mode: add your cuts in the UI")
+            say("manual mode: add your cuts in the UI")
             return
 
         # STEP 3: Candidate windows. Slide a fixed-length window (60s shorts, 120s longs) over
@@ -238,7 +279,7 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None):
         asked = {"short": job["shorts"], "long": job["longs"]}
         counts = pick.fit_counts(asked, n)
         if counts != asked:
-            db.log(jid, f"video is {n}s: making {counts['short']} short / {counts['long']} long "
+            say(f"video is {n}s: making {counts['short']} short / {counts['long']} long "
                         f"(asked {asked['short']} / {asked['long']})")
         cands = []
         for kind, count in counts.items():
@@ -248,10 +289,17 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None):
             for s, e, sig in signals.top_windows(curve, length, count * 3):
                 cands.append({"id": len(cands), "kind": kind, "start": max(0, s - pad),
                               "end": min(n, e + pad), "signal": round(sig, 3)})
+        if B:
+            before = len(cands)
+            cands = [c for c in cands if c["end"] > B + 5]
+            for i, c in enumerate(cands):
+                c["id"] = i
+            if before != len(cands):
+                say(f"{before - len(cands)} candidate window(s) lie entirely in the previous piece's last {B:.0f}s: dropped")
         if not cands:
-            db.log(jid, "video too short for requested clips")
+            say("video too short for requested clips")
             return
-        db.log(jid, f"STEP 3 candidate windows: {len(cands)} ("
+        say(f"STEP 3 candidate windows: {len(cands)} ("
                     + ", ".join(f"{c['kind']} {_mmss(c['start'])}-{_mmss(c['end'])} hype {c['signal']}" for c in cands[:12])
                     + (" ..." if len(cands) > 12 else "") + ")")
 
@@ -260,11 +308,11 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None):
         # "ai" modes: the whole video, so DeepSeek can find moments the curves missed. Slow on long videos.
         spans = [[0, n]] if mode != "hype" else transcribe.merge([(c["start"], c["end"]) for c in cands])
         words = []
-        with db.step(jid, f"STEP 4 transcribing {sum(e - s for s, e in spans):.0f}s in {len(spans)} part(s) "
+        with db.step(jid, tag + f"STEP 4 transcribing {sum(e - s for s, e in spans):.0f}s in {len(spans)} part(s) "
                           f"({transcribe.device()})"):
             for s, e in spans:
                 words += transcribe.words(src, s, e)
-        db.log(jid, f"transcript: {len(words)} words")
+        say(f"transcript: {len(words)} words")
         for c in cands:  # "[12.0] hello there [17.1] ..." text per window, absolute seconds
             c["transcript"] = transcribe.text_with_times(words, c["start"], c["end"])
 
@@ -272,17 +320,37 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None):
         # title/description/hashtags. Its numbers are clamped by pick.validate(). If the API fails,
         # fall back to the strongest raw hype windows so the job still produces something.
         try:
-            with db.step(jid, f"STEP 5 asking DeepSeek to pick {counts['short']} short / {counts['long']} long"):
+            with db.step(jid, tag + f"STEP 5 asking DeepSeek to pick {counts['short']} short / {counts['long']} long"):
+                note, verdict = pick.live_note(B) if live else "", {}
                 if mode == "hype":
-                    chosen = pick.choose(title, cands, counts)
+                    chosen = pick.choose(title, cands, counts, note, verdict)
                 else:
                     chosen = pick.choose_full(title, n, transcribe.text_with_times(words, 0, n),
-                                              parts if mode == "ai+hype" else None, counts)
+                                              parts if mode == "ai+hype" else None, counts, note, verdict)
         except Exception as e:
-            db.log(jid, f"DeepSeek failed ({e!r}), using raw hype windows")
+            say(f"DeepSeek failed ({e!r}), using raw hype windows")
             chosen = pick.fallback(cands, counts, title)
+        if live:  # live pieces: DeepSeek's decision, spelled out
+            kept = []
+            for c in chosen:
+                if c["end"] <= B + 3:
+                    say(f"DECISION: dropped \"{c['title']}\": it ends inside the previous piece (already covered)")
+                elif c["score"] < pick.LIVE_MIN:
+                    say(f"DECISION: dropped \"{c['title']}\": virality {c['score']:.0f} < {pick.LIVE_MIN}, not worth a clip")
+                else:
+                    kept.append(c)
+            chosen = kept
+            if not chosen:
+                say(f"DECISION: nothing worth clipping in this piece, skipped"
+                    + (f": {verdict.get('skip')}" if verdict.get("skip") else ""))
+                _save_curves(d, src, curve, parts)
+                return
+            joined = [c for c in chosen if c["start"] < B]
+            say(f"DECISION: {len(chosen)} clip(s) from this piece"
+                + (f", {len(joined)} JOINED across the previous piece and this one (starts {B - joined[0]['start']:.0f}s "
+                   f"before the boundary)" if joined else ""))
         for c in chosen:
-            db.log(jid, f"picked {c['kind']} {_mmss(c['start'])}-{_mmss(c['end'])} score {c['score']}: "
+            say(f"picked {c['kind']} {_mmss(c['start'])}-{_mmss(c['end'])} score {c['score']}: "
                         f"\"{c['title']}\" [{c.get('headline', '')}] {' '.join('#' + t for t in c['tags'])} | {c['reason']}")
         # Snap every pick out to whole sentences (AI times are guesses from coarse markers), within the
         # video and never past the hard max (YouTube rejects Shorts over 3 min).
@@ -290,7 +358,7 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None):
             s, e = transcribe.snap(words, c["start"], c["end"])
             s, e = s, min(e, n, s + pick.HARD_MAX[c["kind"]])
             if (s, e) != (c["start"], c["end"]):
-                db.log(jid, f"snapped to sentences: {_mmss(c['start'])}-{_mmss(c['end'])} -> {_mmss(s)}-{_mmss(e)} "
+                say(f"snapped to sentences: {_mmss(c['start'])}-{_mmss(c['end'])} -> {_mmss(s)}-{_mmss(e)} "
                             f"({e - s:.0f}s) \"{c['title']}\"")
             c["start"], c["end"] = s, e
         _save_curves(d, src, curve, parts, chosen)  # now with the picked clips marked on the graph
@@ -299,7 +367,7 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None):
         # headline (top) + captions (bottom) if the job asked for subtitles, then upload if auto-upload is on.
         _render_clips(job, src, d, chosen, words, job.get("subtitles", 1))
     except Exception as e:
-        db.log(jid, f"ERROR processing {src.name}: {e!r}", exc=True)
+        say(f"ERROR processing {src.name}: {e!r}", exc=True)
 
 
 def _render_clips(job, src, d, chosen, words, subtitles):

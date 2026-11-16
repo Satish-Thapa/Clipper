@@ -4,7 +4,7 @@ Clipper turns YouTube videos and live streams into short vertical clips and post
 sourced news and fact posts, and it learns from your view counts what to make next.
 
 - **Clips from any video or stream.** Paste a link or upload a file. The AI finds the best moments and renders
-  9:16 clips with a follow line and a headline at the top, captions, your logo, a "FOLLOW" end card and an optional
+  9:16 clips with a follow message and a headline at the top, captions, your logo, a "FOLLOW" end card and an optional
   voice-over.
 - **Topics.** Type "GTA 6". It finds this week's most-viewed videos on that topic, skips the ones that don't clip
   well, and clips the rest.
@@ -197,8 +197,16 @@ The **Auto** page. Flip the switch ON and set:
 
 ### Watching it
 
-- **Today:** posted / planned (clips and news), the next post, one box per slot (green = posted), waiting, being
-  made, rounds today.
+- **Today:**
+  - **Numbers:** posted / planned (clips and news), the next post, waiting, being made, rounds today.
+  - **Slots** as a list by date, in 12-hour time, each with the clip or news post that goes up there:
+    - posted ones show the time they went up and their links on each platform
+    - the **next** one is highlighted, then the upcoming ones in posting order (the waiting queue, oldest first)
+    - when posting runs late, it shows the real expected time with the original slot under it
+    - what doesn't fit today moves to tomorrow's slots
+  - **Late start:** today's slots begin from **when you switched the autopilot ON**. Switch it on at 2:00 PM with
+    10 AM-10 PM and one post every 2 h, and today runs 2, 4, 6 and 8 PM; tomorrow is a full day. It also makes only
+    that many posts for today.
 - **Activity:** every round, section by section:
   - what it learned from your views
   - the searches it ran and what they found
@@ -285,16 +293,44 @@ The **News** page:
 Paste a live stream link on **Create**. The stream is recorded in **pieces**, and each piece is clipped in the
 background while the next one records, so clips come out during the stream.
 
-- **Record it in pieces of:** 2 to 60 minutes (default `LIVE_CHUNK_SECONDS`, 10 min).
-- **Pieces to clip:** stop after N pieces, or 0 to go on until the stream ends or you press Stop. The form says what
-  that means, e.g. *"6 pieces (1 h of stream, up to 24 clips)"*.
-- **Shorts / Long** are **per piece**.
-- **While it records**, the job card on **Jobs** shows "piece 3 of 6" with live controls for piece length, pieces
-  to clip and clips per piece. Clip counts apply to the piece being recorded; length applies from the next piece.
+```
+record piece 1 ──▶ record piece 2 ──▶ record piece 3 ──▶ ...      (live chat collected the whole time)
+      │                  │                  │
+      ▼                  ▼                  ▼
+  process 1      [last 60s of 1 + 2]  [last 60s of 2 + 3]        (several pieces processed at once)
+      │                  │                  │
+ DeepSeek: clips   clips / JOINED clip   clips / SKIP (nothing worth it)
+```
 
-Live streams have no "most replayed" heatmap or comments yet, so moments come from chat speed and loudness.
+- **Settings per job.** Record it in pieces of 2-60 minutes (default `LIVE_CHUNK_SECONDS`, 10 min), and clip N
+  pieces, or 0 to go on until the stream ends or you press Stop.
+  - **Shorts / Long are a maximum per piece.** The form says what that means, e.g. *"6 pieces (1 h of stream, up
+    to 24 clips)"*.
+  - **While it records,** the job card on **Jobs** shows "piece 3 of 6" with live controls for piece length, pieces
+    to clip and clips per piece. Clip counts apply to the piece being recorded; length applies from the next piece.
+- **Live chat.** Every chat message is timestamped as it arrives (through yt-dlp, using your YouTube cookies).
+  Chat speed is the strongest signal on a live stream, alongside loudness; there's no "most replayed" heatmap or
+  comments yet. Each piece's log says how many chat messages it got. If chat can't be read, it says why, and the
+  piece is clipped on loudness only.
+- **Skipping dull pieces.** For live pieces the clip counts are a maximum, not a quota.
+  - If DeepSeek finds nothing worth clipping (menus, waiting, chatting about nothing), it makes **no clips** and the
+    log says why: `[piece 3] DECISION: nothing worth clipping in this piece, skipped: only menus and silence`.
+  - Picks scoring below 55 are dropped too.
+- **Moments split between two pieces.** From the 2nd piece on, each piece is processed together with the **last 60
+  seconds of the previous piece**.
+  - DeepSeek knows that part was already covered, so a clip may start there only if the moment continues into the
+    new piece. That makes **one clip joined across exactly two pieces**, never more.
+  - Clips that would end inside the previous piece are dropped as duplicates.
+  - Log: `[piece 2] DECISION: 1 clip(s) from this piece, 1 JOINED across the previous piece and this one (starts 8s
+    before the boundary)`.
+- **In parallel.** Each recorded piece is processed in its own thread while the next one records, so several pieces
+  can be in progress at once (the log says how many). Only Whisper transcription takes turns, one piece at a time on
+  the GPU.
+- **Decisions in the log.** Every line from a piece starts with `[piece N]`: what it analysed, the candidates, what
+  DeepSeek picked (score, title, why), what was dropped and why, joins and skips.
+- **Cleanup.** The recordings and the joined pieces are deleted when the job ends.
 
----
+Past streams (replays) work like normal videos, and their chat replay (via yt-dlp) is used as a signal too.
 
 ## What works (analytics) and reports
 
@@ -524,7 +560,7 @@ It uses Meta's official **WhatsApp Cloud API**, from the same Meta app.
 | `CROP_ASPECT` | 1 | default framing (0.5625 = full 9:16 ... 1.78 = whole frame) |
 | `LOGO` | `clipper/assets/logo.png` | watermark; empty = none |
 | `END_CARD` | `FOLLOW` | animated end card; `\|` = new line, last line on the red box; empty = off |
-| `FOLLOW_LINE` | empty | the line above the headline that pushes viewers to follow; empty = one of 6 built-in lines at random per clip ("FOLLOW OR YOU'LL MISS PART 2", "FOLLOW NOW, THANK ME LATER", "NOT FOLLOWING YET? FIX THAT", "FOLLOW FOR DAILY CLIPS LIKE THIS", "SMASH FOLLOW BEFORE YOU SCROLL", "REAL ONES FOLLOW") |
+| `FOLLOW_LINE` | empty | the message above the headline asking viewers to follow; empty = the 5 built-in messages in turn ("I'm working hard to make these videos. One follow from you would mean the world ❤️", "Please break your scrolling streak for 2 seconds and hit follow…", …), one per clip, carrying on after restarts |
 | `VOICE` | system default | voice-over voice (Windows SAPI / macOS `say` name) |
 | `LIVE_CHUNK_SECONDS` | 600 | default live piece length |
 | `KEEP_SOURCES` | 0 | 1 = keep source videos after clipping |
@@ -593,7 +629,7 @@ Autopilot settings are set on the Auto page (stored in the database), not in `.e
    headline, description, hashtags and why. `validate()` clamps everything to the windows and length limits; if
    DeepSeek fails, the raw windows are used.
 6. **Render** (2 at a time).
-   - Framing crop → 1080x1920, then the follow line (red box) above the headline (yellow box), captions (3 words at
+   - Framing crop → 1080x1920, then the follow message (red box, wrapped over 2-3 lines; the 5 messages take turns) above the headline (yellow box), captions (3 words at
      a time), the logo and the voice-over (ducked under the original audio).
    - The animated end card, encoded with NVENC (18 Mbps max) or x264.
    - Output: `data/jobs/<job>/clips/<clip>.mp4`.

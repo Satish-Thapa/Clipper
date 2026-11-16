@@ -148,18 +148,43 @@ Clips of the same kind must not overlap. A SHORT and a LONG MAY reuse the same m
 best moment AND a long with the bigger story around it), but only for the very best moments."""
 
 
-def choose(title, candidates, counts):
-    """hype mode. candidates: [{id, kind, start, end, signal, transcript}] -> list of clip dicts."""
-    task = WINDOWS_TASK.format(title=title, pick=pick_text(counts), candidates=json.dumps(candidates, indent=1))
-    return validate(_ask(task), candidates, counts)
+LIVE_MIN = 55  # live pieces: picks DeepSeek scores below this are dropped (a dull piece makes no clips)
 
 
-def choose_full(title, n, transcript, parts, counts):
+def live_note(boundary):
+    """Extra instructions for one piece of a live stream. boundary = seconds at the start that are the END of the
+    previous piece (0 for the first piece)."""
+    note = (f"\nThis is one piece of a LIVE stream, not a whole video. The counts above are a MAXIMUM, not a quota: "
+            f"only pick moments that are genuinely worth a clip (virality {LIVE_MIN}+). If nothing in this piece is worth "
+            f"clipping (dead air, menus, waiting, chatting about nothing), return no clips and say why in \"skip\": "
+            f'{{"clips": [], "skip": "why"}}.')
+    if boundary:
+        note += (f"\nThe first {boundary:.0f} seconds (0-{boundary:.0f}s) are the END of the PREVIOUS piece, which was "
+                 f"already clipped. Only use that part for a moment that STARTS there and CONTINUES past {boundary:.0f}s "
+                 f"(it was cut in half between the two pieces): then the clip may start before {boundary:.0f}s; say "
+                 f"\"JOINED:\" at the start of its reason. Never pick a clip that ends before {boundary + 3:.0f}s.")
+    return note
+
+
+def choose(title, candidates, counts, note="", out=None):
+    """hype mode. candidates: [{id, kind, start, end, signal, transcript}] -> list of clip dicts.
+    note: extra instructions (live pieces); out: dict that receives DeepSeek's "skip" reason, if any."""
+    task = WINDOWS_TASK.format(title=title, pick=pick_text(counts), candidates=json.dumps(candidates, indent=1)) + note
+    r = _ask(task, full=True)
+    if out is not None:
+        out["skip"] = str(r.get("skip") or "")[:300]
+    return validate(r.get("clips") or [], candidates, counts)
+
+
+def choose_full(title, n, transcript, parts, counts, note="", out=None):
     """ai modes. transcript: whole video with [sec] markers. parts: {signal: 0..1 per second} or None."""
     # ponytail: whole transcript in one request; a 3h video is ~40k tokens. Chunk it if videos get much longer.
     signals = SIGNALS_HINT.format(step=10, names=" ".join(parts), table=curve_table(parts, n)) if parts else NO_SIGNALS
-    task = FULL_TASK.format(title=title, n=n, pick=pick_text(counts), signals=signals, transcript=transcript)
-    clips = _ask(task)
+    task = FULL_TASK.format(title=title, n=n, pick=pick_text(counts), signals=signals, transcript=transcript) + note
+    r = _ask(task, full=True)
+    if out is not None:
+        out["skip"] = str(r.get("skip") or "")[:300]
+    clips = r.get("clips") or []
     for c in clips:
         if isinstance(c, dict):
             c["candidate"] = 0  # one "candidate" = the whole video, so validate() only clamps to [0, n]
@@ -279,8 +304,9 @@ def balance():
     return value
 
 
-def _ask(task, system=SYSTEM, key="clips"):
-    """Send one request to DeepSeek (OpenAI-compatible API) in JSON mode; return the raw `key` list."""
+def _ask(task, system=SYSTEM, key="clips", full=False):
+    """Send one request to DeepSeek (OpenAI-compatible API) in JSON mode; return the raw `key` list
+    (full=True: the whole answer as a dict)."""
     if not DEEPSEEK_API_KEY:
         raise RuntimeError("DEEPSEEK_API_KEY missing in .env")
     client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
@@ -289,7 +315,10 @@ def _ask(task, system=SYSTEM, key="clips"):
         response_format={"type": "json_object"},  # forces valid JSON back
         messages=[{"role": "system", "content": system}, {"role": "user", "content": task}],
     )
-    return json.loads(r.choices[0].message.content).get(key, [])
+    answer = json.loads(r.choices[0].message.content)
+    if full:
+        return answer if isinstance(answer, dict) else {}
+    return answer.get(key, [])
 
 
 def validate(clips, candidates, counts):

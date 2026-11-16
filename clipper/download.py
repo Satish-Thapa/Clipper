@@ -1,9 +1,13 @@
 """Everything that talks to YouTube for input: metadata, video, chat, comments."""
+import json
 import re
 import subprocess
+import sys
+import tempfile
 import threading
 import time
 import urllib.parse
+from pathlib import Path
 
 import yt_dlp
 
@@ -103,31 +107,93 @@ def record_live_chunk(url, out_path, seconds, stop, height=1080):
     return True
 
 
-def chat_replay_times(url):
-    """Seconds-into-video of every chat message in a past stream's replay ([] if none)."""
-    from chat_downloader import ChatDownloader
+# Chat comes from yt-dlp's "live_chat" subtitle track: one JSON line per chat event, for a live stream (followed
+# while it runs) and for a past stream's replay. Only real messages count (text, Super Chats, memberships, gifts),
+# not YouTube's placeholders / banners / "welcome" notices.
+MESSAGE = ("TextMessage", "PaidMessage", "PaidSticker", "Membership", "gift", "Gift")
+
+
+def chat_events(line):
+    """One live_chat.json line -> [(wall-clock seconds or None, seconds into the video or None)] of its messages."""
     try:
-        return [m["time_in_seconds"] for m in ChatDownloader().get_chat(url) if m.get("time_in_seconds", -1) >= 0]
-    except Exception:
+        d = json.loads(line)
+    except ValueError:
         return []
+    r = d.get("replayChatItemAction", d) if isinstance(d, dict) else {}
+    offset = r.get("videoOffsetTimeMsec")
+    out = []
+    for a in r.get("actions", []):
+        add = a.get("addChatItemAction") if isinstance(a, dict) else None
+        for kind, item in ((add or {}).get("item") or {}).items():
+            if isinstance(item, dict) and any(m in kind for m in MESSAGE):
+                ts = item.get("timestampUsec")
+                out.append((int(ts) / 1e6 if ts else None, int(offset) / 1000 if offset else None))
+    return out
+
+
+def _chat_cmd(url, out):
+    cookies = (["--cookies-from-browser", YT_COOKIES_FROM_BROWSER] if YT_COOKIES_FROM_BROWSER
+               else ["--cookies", str(YT_COOKIES)] if YT_COOKIES.exists() else [])
+    return [sys.executable, "-m", "yt_dlp", "--quiet", "--no-warnings", "--skip-download", "--write-subs",
+            "--sub-langs", "live_chat", *cookies, "-o", str(out), url]
+
+
+def chat_replay_times(url, timeout=900):
+    """Seconds-into-video of every chat message in a past stream's replay ([] if the video has no chat).
+    -> (times, error or None)."""
+    with tempfile.TemporaryDirectory() as d:
+        try:
+            p = subprocess.run(_chat_cmd(url, Path(d) / "chat"), capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return [], f"chat replay took over {timeout // 60} min, skipped"
+        files = list(Path(d).glob("chat*.json*"))
+        if not files:
+            err = (p.stderr or "").strip().splitlines()
+            return [], (err[-1][:200] if err and p.returncode else None)  # None = the video simply has no chat
+        times = []
+        with open(files[0], encoding="utf-8", errors="replace") as f:
+            for line in f:
+                times += [o for _, o in chat_events(line) if o is not None and o >= 0]
+        return times, None
 
 
 class LiveChat(threading.Thread):
-    """Collects wall-clock timestamps of live chat messages until stopped."""
+    """Collects the wall-clock time of every live chat message until `stop` is set: yt-dlp follows the chat into a
+    file in the background, and this thread reads the new lines every 2 seconds. `error` says why if it couldn't."""
 
     def __init__(self, url, stop):
         super().__init__(daemon=True)
-        self.url, self.stop, self.times = url, stop, []
+        self.url, self.stop, self.times, self.error = url, stop, [], None
 
     def run(self):
-        from chat_downloader import ChatDownloader
-        try:
-            for m in ChatDownloader().get_chat(self.url):
-                self.times.append(m.get("timestamp", time.time() * 1e6) / 1e6)
-                if self.stop.is_set():
-                    return
-        except Exception:
-            pass  # ponytail: chat is a bonus signal; audio still works without it
+        with tempfile.TemporaryDirectory() as d:
+            p = subprocess.Popen(_chat_cmd(self.url, Path(d) / "chat"), stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.PIPE, text=True)
+            pos = {}  # file -> bytes already read (yt-dlp writes .part, then renames it when the stream ends)
+            try:
+                while True:
+                    for f in Path(d).glob("chat*.json*"):
+                        try:
+                            with open(f, "rb") as fh:
+                                fh.seek(pos.get(f.name, 0))
+                                data = fh.read()
+                        except OSError:
+                            continue
+                        done = data.rfind(b"\n") + 1  # only complete lines; the rest is read next time
+                        pos[f.name] = pos.get(f.name, 0) + done
+                        for line in data[:done].decode("utf-8", "replace").splitlines():
+                            self.times += [t if t else time.time() for t, _ in chat_events(line)]
+                    if self.stop.wait(2) or p.poll() is not None:
+                        break
+                if p.poll() is not None and p.returncode and not self.times:
+                    self.error = ((p.stderr.read() or "").strip().splitlines() or ["yt-dlp exited"])[-1][:200]
+            finally:
+                if p.poll() is None:
+                    p.terminate()
+                    try:
+                        p.wait(10)
+                    except subprocess.TimeoutExpired:
+                        p.kill()
 
 
 TS = re.compile(r"\b(?:(\d{1,2}):)?(\d{1,2}):(\d{2})\b")

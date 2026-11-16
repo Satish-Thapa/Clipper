@@ -102,6 +102,7 @@
   .nrun { border:1px solid var(--line); border-radius:10px; padding:8px 12px; margin-bottom:10px; background:var(--bg); }
   .nrun > summary { font-size:14px; color:var(--text); }
   .nrun pre { max-height:420px; color:var(--text); }
+  .plan-t tr.next td { background:rgba(255,46,136,.08); } .plan-t tr.posted td { opacity:.75; }
   .ap-top { display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
   .switch { position:relative; width:58px; height:32px; flex:none; cursor:pointer; }
   .switch input { opacity:0; width:0; height:0; }
@@ -641,11 +642,12 @@ function tick() {
 setInterval(tick, 1000);
 
 // ---- Autopilot ----
-const hh = h => `${String(h).padStart(2, "0")}:00`;
+const hh = h => h % 24 === 0 ? "12 AM" : h === 12 ? "12 PM" : h < 12 ? `${h} AM` : `${h - 12} PM`;  // 12-hour
 $("#af").hour.innerHTML = Array.from({length: 24}, (_, h) => `<option value="${h}">${hh(h)}</option>`).join("");
 $("#af").post_from.innerHTML = Array.from({length: 24}, (_, h) => `<option value="${h}">${hh(h)}</option>`).join("");
 $("#af").post_to.innerHTML = Array.from({length: 24}, (_, h) => `<option value="${h + 1}">${h + 1 === 24 ? "midnight" : hh(h + 1)}</option>`).join("");
-const clock = t => new Date(t * 1000).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"});
+const clock = t => new Date(t * 1000).toLocaleTimeString([], {hour: "numeric", minute: "2-digit", hour12: true});
+const dayName = t => new Date(t * 1000).toLocaleDateString([], {weekday: "short", day: "numeric", month: "short", year: "numeric"});
 const dur = m => m >= 60 ? `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ""}` : `${m} min`;
 let autoLoaded = false, autoSt = null;
 const AUTO_KEYS = ["niche", "posts_per_day", "news_per_day", "news_kind", "news_format", "post_from", "post_to", "shorts", "longs", "choosy", "hour", "mode"];
@@ -711,22 +713,39 @@ function showAuto(st, s) {
       ${allLim ? "It resumes by itself when the timers end." : "The autopilot skips it until then."}</div>` : "");
   // today: slots + numbers
   const [w0, w1] = sc.window, every = (w1 - w0) / sc.posts_per_day;
-  const slots = Array.from({length: sc.posts_per_day}, (_, i) => w0 + i * every);
-  const nextIdx = sc.posted_today < sc.posts_per_day && now < w1 ? sc.posted_today : -1;
-  const nextTxt = !a.enabled ? "off" : !st.scheduled ? (sc.posted_today >= sc.posts_per_day ? "done for today" : "waiting for clips")
+  const nextTxt = !a.enabled ? "off" : !st.scheduled ? (sc.posted_today >= sc.slots.length ? "done for today" : "waiting for clips")
     : sc.next_at - now < 60 ? "any moment" : (sc.next_at > w1 ? "tomorrow " : "") + clock(sc.next_at);
   $("#apToday").innerHTML = `<div class="stats">
-      <div><b>${sc.posted_today} / ${sc.posts_per_day}</b>posted today${a.news_per_day ? ` <span style="font-size:11px">(${st.clips_today} clips · ${st.news_today} news)</span>` : ""}</div>
+      <div><b>${sc.posted_today} / ${sc.slots.length}</b>posted today${a.news_per_day ? ` <span style="font-size:11px">(${st.clips_today} clips · ${st.news_today} news)</span>` : ""}</div>
       <div><b>${nextTxt}</b>next post</div>
       <div><b>${st.scheduled + (st.news_waiting || 0)}</b>waiting${st.news_waiting ? ` <span style="font-size:11px">(${st.news_waiting} news)</span>` : ""}</div>
       <div><b>${st.coming ? "~" + st.coming : 0}</b>clips being made</div>
       <div><b>${st.need + (st.news_need || 0)}</b>still to find today</div>
       <div><b>${st.rounds_today} / ${st.max_rounds}</b>rounds today</div></div>
-    <div class="slots">${slots.map((t, i) => `<span class="${i < sc.posted_today ? "done" : i === nextIdx ? "next" : ""}"
-      title="slot ${i + 1}">${clock(t)}</span>`).join("")}</div>
-    <div class="dim" style="font-size:12px">Each box is a posting slot (green = posted). A clip goes up on its slot when one is ready;
-      if clips run late, it catches up, never posting closer than half a gap apart.</div>`;
+    ${sc.started > w0 ? `<div class="dim" style="font-size:12px;margin-top:8px">Started ${dayName(sc.started)}, ${clock(sc.started)}: today's slots begin then.</div>` : ""}
+    ${planHtml(st.plan || [], a)}
+    <div class="dim" style="font-size:12px">A post goes up on its slot when a clip is ready. If clips run late it catches up,
+      never posting closer than half a gap apart. Upcoming posts follow the waiting queue (oldest first).</div>`;
   renderActivity(st, s);
+}
+function planHtml(plan, a) {
+  if (!plan.length) return `<p class="empty">No slots left today.</p>`;
+  let day = "", rows = "";
+  for (const p of plan) {
+    const d = dayName(p.at);
+    if (d !== day) { day = d; rows += `<tr><th colspan="3" style="padding-top:10px">📅 ${d}${p.state === "tomorrow" ? " (tomorrow)" : ""}</th></tr>`; }
+    const c = p.clip, up = c ? JSON.parse(c.uploads || "{}") : {};
+    const links = Object.entries(up).map(([k, u]) => u.id ? `<a href="${esc(u.url)}" target="_blank" class="ok">✓ ${PLATFORMS[k]}</a>`
+      : `<span class="no" title="${esc(u.error)}">✕ ${PLATFORMS[k]}</span>`).join(" ");
+    const icon = c ? (["news", "fact"].includes(c.kind) ? (c.kind === "fact" ? "💡" : "📰") : "🎬") : "";
+    const state = {posted: `<span class="ok">✓ posted ${clock(p.at)}</span>`, next: `<b style="color:var(--hot)">▶ next</b>`,
+                   upcoming: `<span class="dim">upcoming</span>`, tomorrow: `<span class="dim">tomorrow</span>`}[p.state];
+    rows += `<tr class="${p.state}"><td style="white-space:nowrap"><b>${clock(p.at)}</b>${p.state !== "posted" && Math.abs(p.at - p.slot) > 120 ? `<br><span class="dim" style="font-size:11px">slot ${clock(p.slot)}</span>` : ""}</td>
+      <td>${c ? `${icon} ${esc(c.title)}${c.headline ? ` <span class="dim">· ${esc(c.headline)}</span>` : ""} <span class="dim">#${c.id}</span> ${links}`
+        : p.state === "posted" ? `<span class="dim">(clip details not recorded)</span>` : `<span class="dim">${a.enabled ? "waiting for a clip to be made" : "—"}</span>`}</td>
+      <td style="white-space:nowrap">${state}</td></tr>`;
+  }
+  return `<div class="act" style="margin:12px 0 8px"><table class="plan-t">${rows}</table></div>`;
 }
 async function loadAuto(s) {
   const st = await (await fetch("/api/auto")).json();

@@ -64,7 +64,10 @@ def settings():
 
 def save(new):
     """Save settings and apply them to what's already in flight (queued/running topics, unfinished jobs)."""
+    was_on = settings()["enabled"]
     s = {**settings(), **{k: v for k, v in new.items() if k in DEFAULTS}}
+    if s["enabled"] and not was_on:  # switched ON now: today's slots start from here
+        db.set_setting("auto_started_at", str(time.time()))
     s["post_from"] = min(max(int(s["post_from"]), 0), 23)
     s["post_to"] = min(max(int(s["post_to"]), s["post_from"] + 1), 24)
     db.set_setting("auto", json.dumps(s))
@@ -92,10 +95,13 @@ def _day_start(now):
     return time.mktime(time.localtime(now)[:3] + (0, 0, 0, 0, 0, -1))
 
 
-def _post_log():
-    """[(time, kind)] of every autopilot post (older entries are bare times = clips)."""
-    return [(p, "clip") if isinstance(p, (int, float)) else (p[0], p[1])
-            for p in json.loads(db.get_setting("auto_posts") or "[]")]
+def _post_log(with_clip=False):
+    """[(time, kind)] of every autopilot post (older entries are bare times = clips); with_clip: + the clip id."""
+    out = []
+    for p in json.loads(db.get_setting("auto_posts") or "[]"):
+        t, k, cid = (p, "clip", None) if isinstance(p, (int, float)) else (p[0], p[1], p[2] if len(p) > 2 else None)
+        out.append((t, k, cid) if with_clip else (t, k))
+    return out
 
 
 def _posts():
@@ -109,16 +115,58 @@ def schedule(s, now=None, posts=None):
     n, day = max(1, int(s["posts_per_day"]) + int(s.get("news_per_day") or 0)), _day_start(now)
     w0, w1 = day + int(s["post_from"]) * 3600, day + int(s["post_to"]) * 3600
     every = (w1 - w0) / n
+    # Switched ON today, after the window opened: today's slots start then (same spacing, so fewer of them).
+    started = float(db.get_setting("auto_started_at") or 0)
+    start = started if w0 < started < w1 else w0
+    slots = [start + i * every for i in range(n) if start + i * every < w1]
     today = [p for p in posts if p >= day]
     last = max(posts) if posts else 0
-    due = 0 if now < w0 else min(n, int((min(now, w1) - w0) // every) + 1)
-    if len(today) >= n or now >= w1:
+    due = len([t for t in slots if t <= now])
+    if len(today) >= len(slots) or now >= w1:
         nxt = w0 + 86400  # done for today / window over: tomorrow's first slot
     else:
-        nxt = max(w0 + len(today) * every, last + every / 2, now)  # its slot, never closer than half a gap
+        nxt = max(slots[len(today)], last + every / 2, now)  # its slot, never closer than half a gap
         nxt = nxt if nxt < w1 else w0 + 86400
     return {"posts_per_day": n, "window": [w0, w1], "every_min": round(every / 60), "posted_today": len(today),
-            "due": due, "next_at": nxt, "can_post_now": len(today) < due and now >= last + every / 2 and now < w1}
+            "slots": slots, "started": start, "due": due, "next_at": nxt,
+            "can_post_now": len(today) < due and now >= last + every / 2 and now < w1}
+
+
+def _share(s, kinds):
+    """How many of today's slots belong to clips / news (fewer slots when switched on late in the day)."""
+    n = max(1, int(s["posts_per_day"]) + int(s.get("news_per_day") or 0))
+    k = int(s["posts_per_day"]) if kinds == "clips" else int(s.get("news_per_day") or 0)
+    return round(k * len(schedule(s)["slots"]) / n)
+
+
+def slot_plan(s=None, now=None):
+    """Every slot of today (and tomorrow's, for clips left over) with the clip/post that goes up in it:
+    posted ones from the post log, upcoming ones = the waiting queue in posting order."""
+    s = s or settings()
+    now = now or time.time()
+    sch = schedule(s, now)
+    day = _day_start(now)
+    done = [(t, cid) for t, _, cid in _post_log(with_clip=True) if t >= day]
+    queue = list(reversed(db.all("clips", "status='scheduled'")))  # oldest first, like upload_tick
+    info = lambda c: c and {"id": c["id"], "title": c["title"], "headline": c.get("headline"), "kind": c["kind"],
+                            "path": c.get("path"), "uploads": c.get("uploads")}
+    out, every = [], sch["every_min"] * 60
+    w0, w1 = sch["window"]
+    prev = done[-1][0] if done else 0
+    for i, t in enumerate(sch["slots"]):
+        if i < len(done):
+            out.append({"at": done[i][0], "slot": t, "state": "posted", "clip": info(db.get("clips", done[i][1]) if done[i][1] else None)})
+            continue
+        at = max(t, prev + every / 2, now)  # when it will really go up (catching up never posts closer than half a gap)
+        if at >= w1:
+            break  # no room left today: it moves to tomorrow
+        out.append({"at": at, "slot": t, "state": "next" if i == len(done) else "upcoming",
+                    "clip": info(queue.pop(0)) if queue else None})
+        prev = at
+    for i in range(min(len(queue), sch["posts_per_day"])):  # waiting clips that don't fit today: tomorrow's slots
+        t = w0 + 86400 + i * every
+        out.append({"at": t, "slot": t, "state": "tomorrow", "clip": info(queue.pop(0))})
+    return out
 
 
 def _today(kinds):
@@ -133,7 +181,7 @@ def news_waiting():
 def news_need(s=None):
     """News/fact posts today still needs that aren't posted or waiting."""
     s = s or settings()
-    return max(0, int(s.get("news_per_day") or 0) - _today("news") - news_waiting())
+    return max(0, _share(s, "news") - _today("news") - news_waiting())
 
 
 def pipeline():
@@ -151,7 +199,7 @@ def need(s=None):
     """Clips today still needs that aren't posted, waiting or being made."""
     s = s or settings()
     waiting, coming = pipeline()
-    return max(0, int(s["posts_per_day"]) - _today("clips") - waiting - coming)
+    return max(0, _share(s, "clips") - _today("clips") - waiting - coming)
 
 
 def bot_paused():
@@ -170,7 +218,8 @@ def status():
             "coming": coming, "need": need(s), "max_rounds": MAX_ROUNDS, "news_waiting": news_waiting(),
             "news_need": news_need(s), "news_today": _today("news"), "clips_today": _today("clips"),
             "rounds_today": len([r for r in rounds(MAX_ROUNDS + 5) if r.get("day") == today and r.get("topics")]),
-            "bot_check": bot_paused(), "cookies": download.cookies_state()["source"], "learned": insights.learned()}
+            "bot_check": bot_paused(), "cookies": download.cookies_state()["source"], "learned": insights.learned(),
+            "plan": slot_plan(s)}
 
 
 def upload_tick(now=None):
@@ -191,8 +240,8 @@ def upload_tick(now=None):
         total = max(1, int(s["posts_per_day"]) + int(s.get("news_per_day") or 0))
         want_news = _today("news") < round((_today("news") + _today("clips") + 1) * int(s.get("news_per_day") or 0) / total)
         c = next(x for x in waiting if (x["kind"] in NEWS_KINDS) == want_news)
-    log = [[t, k] for t, k in _post_log() if t > time.time() - 3 * 86400]
-    db.set_setting("auto_posts", json.dumps(log + [[time.time(), "news" if c["kind"] in NEWS_KINDS else "clip"]]))
+    log = [[t, k, cid] for t, k, cid in _post_log(with_clip=True) if t > time.time() - 3 * 86400]
+    db.set_setting("auto_posts", json.dumps(log + [[time.time(), "news" if c["kind"] in NEWS_KINDS else "clip", c["id"]]]))
     db.log(c["job_id"], f"autopilot: posting #{c['id']} (post {schedule(s)['posted_today']}/{s['posts_per_day']} "
                         f"today, {len(waiting) - 1} more waiting)")
     # today's platforms, even if they changed after it was made. force: Instagram is tried even for clips over

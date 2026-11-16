@@ -13,7 +13,6 @@ dependencies = [
   "openai",
   "python-dotenv",
   "numpy",
-  "chat-downloader",
   "google-api-python-client",
   "google-auth-oauthlib",
   "httpx",
