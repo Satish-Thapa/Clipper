@@ -389,7 +389,7 @@ def _render_one(job, src, d, c, words, subtitles):
         with db.step(jid, f"STEP 6 rendering {c['kind']} #{cid} ({c['end'] - c['start']:.0f}s, {render.encoder_name()}): "
                           f"{c['title']}"):
             render.cut(src, out, c["start"], c["end"], True, words if subtitles else (),
-                       c.get("headline", "") if subtitles else "", voice, job.get("aspect"))
+                       c.get("headline", "") if subtitles else "", voice, job.get("aspect"), job.get("layout") or "")
     except Exception:
         db.update("clips", cid, status="render failed")
         raise

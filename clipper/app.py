@@ -1,4 +1,5 @@
 import json
+import re
 import threading
 import time
 from pathlib import Path
@@ -41,6 +42,7 @@ class NewJob(BaseModel):
     longs: int = Field(1, ge=0, le=10)
     platforms: list[Platform] = ["youtube"]  # where finished clips are uploaded; [] = don't upload
     aspect: float = Field(CROP_ASPECT, ge=0.56, le=1.78)  # framing: kept w/h of the frame (0.5625 = fills the phone)
+    layout: str = Field("", max_length=200, pattern=r"^(split:[^/\\\\:*?\"<>|]+)?$")  # "split:<file>" = clip on top, that background video below
     hq: bool = False  # download up to 4K instead of 1080p (slower)
     mode: Mode = "hype"
     subtitles: bool = True
@@ -64,6 +66,7 @@ class NewTopic(BaseModel):
     longs: int = Field(1, ge=0, le=10)   # per video
     platforms: list[Platform] = []
     aspect: float = Field(CROP_ASPECT, ge=0.56, le=1.78)
+    layout: str = Field("", max_length=200, pattern=r"^(split:[^/\\\\:*?\"<>|]+)?$")
     hq: bool = False
     mode: Literal["hype", "ai+hype", "ai"] = "hype"  # no "manual": nobody is there to type the cuts
     subtitles: bool = True
@@ -92,7 +95,7 @@ def create_job(j: NewJob):
         raise HTTPException(400, "ask for at least one clip")
     jid = db.insert("jobs", url=j.url, shorts=j.shorts, longs=j.longs, auto_upload=int(bool(j.platforms)),
                     platforms=json.dumps(j.platforms), aspect=j.aspect, hq=int(j.hq), mode=j.mode, subtitles=int(j.subtitles), voiceover=int(j.voiceover),
-                    chunk_minutes=j.chunk_minutes, max_chunks=j.max_chunks, created=time.time())
+                    chunk_minutes=j.chunk_minutes, max_chunks=j.max_chunks, layout=j.layout, created=time.time())
     worker.start(jid)
     return {"id": jid}
 
@@ -114,14 +117,14 @@ def live_controls(jid: int, c: LiveControls):
 @app.post("/api/jobs/file")
 async def create_file_job(request: Request, filename: str, shorts: int = 3, longs: int = 1,
                           platforms: str = "youtube", mode: Mode = "hype", aspect: float = CROP_ASPECT,
-                          subtitles: bool = True, voiceover: bool = False):
+                          subtitles: bool = True, voiceover: bool = False, layout: str = ""):
     """Raw file bytes in the body (no multipart, so no python-multipart dependency)."""
     plats = [p for p in platforms.split(",") if p in social.PLATFORMS]  # comma-separated in the query string
     ext = Path(filename).suffix.lower()
     if ext not in (".mp4", ".mkv", ".mov", ".webm", ".ts", ".avi"):
         raise HTTPException(400, f"unsupported file type {ext or '(none)'}")
     jid = db.insert("jobs", url=f"file:{Path(filename).name}", title=Path(filename).stem, shorts=shorts,
-                    longs=longs, auto_upload=int(bool(plats)), platforms=json.dumps(plats), aspect=min(max(aspect, 0.5625), 16 / 9), mode=mode, subtitles=int(subtitles), voiceover=int(voiceover), status="uploading", created=time.time())
+                    longs=longs, auto_upload=int(bool(plats)), platforms=json.dumps(plats), aspect=min(max(aspect, 0.5625), 16 / 9), layout=layout if layout.startswith("split:") else "", mode=mode, subtitles=int(subtitles), voiceover=int(voiceover), status="uploading", created=time.time())
     d = DATA / "jobs" / str(jid)
     d.mkdir(parents=True, exist_ok=True)
     with open(d / f"source{ext}", "wb") as f:
@@ -137,7 +140,7 @@ def create_topic(t: NewTopic):
         raise HTTPException(400, "ask for at least one clip per video")
     tid = topics.enqueue(topic=t.topic.strip(), videos=t.videos, shorts=t.shorts, longs=t.longs, mode=t.mode,
                          subtitles=int(t.subtitles), voiceover=int(t.voiceover), platforms=json.dumps(t.platforms),
-                         face_check=int(t.face_check), aspect=t.aspect, hq=int(t.hq))
+                         face_check=int(t.face_check), aspect=t.aspect, hq=int(t.hq), layout=t.layout)
     return {"id": tid}
 
 
@@ -409,6 +412,40 @@ def schedule_clip(cid: int, b: ScheduleIn):
     return db.get("clips", cid)
 
 
+FILLERS = DATA / "fillers"  # background videos for the split layout (kept by "Reset everything")
+
+
+def _filler_name(name):
+    n = re.sub(r"[^\w .()-]", "_", Path(name).name).strip() or "video.mp4"
+    return n if n.lower().endswith((".mp4", ".mov", ".mkv", ".webm")) else n + ".mp4"
+
+
+@app.get("/api/fillers")
+def list_fillers():
+    FILLERS.mkdir(parents=True, exist_ok=True)
+    from . import render
+    return [{"name": f.name, "mb": round(f.stat().st_size / 1e6, 1), "seconds": round(render._duration(f))}
+            for f in sorted(FILLERS.iterdir()) if f.is_file()]
+
+
+@app.post("/api/fillers")
+async def upload_filler(request: Request, name: str):
+    """Raw video bytes in the body (like /api/jobs/file)."""
+    FILLERS.mkdir(parents=True, exist_ok=True)
+    out = FILLERS / _filler_name(name)
+    with open(out, "wb") as f:
+        async for chunk in request.stream():
+            f.write(chunk)
+    db.syslog(f"background video added: {out.name} ({out.stat().st_size / 1e6:.0f} MB)")
+    return {"name": out.name}
+
+
+@app.delete("/api/fillers/{name}")
+def delete_filler(name: str):
+    (FILLERS / _filler_name(name)).unlink(missing_ok=True)
+    return list_fillers()
+
+
 @app.get("/api/storage")
 def get_storage():
     return reset.storage()
@@ -446,6 +483,7 @@ class AutoSettings(BaseModel):
     hour: int | None = Field(None, ge=0, le=23)  # when the day's first round starts
     mode: Literal["hype", "ai+hype", "ai"] | None = None
     aspect: float | None = Field(None, ge=0.56, le=1.78)
+    layout: str | None = Field(None, max_length=200)
     hq: bool | None = None
     face_check: bool | None = None
     subtitles: bool | None = None

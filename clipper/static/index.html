@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Clipper</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&display=swap" rel="stylesheet">
 <style>
   :root { --bg:#0d0d12; --panel:#17171f; --line:#2a2a36; --text:#ececf1; --dim:#8b8b9a; --hot:#ff2e88; --ok:#3ddc97; --warn:#ffb020; }
   * { box-sizing: border-box; }
@@ -125,6 +127,57 @@
   button.danger { background:transparent; border:1px solid #7a2a2a; color:#f66; }
   button.ig-risk { background:#c0283c; color:#fff; border:0; }
   .ups { display:flex; gap:8px; flex-wrap:wrap; font-size:12px; } .ups .err { color:#f66; cursor:help; }
+
+  /* ---- Vice City sunset theme: night purple, pink -> orange sunset, ocean teal, neon glow ---- */
+  :root { --bg:#0f0a1c; --panel:rgba(32,18,56,.78); --line:#3b2760; --text:#f7eeff; --dim:#ad98c9;
+    --hot:#ff3d8b; --sun:#ffb347; --sea:#2de2e6; --ok:#3cf2b2; --warn:#ffc04d; }
+  body { background:
+      radial-gradient(1100px 480px at 85% -8%, rgba(255,140,70,.28), transparent 62%),
+      radial-gradient(900px 520px at -5% -5%, rgba(255,61,139,.24), transparent 60%),
+      radial-gradient(900px 600px at 50% 115%, rgba(45,226,230,.10), transparent 60%),
+      linear-gradient(180deg, #1c1036 0%, #120b24 40%, #0b0716 100%) fixed; }
+  header { background: linear-gradient(90deg, rgba(255,61,139,.20), rgba(255,179,71,.12) 55%, rgba(45,226,230,.12)), rgba(15,9,30,.86);
+    border-bottom: 2px solid transparent; border-image: linear-gradient(90deg, #ff3d8b, #ffb347, #2de2e6) 1; }
+  h1 { font-family: Anton, Impact, "Arial Narrow", sans-serif; font-weight:400; font-size:32px; letter-spacing:3px; line-height:1;
+    background: linear-gradient(180deg, #ffe08a 0%, #ff8a5b 42%, #ff3d8b 72%, #b347ff 100%); -webkit-background-clip:text;
+    background-clip:text; color:transparent; filter: drop-shadow(0 0 12px rgba(255,61,139,.55)); }
+  h1 span { color:transparent; }
+  .page-head h2, .panel h3, .social h3, .apf h4 { font-family: Anton, Impact, "Arial Narrow", sans-serif; font-weight:400;
+    letter-spacing:1.2px; text-transform:uppercase; }
+  .page-head h2 { font-size:38px; background: linear-gradient(90deg, #ff3d8b, #ff8a5b 55%, #ffb347); -webkit-background-clip:text;
+    background-clip:text; color:transparent; filter: drop-shadow(0 0 14px rgba(255,61,139,.35)); }
+  .panel h3 { font-size:22px; color:#ffd9ec; } .apf h4 { font-size:15px; color:var(--sun); }
+  .panel, .social { background:var(--panel); border:1px solid var(--line); backdrop-filter: blur(8px);
+    box-shadow: 0 14px 40px rgba(8,0,24,.5), inset 0 1px 0 rgba(255,255,255,.05); }
+  .panel:hover, .social:hover { border-color:#56357f; }
+  nav a { letter-spacing:.3px; } nav a:hover { background: rgba(255,61,139,.10); color:#fff; }
+  nav a.on { background: linear-gradient(180deg, rgba(255,61,139,.22), rgba(255,138,91,.10)); color:#fff;
+    box-shadow: inset 0 -2px 0 var(--sun), 0 0 14px rgba(255,61,139,.25); }
+  button { background: linear-gradient(135deg, #ff3d8b, #ff6f61 55%, #ffb347); box-shadow: 0 0 18px rgba(255,61,139,.35);
+    text-shadow: 0 1px 1px rgba(0,0,0,.25); transition: filter .15s, box-shadow .15s; }
+  button:hover { filter: brightness(1.08); box-shadow: 0 0 26px rgba(255,61,139,.55); }
+  button.ghost { background: rgba(255,255,255,.02); box-shadow:none; border-color:var(--line); text-shadow:none; }
+  button.ghost:hover { border-color:var(--hot); box-shadow: 0 0 14px rgba(255,61,139,.3); }
+  button.danger, button.ghost.danger { color:#ff6b8f; border-color:#7a2a4a; }
+  input, select, textarea { background: rgba(10,6,24,.75); border-color:var(--line); }
+  input:focus, select:focus, textarea:focus { outline:none; border-color:var(--sea); box-shadow: 0 0 0 2px rgba(45,226,230,.25); }
+  a { color:#ff6fae; } a:hover { color:var(--sun); }
+  .badge.live { background: linear-gradient(90deg, #ff3d8b, #ff8a5b); box-shadow: 0 0 10px rgba(255,61,139,.6); }
+  .switch input:checked + span { background: linear-gradient(90deg, #ff3d8b, #ffb347); box-shadow: 0 0 14px rgba(255,61,139,.5); }
+  .plan { background: rgba(10,6,24,.6); border:1px solid var(--line); } .plan b { color:var(--sun); }
+  .stats b { font-family: Anton, Impact, sans-serif; font-weight:400; letter-spacing:1px; color:#fff;
+    text-shadow: 0 0 12px rgba(255,61,139,.35); }
+  .act, .nrun { background: rgba(10,6,24,.55); }
+  .meter > span { background: linear-gradient(90deg, #2de2e6, #3cf2b2); }
+  .clip { background: rgba(20,12,40,.8); border-color:var(--line); } .clip:hover { border-color:#ff3d8b; box-shadow: 0 0 18px rgba(255,61,139,.25); }
+  .score { color:var(--sun); }
+  .dot.ok { background: var(--sea); box-shadow: 0 0 8px var(--sea); }
+  .banner { background: linear-gradient(90deg, rgba(122,20,60,.65), rgba(90,20,80,.55)); border-color:#a33a6a; }
+  ::selection { background: rgba(255,61,139,.45); }
+  html { background:#0b0716; } body { min-height:100vh; background-repeat:no-repeat; background-attachment:fixed; }
+  label.fillwrap[hidden] { display:none; }
+  ::-webkit-scrollbar { width:10px; height:10px; } ::-webkit-scrollbar-thumb { background: linear-gradient(#ff3d8b, #b347ff); border-radius:10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
 </style>
 </head>
 <body>
@@ -164,7 +217,7 @@
         <option value="0.5625">Full screen 9:16 (fills the phone)</option>
         <option value="0.8">4:5 (a bit wider, thin bars)</option>
         <option value="1">Square 1:1 (more of the scene)</option>
-        <option value="1.7778">Whole frame 16:9 (nothing cut off)</option>
+        <option value="1.7778">Whole frame 16:9 (nothing cut off)</option><option value="split">Split: clip on top + your video below</option>
       </select></label>
       <label class="check"><input type="checkbox" name="subtitles" checked> Headline + subtitles</label>
       <label class="check" title="Downloads up to 4K instead of 1080p. Sharper, mostly for full-screen 9:16 framing, but about 10x the data, so slower."><input type="checkbox" name="hq"> 4K quality (slower download)</label>
@@ -223,7 +276,7 @@
             <option value="0.5625">Full screen 9:16 (fills the phone)</option>
             <option value="0.8">4:5 (a bit wider, thin bars)</option>
             <option value="1">Square 1:1 (more of the scene)</option>
-            <option value="1.7778">Whole frame 16:9 (nothing cut off)</option>
+            <option value="1.7778">Whole frame 16:9 (nothing cut off)</option><option value="split">Split: clip on top + your video below</option>
           </select></label>
           <label class="check"><input type="checkbox" name="subtitles"> Headline + subtitles</label>
           <label class="check"><input type="checkbox" name="voiceover"> AI voice-over</label>
@@ -278,7 +331,7 @@
         <option value="0.5625">Full screen 9:16 (fills the phone)</option>
         <option value="0.8">4:5 (a bit wider, thin bars)</option>
         <option value="1">Square 1:1 (more of the scene)</option>
-        <option value="1.7778">Whole frame 16:9 (nothing cut off)</option>
+        <option value="1.7778">Whole frame 16:9 (nothing cut off)</option><option value="split">Split: clip on top + your video below</option>
       </select></label>
       <label class="check"><input type="checkbox" name="subtitles" checked> Headline + subtitles</label>
       <label class="check" title="Downloads up to 4K instead of 1080p. Sharper, mostly for full-screen 9:16 framing, but about 10x the data, so slower."><input type="checkbox" name="hq"> 4K quality (slower download)</label>
@@ -362,6 +415,14 @@
  <div class="page" id="page-settings">
   <div class="page-head"><h2>Settings</h2><p>What's stored, and a clean start. Platform keys live in <code>.env</code>;
     autopilot settings are on the <a href="#auto">Auto</a> page.</p></div>
+  <section class="panel"><h3>Background videos (split layout)</h3>
+    <p class="dim" style="margin-top:0;font-size:13px">For <b>Framing → Split: clip on top + your video below</b>: the clip plays
+      on the top half (a wider slice, so more of the scene fits) and one of these plays muted on the bottom half (from a
+      random point, looped if it's short), with the same follow message, headline, captions (on the seam) and end card.
+      Any video works (gameplay, satisfying clips, parkour…); it's cropped to fill the half.</p>
+    <div class="row"><label class="ghost" style="cursor:pointer;color:var(--hot);font-size:14px">➕ Add a background video
+      <input type="file" accept="video/*" style="display:none" onchange="addFiller(this)"></label><span class="dim" id="fillmsg"></span></div>
+    <div id="fillers" style="margin-top:8px"></div></section>
   <section class="panel"><h3>Storage</h3><div id="storage" class="dim">…</div></section>
   <section class="panel danger-zone">
     <h3>⚠ Reset everything</h3>
@@ -432,7 +493,7 @@ const notOn = (s, c, t) => live(s, t).filter(p => !(JSON.parse(c.uploads || "{}"
 $("#f").onsubmit = async e => {
   e.preventDefault();
   const f = new FormData(e.target), file = f.get("file");
-  const opts = {shorts: +f.get("shorts"), longs: +f.get("longs"), aspect: +f.get("aspect"), hq: f.has("hq"), mode: f.get("mode"), subtitles: f.has("subtitles"), voiceover: f.has("voiceover")};
+  const opts = {shorts: +f.get("shorts"), longs: +f.get("longs"), ...framing(e.target), hq: f.has("hq"), mode: f.get("mode"), subtitles: f.has("subtitles"), voiceover: f.has("voiceover")};
   const live = {chunk_minutes: +f.get("chunk_minutes"), max_chunks: +f.get("max_chunks")};
   const btn = e.target.querySelector("button");
   let r;
@@ -449,7 +510,7 @@ $("#f").onsubmit = async e => {
 $("#tf").onsubmit = async e => {
   e.preventDefault();
   const f = new FormData(e.target);
-  const r = await post("/api/topics", {topic: f.get("topic"), aspect: +f.get("aspect"), hq: f.has("hq"), videos: +f.get("videos"), shorts: +f.get("shorts"), longs: +f.get("longs"),
+  const r = await post("/api/topics", {topic: f.get("topic"), ...framing(e.target), hq: f.has("hq"), videos: +f.get("videos"), shorts: +f.get("shorts"), longs: +f.get("longs"),
     mode: f.get("mode"), subtitles: f.has("subtitles"), voiceover: f.has("voiceover"), face_check: f.has("face_check"), platforms: picked(e.target)});
   if (!r.ok) return alertBox(await r.text());
   e.target.topic.value = ""; refresh();
@@ -612,7 +673,7 @@ const aspectName = a => a ? (ASPECTS[a] || `${(+a).toFixed(2)}:1`) : "";
 let aspectSet = false;
 function defaultAspect(a) {  // pick the option closest to .env CROP_ASPECT, once
   if (aspectSet) return; aspectSet = true;
-  document.querySelectorAll("select.aspect").forEach(sel => sel.value = [...sel.options]
+  document.querySelectorAll("select.aspect").forEach(sel => sel.value = [...sel.options].filter(o => o.value !== "split")
     .reduce((b, o) => Math.abs(o.value - a) < Math.abs(b.value - a) ? o : b).value);
 }
 
@@ -656,12 +717,15 @@ function fillAuto(st) {
   const f = $("#af"), a = st.settings;
   for (const k of AUTO_KEYS) f[k].value = a[k];
   for (const k of AUTO_CHECKS) f[k].checked = !!a[k];
-  f.aspect.value = [...f.aspect.options].reduce((b, o) => Math.abs(o.value - a.aspect) < Math.abs(b.value - a.aspect) ? o : b).value;
+  f.aspect.value = (a.layout || "").startsWith("split:") ? "split" : [...f.aspect.options].filter(o => o.value !== "split")
+    .reduce((b, o) => Math.abs(o.value - a.aspect) < Math.abs(b.value - a.aspect) ? o : b).value;
+  if (f.filler && a.layout) { fillerWanted = a.layout.slice(6); }
+  showFiller(f.aspect);
   f.querySelectorAll("input[name=pf]").forEach(i => i.checked = i.value.split(",").every(p => a.platforms.includes(p)));
   planText();
 }
 function formAuto() {
-  const f = $("#af"), d = new FormData(f), o = {niche: d.get("niche"), mode: d.get("mode"), aspect: +d.get("aspect"), platforms: picked(f)};
+  const f = $("#af"), d = new FormData(f), o = {niche: d.get("niche"), mode: d.get("mode"), ...framing(f), platforms: picked(f)};
   for (const k of AUTO_KEYS.filter(k => !["niche", "mode", "news_kind", "news_format"].includes(k))) o[k] = +d.get(k);
   o.news_kind = d.get("news_kind"); o.news_format = d.get("news_format");
   for (const k of AUTO_CHECKS) o[k] = d.has(k);
@@ -731,7 +795,13 @@ function showAuto(st, s) {
 function planHtml(plan, a) {
   if (!plan.length) return `<p class="empty">No slots left today.</p>`;
   let day = "", rows = "";
+  const posted = plan.filter(p => p.state === "posted"), hide = new Set(posted.slice(0, Math.max(0, posted.length - 3)));
   for (const p of plan) {
+    if (hide.has(p)) {  // older posts today: one summary line instead of a row each
+      if (p === posted[0]) { const d0 = dayName(p.slot); if (d0 !== day) { day = d0; rows += `<tr><th colspan="3" style="padding-top:10px">📅 ${d0}</th></tr>`; }
+        rows += `<tr class="posted"><td colspan="3" class="ok">✓ ${hide.size} earlier post${hide.size > 1 ? "s" : ""} today (${clock(posted[0].at)} – ${clock(posted[hide.size - 1].at)})</td></tr>`; }
+      continue;
+    }
     const d = dayName(p.at);
     if (d !== day) { day = d; rows += `<tr><th colspan="3" style="padding-top:10px">📅 ${d}${p.state === "tomorrow" ? " (tomorrow)" : ""}</th></tr>`; }
     const c = p.clip, up = c ? JSON.parse(c.uploads || "{}") : {};
@@ -1002,6 +1072,45 @@ function renderPosts(s) {
             ${!["rendering", "uploading"].includes(c.status) ? `<button class="ghost danger" onclick="deleteClip(${c.id})">Delete</button>` : ""}</div>
         </div></div>`; }).join("") : making.length ? "" : `<p class="empty">No posts yet. Find some news above.</p>`);
 }
+// ---- Split layout: background videos ----
+let fillers = [], fillerWanted = "";
+document.querySelectorAll("select.aspect").forEach(sel => {
+  sel.closest("label").insertAdjacentHTML("afterend", `<label class="fillwrap" hidden>Your video below<select name="filler" class="filler"></select></label>`);
+  sel.addEventListener("change", () => showFiller(sel));
+});
+function showFiller(sel) {
+  const w = sel.closest("label").nextElementSibling;
+  if (w && w.classList.contains("fillwrap")) w.hidden = sel.value !== "split";
+}
+function framing(form) {  // -> {aspect, layout} for the API
+  const v = form.aspect.value;
+  if (v !== "split") return {aspect: +v, layout: ""};
+  const name = form.filler && form.filler.value;
+  if (!name) { alertBox("Add a background video first (Settings → Background videos)."); throw new Error("no filler"); }
+  return {aspect: 0.5625, layout: "split:" + name};
+}
+async function loadFillers() {
+  fillers = await (await fetch("/api/fillers")).json();
+  document.querySelectorAll("select.filler").forEach(sel => {
+    const cur = sel.value || fillerWanted;
+    sel.innerHTML = fillers.length ? fillers.map(f => `<option value="${esc(f.name)}">${esc(f.name)} (${f.seconds}s)</option>`).join("")
+      : `<option value="">none yet: add one in Settings</option>`;
+    if (fillers.some(f => f.name === cur)) sel.value = cur;
+  });
+  $("#fillers").innerHTML = fillers.length ? fillers.map(f => `<div class="row" style="padding:6px 0;border-top:1px solid var(--line)">
+      <video src="/media/fillers/${encodeURIComponent(f.name)}" muted preload="metadata" style="width:90px;aspect-ratio:9/16;object-fit:cover;border-radius:6px;background:#000"></video>
+      <b>${esc(f.name)}</b><span class="dim">${f.seconds}s · ${f.mb} MB</span>
+      <button class="ghost danger" onclick="dropFiller('${esc(f.name)}')">Delete</button></div>`).join("")
+    : `<p class="empty">No background videos yet.</p>`;
+}
+async function addFiller(el) {
+  const f = el.files[0]; if (!f) return;
+  $("#fillmsg").textContent = `Uploading ${f.name}…`;
+  const r = await fetch("/api/fillers?" + new URLSearchParams({name: f.name}), {method: "POST", body: f});
+  $("#fillmsg").textContent = r.ok ? `Added ${f.name} ✓` : "Upload failed"; el.value = ""; loadFillers();
+}
+async function dropFiller(name) { if (confirm(`Delete ${name}?`)) { await fetch(`/api/fillers/${encodeURIComponent(name)}`, {method: "DELETE"}); loadFillers(); } }
+loadFillers();
 // ---- Settings: storage + reset ----
 const gb = b => b >= 1e9 ? (b / 1e9).toFixed(2) + " GB" : (b / 1e6).toFixed(1) + " MB";
 async function loadStorage() {
@@ -1166,7 +1275,7 @@ async function refresh() {
     const jobs = s.jobs.filter(j => j.topic_id === t.id).map(j => `#${j.id}`).reverse().join(" ");
     return `<div class="job"><div class="row">
       <b>T${t.id}</b> <span>${esc(t.topic)}</span> <span class="badge ${cls}">${esc(t.status)}</span>
-      <span class="dim">${t.videos} videos × (${t.shorts} shorts + ${t.longs} long) · ${esc(t.mode)} · ${esc(plats)}${t.voiceover ? " · voice-over" : ""}${t.face_check ? " · face check" : " · no face check"}${t.aspect ? " · " + aspectName(t.aspect) : ""}${t.hq ? " · 4K" : ""}</span>
+      <span class="dim">${t.videos} videos × (${t.shorts} shorts + ${t.longs} long) · ${esc(t.mode)} · ${esc(plats)}${t.voiceover ? " · voice-over" : ""}${t.face_check ? " · face check" : " · no face check"}${(t.layout || "").startsWith("split:") ? " · split + " + esc(t.layout.slice(6)) : t.aspect ? " · " + aspectName(t.aspect) : ""}${t.hq ? " · 4K" : ""}</span>
       ${jobs ? `<span class="dim">jobs ${jobs}</span>` : ""}
       ${running || t.status === "queued" ? `<button class="ghost" onclick="stopTopic(${t.id})">${running ? "Stop" : "Cancel"}</button>`
         : `<button class="ghost danger" onclick="removeTopic(${t.id})">Remove</button>`}
@@ -1184,7 +1293,7 @@ async function refresh() {
       <b>#${j.id}</b> ${j.is_live ? '<span class="badge live">LIVE</span>' : ""}
       <span>${esc(j.title || j.url)}</span>
       <span class="badge ${cls}">${esc(j.status)}</span>
-      <span class="dim">${j.mode === "manual" ? "manual cuts" : `${j.shorts} shorts · ${j.longs} long · ${esc(j.mode || "hype")}`}${j.voiceover ? " · voice-over" : ""}${j.aspect ? " · " + aspectName(j.aspect) : ""}${j.hq ? " · 4K" : ""}
+      <span class="dim">${j.mode === "manual" ? "manual cuts" : `${j.shorts} shorts · ${j.longs} long · ${esc(j.mode || "hype")}`}${j.voiceover ? " · voice-over" : ""}${(j.layout || "").startsWith("split:") ? " · split + " + esc(j.layout.slice(6)) : j.aspect ? " · " + aspectName(j.aspect) : ""}${j.hq ? " · 4K" : ""}
         · ${esc(j.auto_upload ? JSON.parse(j.platforms || '["youtube"]').map(p => PLATFORMS[p]).join(", ") : "no auto-upload")}${j.topic_id ? ` · topic T${j.topic_id}` : ""}</span>
       ${running ? `<button class="ghost" onclick="stopJob(${j.id})">Stop</button>` : ""}
     </div>

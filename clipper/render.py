@@ -132,7 +132,7 @@ def top_block(aspect=CROP_ASPECT, lines=1):
     return y, y + hook_h, y + hook_h + HEAD_H
 
 
-def ass(words, start, end, vertical=True, headline="", per_line=3, aspect=CROP_ASPECT, hook=None):
+def ass(words, start, end, vertical=True, headline="", per_line=3, aspect=CROP_ASPECT, hook=None, split=False):
     """Headline in a yellow box in the top black bar for the whole clip + big captions in the bottom black bar,
     a few words at a time. With no bars (aspect 9/16) they sit on the video instead."""
     ws = [w for w in words if start <= w["s"] < end]
@@ -164,6 +164,8 @@ def ass(words, start, end, vertical=True, headline="", per_line=3, aspect=CROP_A
             if vertical
             else dict(w=1920, h=1080, size=64, margin=70, top_size=60, top_margin=50, end_size=90, end_sub=64, end_small=56, end_hi=68,
                       hook_size=40))
+    if split and vertical:  # captions sit on the seam between the clip (top) and the background video (bottom)
+        size["margin"] = 905
     lines += end_card(end - start, w=size["w"], h=size["h"])
     return ASS_HEAD.format(**size) + "\n".join(lines) + "\n"
 
@@ -232,22 +234,53 @@ def encoder_name():
     return "GPU NVENC" if "h264_nvenc" in encoder() else "CPU x264"
 
 
-def cut(src, out, start, end, vertical, words=(), headline="", voice=(), aspect=CROP_ASPECT):
+SPLIT_ASPECT = 1080 / 960  # split layout: the clip's half is 1080x960, wider than a 9:16 crop = more of the scene
+
+
+def filler_path(layout):
+    """'split:<name>' -> data/fillers/<name> if it exists, else None (normal layout)."""
+    if not layout or not str(layout).startswith("split:"):
+        return None
+    from .config import DATA
+    p = DATA / "fillers" / str(layout)[6:]
+    return p if p.is_file() else None
+
+
+def _duration(path):
+    out = subprocess.run([FFPROBE, "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
+                         capture_output=True, text=True).stdout.strip()
+    try:
+        return float(out)
+    except ValueError:
+        return 0.0
+
+
+def cut(src, out, start, end, vertical, words=(), headline="", voice=(), aspect=CROP_ASPECT, layout=""):
     """words: burn these as captions; headline: text at the top. Pass ()/"" for none.
     voice: [(wav_path, seconds into clip)] voice-over lines; the original audio is ducked under them.
-    aspect: w/h of the kept slice of the frame (9/16 = fills the phone ... 16/9 = whole frame with bars)."""
-    aspect = min(max(float(aspect or CROP_ASPECT), 9 / 16), 16 / 9)
+    aspect: w/h of the kept slice of the frame (9/16 = fills the phone ... 16/9 = whole frame with bars).
+    layout: "split:<file>" = the clip on the top half, that background video (data/fillers) on the bottom half."""
+    filler = filler_path(layout) if vertical else None
+    aspect = 9 / 16 if filler else min(max(float(aspect or CROP_ASPECT), 9 / 16), 16 / 9)
     # Vertical: keep a centred `aspect` slice of the frame (wider than a full 9:16 crop = more gameplay),
     # fit it to 1080 wide, and pad to 1080x1920 with black bars that hold the headline and captions.
     # ponytail: plain center crop; facecam/subject tracking is the upgrade if gameplay gets cut off
     vf = (f"crop='min(iw,ih*{aspect})':ih,scale=1080:1920:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos,"
           "pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,setsar=1" if vertical else "scale=-2:1080")
+    if filler:  # top half: a wide slice of the clip, filled edge to edge
+        vf = (f"crop='min(iw,ih*{SPLIT_ASPECT})':ih,scale=1080:960:force_original_aspect_ratio=increase:flags=lanczos,"
+              "crop=1080:960,setsar=1")
     hook = follow_line() if headline and vertical else ""
+    subs = ""
     if words or headline or END_CARD.strip():
         sub = out.with_suffix(".ass")
-        sub.write_text(ass(words, start, end, vertical, headline, aspect=aspect, hook=hook), encoding="utf-8")
-        vf += f",subtitles={sub.name}"  # relative name + cwd avoids ffmpeg path escaping
-    graph, logo_in = f"[0:v]{vf}[o]", []
+        sub.write_text(ass(words, start, end, vertical, headline, aspect=aspect, hook=hook, split=bool(filler)),
+                       encoding="utf-8")
+        subs = f",subtitles={sub.name}"  # relative name + cwd avoids ffmpeg path escaping
+    n_in = 1 + (1 if LOGO and LOGO.exists() else 0) + len(voice)  # the background video is the last input
+    head = (f"[0:v]{vf}[top];[{n_in}:v]scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960,setsar=1,"
+            f"fps=30[bot];[top][bot]vstack=inputs=2:shortest=1{subs}" if filler else f"[0:v]{vf}{subs}")
+    graph, logo_in = f"{head}[o]", []
     if LOGO and LOGO.exists():
         # Small logo top-right. Vertical with bars: in the top bar just above the video (clear of the headline and
         # YouTube's own top icons). Vertical without bars: just under the headline box (which sits at y 120-226),
@@ -256,7 +289,7 @@ def cut(src, out, start, end, vertical, words=(), headline="", voice=(), aspect=
         below = top_block(aspect, len(hook_lines(hook)))[2] if headline else 230  # bottom of the follow + headline block
         y = f"{bar}-h-24" if bar - below >= 110 else f"{max(bar, below) if vertical else 0}+24"  # h = logo height
         logo_in = ["-i", str(LOGO.resolve())]
-        graph = f"[0:v]{vf}[v];[1:v]scale={220 if vertical else 260}:-1[l];[v][l]overlay=W-w-24:{y}[o]"
+        graph = f"{head}[v];[1:v]scale={220 if vertical else 260}:-1[l];[v][l]overlay=W-w-24:{y}[o]"
     vo_in, amap = [], ["-map", "0:a?"]
     if voice:
         # Each line delayed to its spot -> mixed into one narration track [vo], louder than the TTS default.
@@ -273,8 +306,14 @@ def cut(src, out, start, end, vertical, words=(), headline="", voice=(), aspect=
                   "[orig][vk]sidechaincompress=threshold=0.02:ratio=12:attack=15:release=400[duck];"
                   "[duck][vm]amix=inputs=2:normalize=0:duration=first[a]")
         amap = ["-map", "[a]"]
+    fill_in = []
+    if filler:  # muted, from a random point, looped if it's shorter than the clip
+        import random
+        off = random.uniform(0, max(0.0, _duration(filler) - (end - start) - 1))
+        fill_in = ["-stream_loop", "-1", "-ss", f"{off:.2f}", "-i", str(filler.resolve())]
     subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-ss", str(start), "-t", str(end - start),
-                    "-i", str(src.resolve()), *logo_in, *vo_in, "-filter_complex", graph, "-map", "[o]", *amap,
+                    "-i", str(src.resolve()), *logo_in, *vo_in, *fill_in, "-filter_complex", graph, "-map", "[o]", *amap,
+                    "-t", str(end - start),
                     *encoder(), "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "256k", "-ar", "48000",
                     "-movflags", "+faststart", out.name],
                    check=True, cwd=out.parent)

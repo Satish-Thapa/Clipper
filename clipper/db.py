@@ -77,7 +77,8 @@ def init():
                            ("jobs", "hq INTEGER DEFAULT 0"), ("topics", "hq INTEGER DEFAULT 0"),
                            ("topics", "source TEXT DEFAULT 'manual'"), ("topics", "pool INTEGER"),
                            ("jobs", "chunk_minutes INTEGER"), ("jobs", "max_chunks INTEGER DEFAULT 0"),
-                           ("jobs", "kind TEXT DEFAULT 'video'"), ("clips", "post_at REAL"), ("news", "run_id INTEGER")):  # columns added after v0.1
+                           ("jobs", "kind TEXT DEFAULT 'video'"), ("clips", "post_at REAL"), ("news", "run_id INTEGER"),
+                           ("jobs", "layout TEXT DEFAULT ''"), ("topics", "layout TEXT DEFAULT ''")):  # columns added after v0.1
             try:
                 c.execute(f"ALTER TABLE {table} ADD COLUMN {col}")
             except sqlite3.OperationalError:

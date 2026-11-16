@@ -152,7 +152,8 @@ def _run(t):
             jid = db.insert("jobs", url=f"https://www.youtube.com/watch?v={v['id']}", title=v.get("title"),
                             shorts=t["shorts"], longs=t["longs"], auto_upload=int(bool(platforms)),
                             platforms=json.dumps(platforms), mode=t["mode"], subtitles=t["subtitles"],
-                            voiceover=t["voiceover"], aspect=t.get("aspect"), hq=t.get("hq", 0), topic_id=tid, created=time.time())
+                            voiceover=t["voiceover"], aspect=t.get("aspect"), hq=t.get("hq", 0), layout=t.get("layout") or "",
+                            topic_id=tid, created=time.time())
             db.log(tid, f"video {k}/{len(videos)} -> job #{jid}", "topics")
             CURRENT[tid] = jid
             t0 = time.time()

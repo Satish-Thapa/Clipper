@@ -18,7 +18,8 @@ sourced news and fact posts, and it learns from your view counts what to make ne
   from what got views.
 - **Reports.** A views report every hour, on the Reports page and on WhatsApp.
 
-Everything runs on your PC. It uses the NVIDIA GPU for transcription and encoding when there is one.
+Everything runs on your PC. It uses the NVIDIA GPU for transcription and encoding when there is one. The UI uses a
+Vice City sunset look (night purple, pink-to-orange gradients, neon glow, Anton headings).
 
 ---
 
@@ -129,10 +130,21 @@ Open **http://127.0.0.1:8000**. After changing `.env` or the code, stop the serv
 | **News** | News and fact posts: find stories for a topic, tick the ones to post, make the videos, post now, at a time, or on the autopilot's slots. |
 | **Reports** | **What works** (views per topic, platform and clip length; best and weakest clips; the niche it would pick) and the hourly views reports. |
 | **Logs** | The full log file, live, with errors in red. |
-| **⚙ Settings** | What's stored (videos, database, logs, counts) and **Reset everything** (below). |
+| **⚙ Settings** | Background videos for the split layout, what's stored (videos, database, logs, counts), and **Reset everything** (below). |
 
-**Framing** (Create, Topics, Auto): *Full screen 9:16* fills the phone. *4:5*, *Square* and *Whole frame 16:9*
-keep more of the scene, with black bars above and below that hold the headline and captions.
+**Framing** (Create, Topics, Auto):
+- *Full screen 9:16* fills the phone.
+- *4:5*, *Square* and *Whole frame 16:9* keep more of the scene, with black bars above and below that hold the
+  headline and captions.
+- ***Split: clip on top + your video below*** (split-screen):
+  - **Top half (1080x960):** the clip, as a wider slice than a phone crop, so more of the scene fits.
+  - **Bottom half:** a **background video you provide** (gameplay, satisfying clips, parkour...), muted, starting
+    at a random point and looped if it's shorter than the clip.
+  - **Text:** the follow message, headline, logo and end card are the same as other clips; captions sit on the seam
+    between the halves.
+  - **Your library:** add and delete background videos on **⚙ Settings → Background videos** (stored in
+    `data/fillers/`, kept by "Reset everything"). When Split is picked, a **Your video below** dropdown appears
+    next to Framing.
 
 **Who picks the moments:**
 - *AI picks from hype curves* (fast): the strongest moments by the signals, and DeepSeek chooses among them.

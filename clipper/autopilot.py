@@ -29,7 +29,7 @@ from .config import CROP_ASPECT
 
 DEFAULTS = {"enabled": False, "niche": "", "posts_per_day": 6, "post_from": 10, "post_to": 22,
             "shorts": 3, "longs": 0, "choosy": 3, "hour": 9,
-            "mode": "hype", "aspect": CROP_ASPECT, "hq": False, "face_check": True, "subtitles": True,
+            "mode": "hype", "aspect": CROP_ASPECT, "layout": "", "hq": False, "face_check": True, "subtitles": True,
             "voiceover": False, "platforms": ["youtube"],
             "news_per_day": 0, "news_kind": "news", "news_picture": True, "news_format": "video"}  # news/fact posts, on top of the clips
 NEWS_KINDS = ("news", "fact")
@@ -83,12 +83,12 @@ def _active_topics():
 def _apply_live(s):
     plats = json.dumps(s["platforms"])
     for t in _active_topics():  # a running topic reads its row again before each video (topics._run)
-        db.update("topics", t["id"], shorts=s["shorts"], longs=s["longs"], mode=s["mode"], aspect=s["aspect"],
+        db.update("topics", t["id"], shorts=s["shorts"], longs=s["longs"], mode=s["mode"], aspect=s["aspect"], layout=s["layout"],
                   hq=int(s["hq"]), subtitles=int(s["subtitles"]), voiceover=int(s["voiceover"]),
                   face_check=int(s["face_check"]), platforms=plats)
         for j in db.all("jobs", f"topic_id={int(t['id'])}"):
             if j["status"] not in FINISHED:  # its clips aren't posted yet: they go where the settings say now
-                db.update("jobs", j["id"], platforms=plats, auto_upload=int(bool(s["platforms"])))
+                db.update("jobs", j["id"], platforms=plats, auto_upload=int(bool(s["platforms"])), layout=s["layout"])
 
 
 def _day_start(now):
@@ -382,7 +382,7 @@ def run_round(reason="scheduled"):
                 continue
             tid = topics.enqueue(topic=t["topic"], videos=k, shorts=s["shorts"], longs=s["longs"], mode=s["mode"],
                                  subtitles=int(s["subtitles"]), voiceover=int(s["voiceover"]), face_check=int(s["face_check"]),
-                                 aspect=s["aspect"], hq=int(s["hq"]), platforms=json.dumps(s["platforms"]), source="auto",
+                                 aspect=s["aspect"], layout=s["layout"], hq=int(s["hq"]), platforms=json.dumps(s["platforms"]), source="auto",
                                  pool=max(kp, k))
             db.log(tid, f"queued by autopilot ({reason}): {t['why']}", "topics")
             queued.append({**t, "videos": k, "research": max(kp, k), "topic_id": tid})
