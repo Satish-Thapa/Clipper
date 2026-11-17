@@ -20,6 +20,9 @@ PC_LLM_BASE_URL = os.getenv("PC_LLM_BASE_URL", "http://localhost:11434/v1").rstr
 PC_LLM_MODEL = os.getenv("PC_LLM_MODEL", "qwen3.5:2b")
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "small")
 LIVE_CHUNK_SECONDS = int(os.getenv("LIVE_CHUNK_SECONDS", "600"))
+# Videos at least this long are clipped like a live stream: in pieces (LIVE_CHUNK_SECONDS, or the job's piece
+# length), each piece picked and rendered on its own, two at a time. 0 = never.
+LONG_VIDEO_MINUTES = float(os.getenv("LONG_VIDEO_MINUTES", "60"))
 # The downloaded/uploaded source video (0.5-2 GB) and live recordings are deleted once a job finishes; clips stay.
 # KEEP_SOURCES=1 keeps them (needed to cut more clips from that video later by hand).
 KEEP_SOURCES = os.getenv("KEEP_SOURCES", "0").lower() in ("1", "true", "yes")

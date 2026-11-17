@@ -68,6 +68,7 @@ def info(url, comments=False):
 
 # YouTube search filters ("sp" in the results URL): uploaded this week, then this month, then any time.
 RECENT = ("EgIIAw%3D%3D", "EgIIBA%3D%3D", "")
+TODAY = "EgIIAg%3D%3D"  # uploaded today
 
 
 def search(query, n=20, recent=RECENT[0]):

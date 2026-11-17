@@ -289,7 +289,34 @@
           <label class="check" title="The message at the top asking viewers to follow"><input type="checkbox" name="follow"> Follow message</label>
           <label class="check"><input type="checkbox" name="voiceover"> AI voice-over</label>
           <label class="check"><input type="checkbox" name="hq"> 4K source (sharper, slower)</label>
+          <label class="check" title="Face detection on each candidate video's preview frames: skips videos where a face fills the screen most of the time (podcasts, talking heads). A small streamer facecam in a corner is fine."><input type="checkbox" name="face_check"> Face check: skip videos that are mostly a person talking</label>
         </div>
+        <fieldset class="mixf" style="margin-top:10px"><legend>Mix framings: each topic gets the next one (none ticked = always the Framing above)</legend>
+          <label class="check"><input type="checkbox" name="mix" value="0.5625|"> Full screen 9:16</label>
+          <label class="check"><input type="checkbox" name="mix" value="0.8|"> 4:5</label>
+          <label class="check"><input type="checkbox" name="mix" value="1|"> Square 1:1</label>
+          <label class="check"><input type="checkbox" name="mix" value="1.7778|"> Whole frame 16:9</label>
+          <label class="check"><input type="checkbox" name="mix" value="0.5625|cam:top:auto"> Streamer on top (auto face)</label>
+          <label class="check"><input type="checkbox" name="mix" value="0.5625|cam:bottom:auto"> Streamer below (auto face)</label>
+          <label class="check" title="Uses the background video picked next to Framing"><input type="checkbox" name="mix" value="0.5625|split"> Split + background video</label>
+        </fieldset>
+      </div>
+      <div class="grp"><h4>4 · Streamers to watch</h4>
+        <p class="dim" style="margin:0 0 8px;font-size:13px">Every 3 minutes it checks these YouTube channels. When one goes live, the autopilot
+          <b>pauses</b> (its round and topics stop, scheduled posts are held) and the stream is clipped live as streamer + gameplay,
+          posting to the platforms above. When the stream ends, the held posts go back on schedule and the autopilot carries on.</p>
+        <label class="check"><input type="checkbox" name="watch"> Watch these streamers</label>
+        <label style="display:block;margin-top:8px">Channels (one per line: @name or a channel link)
+          <textarea name="streamers" rows="3" style="width:min(520px,100%)" placeholder="@somestreamer&#10;https://www.youtube.com/@another"></textarea></label>
+        <div class="row" style="align-items:end;margin-top:8px">
+          <label>Their clips look like<select name="live_layout">
+            <option value="cam:top:auto">Streamer on top, gameplay below</option>
+            <option value="cam:bottom:auto">Gameplay on top, streamer below</option>
+            <option value="">Full screen 9:16 (no split)</option></select></label>
+          <label>Record in pieces of<select name="live_chunk"><option value="5">5 min</option><option value="10">10 min</option><option value="15">15 min</option><option value="20">20 min</option><option value="30">30 min</option></select></label>
+          <label>Clips per piece<input type="number" name="live_shorts" min="1" max="10"></label>
+        </div>
+        <div id="apLive" style="margin-top:8px"></div>
       </div>
       <details class="grp"><summary><h4 style="display:inline">Advanced</h4></summary>
         <div class="row" style="align-items:end;margin-top:10px">
@@ -306,7 +333,6 @@
             <option value="ai+hype">AI reads full transcript, curves as hints</option>
             <option value="ai">AI reads full transcript only</option>
           </select></label>
-          <label class="check"><input type="checkbox" name="face_check"> Skip videos that are mostly a person</label>
           <label class="check"><input type="checkbox" name="news_picture"> News posts: use the article's picture</label>
         </div>
       </details>
@@ -800,6 +826,10 @@ function fillAuto(st) {
   f.aspect.value = camL ? "cam-" + camL[1] : (a.layout || "").startsWith("split:") ? "split" : [...f.aspect.options].filter(o => !isNaN(+o.value))
     .reduce((b, o) => Math.abs(o.value - a.aspect) < Math.abs(b.value - a.aspect) ? o : b).value;
   if (camL) f.cam.value = camL[2];
+  const mixKeys = (a.mix || []).map(m => `${+m.aspect}|${(m.layout || "").startsWith("split:") ? "split" : m.layout || ""}`);
+  f.querySelectorAll("input[name=mix]").forEach(i => i.checked = mixKeys.includes(`${+i.value.split("|")[0]}|${i.value.split("|")[1]}`));
+  f.watch.checked = !!a.watch; f.streamers.value = (a.streamers || []).join("\n");
+  f.live_layout.value = a.live_layout || ""; f.live_chunk.value = a.live_chunk; f.live_shorts.value = a.live_shorts;
   if (f.filler && a.layout) { fillerWanted = a.layout.slice(6); }
   showFiller(f.aspect);
   f.querySelectorAll("input[name=pf]").forEach(i => i.checked = i.value.split(",").every(p => a.platforms.includes(p)));
@@ -810,6 +840,11 @@ function formAuto() {
   for (const k of AUTO_KEYS.filter(k => !["niche", "mode", "news_kind", "news_format"].includes(k))) o[k] = +d.get(k);
   o.news_kind = d.get("news_kind"); o.news_format = d.get("news_format");
   for (const k of AUTO_CHECKS) o[k] = d.has(k);
+  const split = o.layout.startsWith("split:") ? o.layout : f.filler && f.filler.value ? "split:" + f.filler.value : "";
+  if (d.getAll("mix").includes("0.5625|split") && !split) { alertBox("Mix: pick a background video for Split first (Framing → Split)."); throw new Error("no filler"); }
+  o.mix = d.getAll("mix").map(v => { const [asp, lay] = v.split("|"); return {aspect: +asp, layout: lay === "split" ? split : lay}; });
+  o.watch = d.has("watch"); o.streamers = d.get("streamers").split("\n").map(x => x.trim()).filter(Boolean);
+  o.live_layout = d.get("live_layout"); o.live_chunk = +d.get("live_chunk"); o.live_shorts = +d.get("live_shorts");
   return o;
 }
 function preset(n, from, to) {
@@ -856,6 +891,13 @@ function showAuto(st, s) {
     + (lim.length ? `<div class="alert ${allLim ? "" : "warn"}">⏱ ${allLim ? "<b>Paused</b>: every platform it posts to is at its upload limit"
       : "Upload limit reached on"} ${lim.map(([p, t]) => `${PLATFORMS[p]} (until ${clock(t.until)})`).join(", ")}.
       ${allLim ? "It resumes by itself when the timers end." : "The autopilot skips it until then."}</div>` : "");
+  const L = st.live || {}, chans = Object.entries(L.channels || {});
+  $("#apLive").innerHTML = chans.length ? `<table>${chans.map(([url, c]) => `<tr><td>${c.live ? "🔴 <b>LIVE</b>" : c.live === false ? "⚫ offline" : "…"}</td>
+      <td><a href="${esc(url)}" target="_blank">${esc(url.replace("https://www.youtube.com/", ""))}</a></td>
+      <td class="dim">${c.job_id && c.live ? `clipping as job <a href="#jobs">#${c.job_id}</a>` : c.checked ? "checked " + clock(c.checked) : ""}
+      ${c.error ? `<span class="err">${esc(c.error)}</span>` : ""}</td></tr>`).join("")}</table>` : "";
+  if (L.paused) $("#apAlerts").insertAdjacentHTML("afterbegin", `<div class="alert warn">🔴 <b>A watched streamer is live.</b>
+    The autopilot is paused and scheduled posts are held while the stream is clipped; everything resumes when it ends.</div>`);
   // today: slots + numbers
   const [w0, w1] = sc.window, every = (w1 - w0) / sc.posts_per_day;
   const nextTxt = !a.enabled ? "off" : !st.scheduled ? (sc.posted_today >= sc.slots.length ? "done for today" : "waiting for clips")
@@ -1539,7 +1581,7 @@ async function refresh() {
         <div class="row">
           ${c.status === "timed" ? `<span class="chip">⏰ posts ${new Date(c.post_at * 1000).toLocaleString([], {dateStyle: "short", timeStyle: "short"})}${
             c.post_to ? " to " + JSON.parse(c.post_to).map(p => PLATFORMS[p] || p).join(", ") : ""}</span>
-            <button class="ghost" onclick="schedOpen(${c.id})">Change</button><button class="ghost" onclick="unschedPost(${c.id})">Cancel schedule</button>` : ""}
+            <button class="ghost" onclick="schedOpen(${c.id})">Change</button><button class="ghost" onclick="unschedPost(${c.id})" title="Take it off the schedule: it stays here, not posted">Don't post</button>` : ""}
           ${ups ? `<span class="ups">${ups}</span>` : c.youtube_id ? `<a href="https://youtu.be/${esc(c.youtube_id)}" target="_blank">▶ on YouTube</a>` : `<span class="dim">${esc(c.status)}</span>`}
           ${canUpload ? `<button class="ghost" onclick="uploadClip(${c.id}, this)" title="to the job's platforms; only retries the ones not done yet">${ups ? "Retry upload" : "Upload"}</button>` : ""}
           ${c.path ? `<a href="/media/${esc(c.path)}" target="_blank">Open</a>` : ""}
@@ -1550,6 +1592,9 @@ async function refresh() {
               onclick="uploadTo(${c.id}, '${notOn(s, c, t).join(",")}', this)">↑ ${TARGET_NAMES[t]}</button>`).join("") : ""}
           ${ready(c) && igRisky(s, c) ? `<button class="ig-risk" onclick="uploadTo(${c.id}, 'instagram', this, true)"
               title="${Math.round(c.end - c.start)}s is over ${igMax}s: Instagram's API often rejects Reels this long (ProcessingFailedError). It retries once by itself.">↑ Instagram (${Math.round(c.end - c.start)}s, may fail)</button>` : ""}
+          ${c.status === "scheduled" ? `<span class="chip">⏰ waiting for an autopilot slot</span>` : ""}
+          ${c.status === "paused (streamer live)" ? `<span class="chip">⏸ held while a streamer is live</span>` : ""}
+          ${["scheduled", "paused (streamer live)"].includes(c.status) ? `<button class="ghost" onclick="unschedPost(${c.id})" title="Take it off the schedule: it stays here, not posted">Don't post</button>` : ""}
           ${canSched(c) && c.status !== "timed" ? `<button class="ghost" onclick="schedOpen(${c.id})">⏰ Schedule</button>` : ""}
           ${!["rendering","uploading"].includes(c.status) ? `<button class="ghost danger" onclick="deleteClip(${c.id})">Delete</button>` : ""}
         </div>

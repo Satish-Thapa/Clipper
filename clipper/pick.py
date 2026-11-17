@@ -315,6 +315,12 @@ def ai_choice():
     return {"provider": main["provider"], "model": main["model"], "order": order}
 
 
+def ai_name():
+    """The main AI as the logs name it, e.g. 'gpt-oss:20b (Local (Ollama))'."""
+    ch = ai_choice()
+    return f"{ch['model']} ({PROVIDERS.get(ch['provider'], ch['provider'])})"
+
+
 _models = {}  # url -> (time, value)
 
 

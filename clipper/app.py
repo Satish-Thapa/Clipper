@@ -385,7 +385,7 @@ def news_find(f: NewsFind):
                 stories = news.facts(topic or "video games", f.n, say)
                 data = {"topic": topic, "how": how, "stories": [{**x, "pick": True} for x in stories]}
             else:
-                say("🧠 AI writing search queries…")
+                say(f"🧠 {pick.ai_name()} writing search queries…")
                 queries = list(dict.fromkeys(([topic] + news.queries_for(topic)) if topic else news.queries_for(autopilot.ANY_NICHE)))
                 say("   queries: " + " | ".join(queries))
                 db.update("news_runs", rid, status="searching")
@@ -393,7 +393,7 @@ def news_find(f: NewsFind):
                 picked = []
                 if stories:
                     db.update("news_runs", rid, status="picking")
-                    say(f"🧠 AI picking the best {f.n} of {len(stories)}…")
+                    say(f"🧠 {pick.ai_name()} picking the best {f.n} of {len(stories)}…")
                     picked = news.pick_stories(topic or "trending", stories, f.n, [r["headline"] for r in db.all("news")])
                     for x in picked:
                         say(f"   ★ {x['title'][:100]} ({x['source']}): {x.get('why', '')}")
@@ -482,9 +482,9 @@ def schedule_clip(cid: int, b: ScheduleIn):
         # the platforms go on the clip itself, so the job's other clips keep theirs
         db.update("clips", cid, status="timed", post_at=b.at, post_to=json.dumps(plats))
         db.log(c["job_id"], f"#{cid} scheduled for {time.strftime('%d %b %H:%M', time.localtime(b.at))} to {', '.join(plats)}")
-    elif c["status"] in ("timed", "scheduled"):
+    elif c["status"] in ("timed", "scheduled", "paused (streamer live)"):  # "Don't post": off the schedule, kept here
         db.update("clips", cid, status="rendered", post_at=None, post_to=None)
-        db.log(c["job_id"], f"#{cid} schedule cancelled")
+        db.log(c["job_id"], f"#{cid} taken off the schedule (won't be posted)")
     return db.get("clips", cid)
 
 
@@ -600,6 +600,11 @@ def reports(limit: int = 50):
     return db.all("reports")[:limit]
 
 
+class Framing(BaseModel):
+    aspect: float = Field(CROP_ASPECT, ge=0.56, le=1.78)
+    layout: str = Field("", max_length=200, pattern=r"^(split:[^/\\:*?\"<>|]+|cam:(top|bottom):(auto|tl|tr|bl|br|[0-9.]+,[0-9.]+,[0-9.]+,[0-9.]+))?$")
+
+
 class AutoSettings(BaseModel):
     """Every field optional: the UI saves single fields live (e.g. the ON/OFF switch) as well as the whole form."""
     enabled: bool | None = None
@@ -624,6 +629,12 @@ class AutoSettings(BaseModel):
     news_kind: Literal["news", "facts", "both"] | None = None
     news_picture: bool | None = None
     news_format: Literal["video", "photo", "both"] | None = None
+    mix: list[Framing] | None = Field(None, max_length=8)  # framings to rotate, one per topic ([] = just `aspect`/`layout`)
+    streamers: list[str] | None = Field(None, max_length=30)  # YouTube channels to watch for live streams
+    watch: bool | None = None
+    live_layout: str | None = Field(None, max_length=200, pattern=r"^(cam:(top|bottom):(auto|tl|tr|bl|br))?$")
+    live_chunk: int | None = Field(None, ge=2, le=60)  # minutes per recorded piece of a watched live stream
+    live_shorts: int | None = Field(None, ge=1, le=10)  # clips per piece
 
 
 @app.get("/api/auto")

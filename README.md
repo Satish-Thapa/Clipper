@@ -36,8 +36,9 @@ Vice City sunset look (night purple, pink-to-orange gradients, neon glow, Anton 
 9. [Limits and known platform issues](#limits-and-known-platform-issues)
 10. [Settings (.env)](#settings-env)
 11. [How it works inside](#how-it-works-inside)
-12. [Troubleshooting](#troubleshooting)
-13. [Legal](#legal)
+12. [Technical deep dive](#technical-deep-dive)
+13. [Troubleshooting](#troubleshooting)
+14. [Legal](#legal)
 
 ---
 
@@ -155,9 +156,10 @@ Open **http://127.0.0.1:8000**.
     ready. Delete any you don't want. Stored in `data/fillers/`, kept by "Reset everything". When Split is picked, a **Your video below** dropdown appears
     next to Framing.
 - ***Streamer on top, gameplay below*** / ***Gameplay on top, streamer below*** (for streams with a facecam,
-  live or not): full screen, no bars. The streamer's facecam is cut out of the frame into a 1080×600 panel (about a
-  third of the screen), and the gameplay (the middle of the frame, pushed away from the facecam's side so the
-  streamer isn't in it twice) fills the rest.
+  live or not): full screen, no bars. The streamer's facecam is cut out of the frame and fills the full width of a
+  1080×700 panel (about a third of the screen), and the gameplay (the middle of the frame, pushed away from the
+  facecam's side so the streamer isn't in it twice) fills the other 1080×1220. Works on Create, Topics and Auto
+  (and for watched streamers), for live streams and normal videos.
   - **Where's the streamer** appears next to Framing:
     - *Find the face automatically:* face detection (YuNet) on a few frames of each clip. It takes the face that stays
       in the same spot (a facecam doesn't move, faces in the game do) and frames head and shoulders. If no face is
@@ -166,10 +168,10 @@ Open **http://127.0.0.1:8000**.
     - *I'll draw a box…* (Create page): paste the link first. Clipper grabs one real frame (the live edge of a live
       stream, or a bit into a video) and you drag a rectangle around the streamer. Exact, best when the facecam has an
       odd size or spot.
-  - **Text:** streamer on top puts the follow message and headline at the very top, on their own strip (a blurred,
-    darkened copy of the video, so they never cover the face), then the facecam (1080×500), then the gameplay, with
-    captions near the bottom. Streamer below keeps the headline at the top over the gameplay and puts the captions
-    just above the facecam.
+  - **Text:** the follow message and headline are always at the very top, on the video (over the top of the
+    facecam panel when the streamer is on top; auto-framing leaves room above the head for them). Captions sit near
+    the bottom, or just above the facecam when the streamer is below. How the face is found:
+    [Technical deep dive](#finding-the-streamers-face-facecam-layouts).
 
 **Follow message** (Create, Topics, Auto and News, on by default): the red "please follow" line at the top (the 5
 messages in `FOLLOW_LINES` in `config.py` take turns, or `FOLLOW_LINE` in `.env` for always the same one). It has its
@@ -201,21 +203,37 @@ The **Auto** page. Flip the switch ON and set:
    - The plan is shown in plain words as you type, e.g. *"6 clips + 2 news posts a day, 10:00-22:00, one every
      1 h 30 min"*.
    - Quick presets: 3 a day, 6 a day, every hour.
-3. **How the clips look:** framing, headline + subtitles, voice-over, 4K.
-4. **Advanced**
+3. **How the clips look:** framing (every framing from Create, including the streamer layouts with automatic face
+   finding), headline + subtitles, follow message, voice-over, 4K, and the **face check** switch (skip videos that are
+   mostly a person talking; off = clip them too).
+   - **Mix framings:** tick several (9:16, 4:5, 1:1, 16:9, streamer on top, streamer below, split + background
+     video) and each topic gets the next one in turn, so the channel doesn't look the same all day. None ticked =
+     always the Framing above. The Activity view shows which framing each topic got.
+4. **Streamers to watch:** YouTube channels (one per line, `@name` or a channel link) and **Watch these streamers**.
+   Every 3 minutes each one is checked; when one goes **live**:
+   - the autopilot **pauses**: the running round and its topics stop, and every scheduled/timed post is **held**
+     (shown as "⏸ held while a streamer is live" on the Clips page);
+   - the stream is clipped live as a normal live job, in the layout you pick (streamer on top / below / full
+     screen), pieces of 5-30 min, N clips per piece, posting to the autopilot's platforms;
+   - when no watched stream is being clipped any more, the held posts go back on schedule and the autopilot is
+     switched back ON if it was on. Several streamers can be live at once (one job each).
+   - The table under it shows each channel: 🔴 LIVE (and its job) or ⚫ offline, and when it was last checked.
+5. **Advanced**
    - **How choosy:** candidate videos judged per video clipped (2-8).
    - **Start finding videos at:** when the day's first round starts.
-   - **Long clips per video**, **who picks the moments**, **face check** (skip videos that are mostly a person on
-     camera), **use the article's picture** for news.
+   - **Long clips per video**, **who picks the moments**, **use the article's picture** for news.
 
 ### What a day looks like
 
 1. **Start hour.** It works out what today still needs: posts per day minus posted, waiting and being made.
 2. **Learning.** It refreshes the view counts on every platform. If there's no niche, it learns one from them.
-3. **Finding trends.**
-   - DeepSeek writes search queries for the niche.
-   - YouTube is searched for this week's uploads (US), and the 40 most-viewed are read.
-   - DeepSeek names the 1-3 topics with the most momentum, leaning toward what got views on your channel before.
+3. **Finding trends** (see [Trend research](#trend-research-how-a-round-picks-topics) for the details).
+   - The main AI writes search queries for the niche.
+   - Each query is searched twice on YouTube (US): uploads **this week** and uploads **today**.
+   - Shorts are dropped, videos uploaded today count double, live streams go to the top, and no channel gets more
+     than 3 of the 40 videos the AI reads.
+   - The AI names the topics with the most momentum and scores each 0-10. Below 4 is dropped, and a topic covered in
+     the last 3 days is skipped unless it scores 9+. It leans toward what got views on your channel before.
 4. **Clips.** It queues just enough videos over those topics (clips per video, choosiness). The topic queue then
    does the work: clippability score, face check, download, clip, render.
 5. **News.** If you asked for news/fact posts, it searches news portals about the same topics, picks the best fresh
@@ -236,6 +254,8 @@ The **Auto** page. Flip the switch ON and set:
 - **■ Stop everything:** OFF, plus it stops the round in progress, every autopilot topic and job, and cancels the
   scheduled posts. The clips stay on the Clips page.
 - **▶ Run a round now:** runs a round straight away.
+- **Don't post** (Clips page): any clip waiting for an autopilot slot, held for a live stream, or timed for later can
+  be taken off the schedule. It stays on the Clips page, unposted; **⏰ Schedule** can put it back on any time.
 
 ### Watching it
 
@@ -373,6 +393,17 @@ record piece 1 ──▶ record piece 2 ──▶ record piece 3 ──▶ ...  
 - **Cleanup.** The recordings and the joined pieces are deleted when the job ends.
 
 Past streams (replays) work like normal videos, and their chat replay (via yt-dlp) is used as a signal too.
+
+**Long videos are clipped like streams.** A video at least `LONG_VIDEO_MINUTES` long (default 60) is downloaded once,
+then cut into pieces of the job's piece length (default 10 min) and each piece goes through the same pipeline as a
+live piece: its own loudness, transcript, AI pick and renders, **shorts/longs per piece**, dull pieces skipped, the
+previous piece's last 60s in front so a moment on a boundary is one clip, two pieces at a time. The video's
+most-replayed heatmap, chat replay and comment timestamps are shifted onto each piece's own clock. The log shows each
+piece's place in the video (`[piece 4] 29:00-40:00 of the video`). A 3-hour video with 3 shorts per piece can make
+up to 54 clips; use **Pieces to clip** to cap it.
+
+**Streamers to watch** (Auto page): see [Autopilot](#autopilot). A watched streamer going live starts exactly this
+kind of live job by itself.
 
 ## What works (analytics) and reports
 
@@ -708,11 +739,11 @@ Notes:
 | `download.py` | everything yt-dlp: info, search, download (8 parallel chunks), live recording, chat, comments, cookies, bot-check detection |
 | `signals.py` | the hype curve and candidate windows |
 | `transcribe.py` | faster-whisper (GPU), word timestamps |
-| `pick.py` | DeepSeek: moments, titles, hashtags, search queries, clippability; the shared `_ask` |
-| `render.py` | ffmpeg: framing, ASS headline/captions/end card, logo, voice-over (TTS), GPU encoder, news videos, Instagram re-encode |
+| `pick.py` | the AI: moments, titles, hashtags, search queries, clippability; `_ask` with the provider order and fallbacks (DeepSeek / Ollama on another machine / Ollama on this PC), `ai_name` for the logs |
+| `render.py` | ffmpeg: framing, split and **facecam** layouts (`cam_layout`, `find_cam`), ASS headline/captions/end card, logo, voice-over (TTS), GPU encoder, news videos, Instagram re-encode |
 | `vision.py` | face check from YouTube's storyboard frames (OpenCV YuNet) |
 | `topics.py` | the topic queue: queries → search → judge → face check → one job per video |
-| `autopilot.py` | the daily rounds, the posting schedule, stop/OFF, news in rounds |
+| `autopilot.py` | the daily rounds, trend research, framing mix, the posting schedule, stop/OFF, news in rounds, the **streamer watch** (pause, live job, resume) |
 | `news.py` | news/facts: Google/Bing News RSS, article reading, Wikipedia, DeepSeek pick/write, post making, timed posts |
 | `insights.py` | "what works" from view counts, the history text for DeepSeek, the learned niche |
 | `social.py` | Facebook / Instagram / TikTok uploads, hashtags per platform, limit timers, upload counters |
@@ -759,8 +790,8 @@ Notes:
 ### Background loops (started with the server)
 
 - **Topic queue:** runs queued topics one at a time, one video at a time.
-- **Autopilot (every minute):** posts a scheduled clip when its slot has come, posts timed posts, and every 5 min
-  checks whether a round is due.
+- **Autopilot (every minute):** posts a scheduled clip when its slot has come, posts timed posts, every 3 min checks
+  the watched streamers, and every 5 min checks whether a round is due (not while a watched streamer is live).
 - **Stats (every `REPORT_MINUTES`):** views from every platform, then a report (and WhatsApp).
 
 ### Data
@@ -768,9 +799,11 @@ Notes:
 Everything lives under `data/` (gitignored):
 
 - **`clipper.db`**
-  - `jobs`, `clips` (with `uploads`, `views`, status: rendered / scheduled / timed / uploaded...)
+  - `jobs`, `clips` (with `uploads`, `views`, `post_at` + `post_to` for timed posts, status: rendered / scheduled /
+    timed / paused (streamer live) / uploaded...)
   - `topics`, `auto_rounds` (the Activity record), `news` (stories used)
-  - `reports`, `limit_hits`, `settings` (autopilot settings, post log, learned niche...)
+  - `reports`, `limit_hits`, `settings` (autopilot settings, post log, learned niche, AI order, `live_watch` per
+    channel, `live_pause` while a streamer is live, `mix_idx`...)
 - **`jobs/<id>/`:** clips (and the source until clipping finishes)
 - **`logs/clipper.log`** (rotated at 5 MB)
 - **`youtube_token.json`, `tiktok_token.json`**
@@ -783,6 +816,157 @@ Everything lives under `data/` (gitignored):
 .venv\Scripts\python -m clipper.render
 .venv\Scripts\python -m clipper.topics
 $env:CLIPPER_DATA = "$env:TEMP\clipper-test"; .venv\Scripts\python -m clipper.insights   # writes test rows: temp data only
+```
+
+## Technical deep dive
+
+How each part actually works, which tool does what, and why it's built that way.
+
+### Tools
+
+| Tool | Used for | Where |
+|---|---|---|
+| **Python 3.12** + **FastAPI** / **uvicorn** | the server and every `/api/...` endpoint; background loops run as daemon threads | `app.py`, `__main__.py` |
+| **SQLite** | jobs, clips, topics, rounds, settings; migrations are `ALTER TABLE ADD COLUMN` on start | `db.py` |
+| **yt-dlp** | video info, YouTube search, downloads (8 fragments at once), live recording URLs, chat (`live_chat` track), comments, storyboards, a channel's `/live` page | `download.py`, `vision.py`, `autopilot.py` |
+| **ffmpeg** / **ffprobe** | loudness (EBU R128), cutting pieces (`-c copy`), every render (filter graphs, libass subtitles), one-frame grabs, NVENC / x264 encoding | `signals.py`, `render.py`, `worker.py`, `download.py` |
+| **faster-whisper** | word-level transcripts on the GPU, one at a time (a lock) | `transcribe.py` |
+| **OpenCV** + **YuNet** (`face_detection_yunet_2023mar.onnx`, MIT) | face detection: the face check and the streamer facecam finder | `vision.py`, `render.py` |
+| **NumPy** | hype curves, frame maths, medians | `signals.py`, `vision.py`, `render.py` |
+| **OpenAI Python SDK** | one client for every AI: DeepSeek's API and Ollama's OpenAI-compatible `/v1` | `pick.py` |
+| **Ollama** | local models: gpt-oss:20b on the other machine, qwen3.5:2b on this PC | `pick.py` |
+| **httpx** | platform APIs (Facebook, Instagram, TikTok), Ollama model lists, storyboard images, RSS | `social.py`, `pick.py`, `vision.py`, `news.py` |
+| **Windows SAPI** (PowerShell) / macOS `say` | voice-over TTS | `render.py` |
+| **NVENC** (GTX 1650) | GPU H.264 encoding, picked by a 1-frame test encode at start; x264 on the CPU otherwise | `render.py` |
+
+### Finding the streamer's face (facecam layouts)
+
+Two different face jobs use the same detector, **YuNet** (OpenCV's `FaceDetectorYN`, a small CNN that returns a box
+and confidence for every face):
+
+1. **Face check** (`vision.py`, before a video is chosen): "is this video mostly a person talking?"
+2. **Facecam finder** (`render.find_cam`, while rendering a clip): "where is the streamer's webcam in the frame?"
+
+**Facecam finder, step by step** (`Where's the streamer → Find the face automatically`):
+
+1. **Sample frames.** OpenCV opens the downloaded source and reads 6 frames spread evenly over the clip
+   (`np.linspace(start+0.5, end-0.5, 6)`), seeking by milliseconds.
+2. **Detect.** YuNet runs on each full-resolution frame with a 0.7 confidence threshold. Every face box
+   `(x, y, w, h)` from every frame goes into one list. Game characters, faces on posters and the streamer all
+   end up there.
+3. **Keep the face that doesn't move.** A facecam is a fixed overlay, so the streamer's face sits in the same spot in
+   every frame; faces in the game move around. For each box it counts how many boxes are "near" it (centres
+   within one face width/height), and keeps the box with the most neighbours. Fewer than 2 = no steady face =
+   no facecam: that clip falls back to normal full-screen framing and the job log says
+   `facecam: no face found, using normal full-screen framing`.
+4. **Median.** The median x, y, w, h of that group gives a stable face box (one blurry frame can't throw it off).
+5. **Frame head and shoulders.** The crop box is `2.8 × face height` tall and 4:3 wide (a webcam's shape; wider
+   would pull in the game next to the facecam). The face sits 68% of the way down the box when the streamer is on
+   top (so the headline drawn over the top of the panel lands above the head) and 45% when below. The box is
+   clamped inside the frame.
+6. **Result** is a share of the frame (0-1), logged as `facecam: found at x 5% y 69% (24% x 31% of the frame)`.
+
+**The other two ways:**
+
+- **Corner presets:** a fixed 30% × 30% box in that corner (`CAM_CORNERS`).
+- **Draw a box** (Create page): `GET /api/frame?url=` gets one real frame. yt-dlp resolves the stream URL
+  (720p), ffmpeg reads one frame with yt-dlp's HTTP headers: the live edge for a live stream, or 30% in (max 10 min)
+  for a video. Long single-file videos hang on a direct seek, so it tries a quick seek (12s), then decoding 20s
+  from the start, then the very first frame (streams that just ended can't be seeked yet). The page shows the frame,
+  you drag a rectangle (pointer events, stored as 0-1 fractions), and the layout is saved as
+  `cam:top:x,y,w,h`. YouTube's signed URLs never reach an error message.
+
+**How the layout is drawn** (one ffmpeg filter graph, `render.cut`):
+
+```
+[0:v] split ─┬─ crop facecam box ─ scale to 1080 wide (fill) ─ crop 1080x700 ───────────── [cam]
+             └─ crop a slice of the frame (1080:1220 shape) away from the facecam's side ─ scale/crop 1080x1220 ─ [game]
+[cam][game] vstack  (or [game][cam] for "streamer below")  →  1080x1920  →  subtitles (headline, follow, captions)  →  logo
+```
+
+- **Full screen:** both panels fill the width; the facecam is only cropped top/bottom *inside its own box*.
+- **Gameplay slice:** the middle of the frame, pushed away from the facecam's side (`x + w + 5%` when the facecam is
+  on the left, `x - 5%` when on the right), so the streamer isn't shown twice.
+- **Text:** the follow message and headline are drawn at the top, on the video. Captions sit near the bottom when the
+  streamer is on top, and just above the facecam when it's below (`cap_margin = CAM_H + 40`).
+
+**Face check** (`vision.py`): no download. It reads YouTube's **storyboard** (the tiny preview mosaics shown when
+you hover the seek bar), splits them into ~30 frames spread over the video, upscales each 2× (YuNet misses faces
+under ~10px), and finds the biggest face. A frame counts as "person" only when one face covers 3%+ of the frame (a
+close-up); facecams and crowds are smaller. More than 40% such frames = mostly a person talking = skipped. It also
+measures how many neighbouring frames are identical (still image / slideshow / audio podcast).
+
+### AI routing and fallbacks
+
+- **Settings → AI models** saves an order (`ai_order`), e.g. `local, deepseek, pc`.
+- Every AI call goes through `pick._ask`: it tries each provider in order with the OpenAI SDK (`chat.completions`,
+  JSON mode; plain mode when a model rejects JSON mode), strips `<think>` blocks and code fences, parses the JSON.
+  Connection errors, API errors or broken JSON → the next provider gets the same request.
+- **Local** (other machine) has a 30-min read timeout for long transcripts but a 10s connect timeout, so a machine
+  that's off fails fast. **This PC** sends `reasoning_effort: none` (qwen3.5:2b answers in 1-4s instead of ~12s).
+- Logs name the AI before and after: `STEP 5 asking gpt-oss:20b (Local (Ollama)) to pick...`, then
+  `🤖 AI: gpt-oss:20b answered in 4.2s` (or `failed ..., trying the next one` and `(fallback)`). The 🤖 line goes
+  into the log of the job/topic/News run it belongs to (a thread-local "where to log" set by `db.step` and
+  `db.log_to`).
+
+### Trend research (how a round picks topics)
+
+1. **Queries:** the AI turns the niche (or "anything trending" / the niche learned from your views) into 4-6 YouTube
+   searches.
+2. **Two searches per query:** this week (20 results) and **today** (12 results), through yt-dlp's flat search (no
+   download).
+3. **Ranking:** Shorts and videos under 90s are dropped (nothing to clip); score = views × 2 if uploaded today
+   (rising now), live streams first; then at most 3 videos per channel, top 40.
+4. **The AI reads** those 40 (title, channel, views, minutes, `new`, `live`) plus the topics covered in the last 3
+   days and your channel's history ("what got views, what flopped"), and returns topics with a 0-10 score
+   (momentum × how well it clips).
+5. **Filtering:** below 4 → dropped; same as a topic from the last 3 days (75%+ word overlap) → dropped unless it
+   scores 9+; duplicates within the round → dropped. Best score first.
+6. **Activity view** records all of it: queries with week/today counts, the 40 videos, the "smart" notes (how many new
+   today, Shorts dropped, per-channel cap, topics avoided) and the dropped topics with scores.
+7. **Framing mix:** each queued topic takes the next framing from the mix (`mix_idx` in settings) and keeps it even
+   when settings change while it runs.
+
+### Streamer watch
+
+A small state machine in `autopilot.watch_tick`, run every 3 minutes by the autopilot loop (also while it's OFF):
+
+```
+for each channel:
+  job running for it?  → still live, nothing to do
+  watch off?           → skip
+  yt-dlp  <channel>/live  (process=False: one page, no download)
+     "not currently live"  → offline
+     a video id            → confirm it's live (not "upcoming") → new stream (not the one already clipped)?
+                                → pause the autopilot (once) → start a live job → remember job + video id
+none running and paused  → resume
+```
+
+- **Pause** (`_pause_for_live`): stores `{was_enabled, held: {clip id: status}}` in `live_pause`, sets the
+  running round's abort flag, stops autopilot topics, marks scheduled/timed clips `paused (streamer live)`, and
+  switches the autopilot OFF.
+- **Resume** (`_resume_after_live`): puts each held clip back to its old status (timed posts whose time passed
+  post on the next minute), and switches the autopilot back ON if it was on. **■ Stop everything** clears the pause
+  so it won't switch back on by itself.
+- A stream you stop by hand isn't restarted (the video id is remembered); the channel's **next** stream is.
+
+### Long videos in pieces
+
+`worker._pieces`: ffprobe gives the length; ffmpeg cuts piece *k* from `k×L − 60s` to `(k+1)×L` with `-c copy`
+(no re-encode, a second or two per piece). Copying starts at the keyframe before the cut, so the real start is
+worked out as `end − piece length`, and the boundary (seconds of the previous piece in front) from that. Heatmap
+ranges, chat and comment times are moved onto the piece's clock and clipped to it. Each piece runs `_process` with
+`live={"piece", "boundary"}`, the same switch live pieces use: the AI may skip a dull piece, picks under 55 are
+dropped, and a clip may start in the overlap only if the moment continues into the new piece.
+
+### Post statuses
+
+```
+rendering → rendered ──(manual Upload)──────────────────────────→ uploading → uploaded
+              │  └─(⏰ Schedule: time + platforms → post_at, post_to)→ timed ──(time comes, news.timed_tick)→ uploading
+              └─(autopilot clip)→ scheduled ──(its slot, upload_tick)→ uploading
+   scheduled / timed ──(watched streamer live)→ paused (streamer live) ──(stream over)→ back to scheduled / timed
+   scheduled / timed / paused ──(Don't post)→ rendered        ■ Stop everything: scheduled → not uploaded (autopilot stopped)
 ```
 
 ---

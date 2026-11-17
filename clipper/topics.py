@@ -62,7 +62,7 @@ def _judge(tid, topic, videos, face_check=True):
     if not videos:
         return {}
     try:
-        with db.step(tid, f"AI judging {len(videos)} videos", "topics"):
+        with db.step(tid, f"{pick.ai_name()} judging {len(videos)} videos", "topics"):
             verdicts = pick.clippable(topic, videos)
     except Exception as e:
         db.log(tid, f"clippability check failed ({e!r}), using views only", "topics", exc=True)

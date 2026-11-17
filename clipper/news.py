@@ -309,7 +309,7 @@ def make_post(story, kind="news", platforms=(), voiceover=False, picture=True, l
             say(f"   article read: {len(story.get('text') or '')} chars of text, picture: {'yes' if story.get('image') else 'no'}"
                 + ("" if story.get("text") else " → written from the headline only"))
         posted = [r["headline"] for r in _used() if r.get("kind") == "fact"]
-        with db.step(jid, "AI writing the post"):
+        with db.step(jid, f"{pick.ai_name()} writing the post"):
             p = write_post(story, kind, posted)
         db.log(jid, f"post: [{p['badge']}] {p['headline']} | " + " | ".join(p["lines"]))
         say(f"   AI wrote: [{p['badge']}] {p['headline']} | " + " | ".join(p["lines"]))

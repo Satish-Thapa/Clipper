@@ -7,7 +7,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from . import db, download, pick, render, signals, social, transcribe
-from .config import DATA, IG_MAX_SECONDS, KEEP_SOURCES, LIVE_CHUNK_SECONDS
+from .config import DATA, IG_MAX_SECONDS, KEEP_SOURCES, LIVE_CHUNK_SECONDS, LONG_VIDEO_MINUTES
 
 STOPS = {}  # job_id -> threading.Event
 RENDER_JOBS = 2  # clips rendered at once (GPU encoder + CPU side by side)
@@ -113,7 +113,66 @@ def _vod(job, i, d):
     db.log(jid, f"heatmap: {'yes' if i.get('heatmap') else 'no'}, chat msgs: {len(chat)}, timestamped comments: {len(comments)}")
     src = next(d.glob("source.*"))
     db.log(jid, f"source file: {src.name}, {src.stat().st_size / 1e6:.0f} MB, {_describe(src)}")
-    _process(job, src, i.get("title", ""), d, heatmap=i.get("heatmap"), chat=chat, comments=comments)
+    total = i.get("duration") or _dur(src)
+    if LONG_VIDEO_MINUTES and total >= LONG_VIDEO_MINUTES * 60 and (job.get("mode") or "hype") != "manual":
+        _pieces(job, src, total, d, i.get("title", ""), i.get("heatmap"), chat, comments)
+    else:
+        _process(job, src, i.get("title", ""), d, heatmap=i.get("heatmap"), chat=chat, comments=comments)
+
+
+def _dur(f):
+    out = subprocess.run([render.FFPROBE, "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(f)],
+                         capture_output=True, text=True).stdout.strip()
+    try:
+        return float(out)
+    except ValueError:
+        return 0.0
+
+
+def _pieces(job, src, total, d, title, heatmap, chat, comments):
+    """A long video (LONG_VIDEO_MINUTES+) clipped like a live stream: cut into pieces of the job's piece length
+    (default LIVE_CHUNK_SECONDS), each with the previous piece's last JOIN_SECONDS in front (a moment on a boundary
+    can still be one clip), and each piece processed on its own (two at a time): its own loudness, transcript,
+    AI pick and renders, with shorts/longs PER PIECE and dull pieces skipped, exactly like live pieces.
+    The video's heatmap, chat replay and comment times are shifted to each piece's own clock."""
+    from .config import FFMPEG
+    jid, stop = job["id"], STOPS[job["id"]]
+    size = int((job.get("chunk_minutes") or 0) * 60) or LIVE_CHUNK_SECONDS
+    n = -(-int(total) // size)
+    if job.get("max_chunks"):
+        n = min(n, int(job["max_chunks"]))
+    db.log(jid, f"long video ({total / 60:.0f} min): clipping it like a stream, in {n} piece(s) of {size / 60:g} min, "
+                f"{job['shorts']} shorts + {job['longs']} long per piece, 2 pieces at a time")
+
+    def shift(off, length):
+        heat = [{**h, "start_time": max(0.0, h["start_time"] - off), "end_time": min(length, h["end_time"] - off)}
+                for h in heatmap or [] if h["end_time"] > off and h["start_time"] < off + length]
+        inside = lambda ts: [t - off for t in ts or [] if 0 <= t - off < length]
+        return heat, inside(chat), inside(comments)
+
+    with ThreadPoolExecutor(2) as ex:
+        futures = []
+        for k in range(n):
+            if stop.is_set():
+                db.log(jid, f"stopped: {k} of {n} piece(s) handed over")
+                break
+            start, end = k * size, min((k + 1) * size, total)
+            s0 = max(0, start - (JOIN_SECONDS if k else 0))
+            out = d / f"live_vod_{k:04d}.mp4"
+            db.update("jobs", jid, status=f"cutting piece {k + 1}/{n}")
+            subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-ss", f"{s0:.2f}", "-i", str(src), "-t", f"{end - s0:.2f}",
+                            "-c", "copy", "-avoid_negative_ts", "make_zero", str(out)], check=True, capture_output=True)
+            length = _dur(out)
+            real0 = max(0.0, end - length)  # keyframes: the piece really starts a little before s0
+            boundary = max(0.0, start - real0) if k else 0.0
+            heat, ch, co = shift(real0, length)
+            db.log(jid, f"[piece {k + 1}] {_mmss(real0)}-{_mmss(end)} of the video"
+                        + (f" (the previous piece's last {boundary:.0f}s in front)" if boundary else ""))
+            futures.append(ex.submit(_process, db.get("jobs", jid), out, f"{title} (part {k + 1}/{n})", d,
+                                     heatmap=heat, chat=ch, comments=co, live={"piece": k + 1, "boundary": boundary}))
+        db.update("jobs", jid, status="clipping pieces")
+        for f in futures:
+            f.result()
 
 
 def _live(job, i, d):
@@ -244,8 +303,8 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None, live=No
     tag = f"[piece {live['piece']}] " if live else ""
     B = live["boundary"] if live else 0
 
-    def say(m):
-        db.log(jid, tag + m)
+    def say(m, exc=False):
+        db.log(jid, tag + m, exc=exc)
     try:
         # STEP 1: Loudness. ffmpeg's ebur128 filter measures "momentary loudness" in LUFS, the
         # broadcast unit for how loud audio *feels* to a person (not raw volume). We keep one value
@@ -320,7 +379,7 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None, live=No
         # title/description/hashtags. Its numbers are clamped by pick.validate(). If the API fails,
         # fall back to the strongest raw hype windows so the job still produces something.
         try:
-            with db.step(jid, tag + f"STEP 5 asking the AI to pick {counts['short']} short / {counts['long']} long"):
+            with db.step(jid, tag + f"STEP 5 asking {pick.ai_name()} to pick {counts['short']} short / {counts['long']} long"):
                 note, verdict = pick.live_note(B) if live else "", {}
                 if mode == "hype":
                     chosen = pick.choose(title, cands, counts, note, verdict)

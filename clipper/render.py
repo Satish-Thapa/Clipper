@@ -248,8 +248,7 @@ def encoder_name():
     return "GPU NVENC" if "h264_nvenc" in encoder() else "CPU x264"
 
 
-CAM_STRIP_H = 500  # streamer on top with a text strip above it: a shorter facecam panel, so the gameplay keeps room
-CAM_H = 600  # facecam layouts: the streamer's panel (~30% of 1920); the gameplay gets the other 1320px
+CAM_H = 700  # facecam layouts: the streamer's panel (~36% of 1920, full width); the gameplay gets the other 1220px
 CAM_CORNERS = {"tl": (0, 0, .3, .3), "tr": (.7, 0, .3, .3), "bl": (0, .7, .3, .3), "br": (.7, .7, .3, .3)}  # x, y, w, h
 
 
@@ -272,7 +271,7 @@ def cam_layout(layout):
     return (parts[1], (x, y, w, h)) if w > 0.02 and h > 0.02 else None
 
 
-def find_cam(src, start, end, samples=6):
+def find_cam(src, start, end, samples=6, face_at=0.45):
     """Face detection for the facecam: YuNet on a few frames of the clip -> the streamer's (x, y, w, h) box as a
     share of the frame, or None. Takes the face seen in the most frames (a facecam doesn't move; faces in the game
     do), then frames it with some room around the head at the panel's shape."""
@@ -306,7 +305,7 @@ def find_cam(src, start, end, samples=6):
     ph = min(fh * 2.8, H)  # head and shoulders, tight enough to stay inside the stream's own facecam box
     pw = min(ph * 4 / 3, W)  # a webcam's 4:3 shape (wider would pull in the game next to it)
     x = min(max(fx + fw / 2 - pw / 2, 0), W - pw)
-    y = min(max(fy + fh / 2 - ph * 0.45, 0), H - ph)
+    y = min(max(fy + fh / 2 - ph * face_at, 0), H - ph)  # face_at: how far down the box the face sits
     return x / W, y / H, pw / W, ph / H
 
 
@@ -340,7 +339,7 @@ def cut(src, out, start, end, vertical, words=(), headline="", voice=(), aspect=
     filler = filler_path(layout) if vertical else None
     cam = cam_layout(layout) if vertical and not filler else None
     if cam and cam[1] == "auto":
-        box = find_cam(src, start, end)
+        box = find_cam(src, start, end, face_at=0.68 if cam[0] == "top" else 0.45)  # top: room for the headline over it
         db.here(f"   facecam: found at x {box[0]:.0%} y {box[1]:.0%} ({box[2]:.0%} x {box[3]:.0%} of the frame)" if box
                 else "   facecam: no face found, using normal full-screen framing")
         cam = (cam[0], box) if box else None
@@ -372,33 +371,21 @@ def cut(src, out, start, end, vertical, words=(), headline="", voice=(), aspect=
                 f"[{n_in}:v]scale=1080:{bot_h}:force_original_aspect_ratio=increase,crop=1080:{bot_h},setsar=1,fps=30[fill];"
                 f"[bg][clip]overlay=0:{top}[t];[t][fill]overlay=0:{top + SPLIT_CLIP_H}:shortest=1{subs}")
     elif cam:
-        # Facecam stack: the streamer's box cut out of the frame fills a 1080x600 panel (1080x500 under a text strip), the gameplay (centre of the
-        # frame) fills the rest, one above the other. Captions sit over the gameplay, clear of the face.
+        # Facecam stack, full screen: the streamer's box cut out of the frame fills the whole width of a 1080xCAM_H
+        # panel (cropped top/bottom inside the box only, so nothing around the facecam comes in), the gameplay (middle
+        # of the frame) fills the rest. Headline + follow message sit at the top, on the video; captions on the gameplay.
         x, y, w, h = cam[1]
-        # Streamer on top + text: the follow message and headline get their own strip at the very top (over a
-        # blurred, darkened copy of the frame, like the split layout), then the facecam, then the gameplay.
-        strip = top_block(9 / 16, len(hook_lines(hook)))[2] + 24 if cam[0] == "top" and (headline or hook) else 0
-        cam_h = CAM_STRIP_H if strip else CAM_H
-        game_h = 1920 - strip - cam_h
+        cam_h, game_h = CAM_H, 1920 - CAM_H
         # Gameplay = a slice from the middle of the frame, pushed off the facecam's side so the streamer isn't in it twice.
         gx = (f"min(max((iw-ow)/2,iw*{min(x + w + 0.05, 1):.4f}),iw-ow)" if x + w / 2 < 0.4 else
               f"max(min((iw-ow)/2,iw*{max(x - 0.05, 0):.4f}-ow),0)" if x + w / 2 > 0.6 else "(iw-ow)/2")
         panels = ["[cam]", "[game]"] if cam[0] == "top" else ["[game]", "[cam]"]
-        # The facecam keeps its own shape, centred in the panel (not stretched to the panel's width, which would zoom
-        # in and pull in the game around it); the sides are a blurred copy of it.
-        parts = (f"[c]crop=w=iw*{w:.4f}:h=ih*{h:.4f}:x=iw*{x:.4f}:y=ih*{y:.4f},split=2[c1][c2];"
-                 f"[c1]scale=1080:{cam_h}:force_original_aspect_ratio=increase,crop=1080:{cam_h},boxblur=20:2,"
-                 f"eq=brightness=-0.3,setsar=1[cbg];"
-                 f"[c2]scale=1080:{cam_h}:force_original_aspect_ratio=decrease:flags=lanczos,setsar=1[cfg];"
-                 f"[cbg][cfg]overlay=(W-w)/2:(H-h)/2[cam];"
-                 f"[g]crop=w='min(iw,ih*{1080 / game_h:.4f})':h=ih:x='{gx}',"
-                 f"scale=1080:{game_h}:force_original_aspect_ratio=increase:flags=lanczos,crop=1080:{game_h},setsar=1[game];")
-        if strip:
-            head = (f"[0:v]split=3[a][c][g];[a]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
-                    f"boxblur=24:2,eq=brightness=-0.35,setsar=1[bg];" + parts +
-                    f"[bg][cam]overlay=0:{strip}[t];[t][game]overlay=0:{strip + cam_h}{subs}")
-        else:
-            head = f"[0:v]split=2[c][g];" + parts + f"{''.join(panels)}vstack=inputs=2{subs}"
+        head = (f"[0:v]split=2[c][g];"
+                f"[c]crop=w=iw*{w:.4f}:h=ih*{h:.4f}:x=iw*{x:.4f}:y=ih*{y:.4f},"
+                f"scale=1080:{cam_h}:force_original_aspect_ratio=increase:flags=lanczos,crop=1080:{cam_h},setsar=1[cam];"
+                f"[g]crop=w='min(iw,ih*{1080 / game_h:.4f})':h=ih:x='{gx}',"
+                f"scale=1080:{game_h}:force_original_aspect_ratio=increase:flags=lanczos,crop=1080:{game_h},setsar=1[game];"
+                f"{''.join(panels)}vstack=inputs=2{subs}")
     else:
         head = f"[0:v]{vf}{subs}"
     graph, logo_in = f"{head}[o]", []
