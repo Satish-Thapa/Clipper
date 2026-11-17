@@ -288,6 +288,29 @@ def learn_now():
     return out
 
 
+class ChatMsg(BaseModel):
+    role: Literal["user", "ai"]
+    text: str = Field(..., min_length=1, max_length=4000)
+
+
+class Chat(BaseModel):
+    messages: list[ChatMsg] = Field(..., min_length=1, max_length=40)  # the conversation so far, last = the question
+
+
+@app.post("/api/ai/chat")
+def ai_chat(c: Chat):
+    """Chat page: talk to the configured AI model (DeepSeek, Ollama or any provider) to check it works -> {reply, seconds}.
+    ponytail: the history goes in as one text through pick._ask, so it reuses the provider/JSON handling."""
+    t = time.time()
+    history = "\n\n".join(f"{'User' if m.role == 'user' else 'You'}: {m.text}" for m in c.messages)
+    try:
+        reply = pick._ask(f"Conversation so far:\n\n{history}\n\nReply to the user's last message. "
+                          'Answer in JSON: {"reply": "your answer"}', system="You are a helpful assistant.", key="reply")
+    except Exception as e:
+        raise HTTPException(502, f"AI error: {e}")
+    return {"reply": str(reply), "seconds": round(time.time() - t, 1)}
+
+
 class NewsFind(BaseModel):
     topic: str = Field("", max_length=200)  # "" = the autopilot's niche, else the niche learned from views, else trending
     kind: Literal["news", "facts"] = "news"

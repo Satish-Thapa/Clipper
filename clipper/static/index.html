@@ -71,6 +71,12 @@
   .score { color:var(--hot); font-weight:700; }
   .dim { color:var(--dim); } a { color:var(--hot); }
   textarea { width:100%; min-height:70px; font:12px/1.4 ui-monospace, monospace; }
+  #chatlog { height:60vh; overflow-y:auto; display:flex; flex-direction:column; gap:10px; padding:4px; }
+  .msg { max-width:75%; padding:10px 14px; border-radius:14px; white-space:pre-wrap; word-break:break-word; }
+  .msg.user { align-self:flex-end; background:var(--hot); color:#fff; border-bottom-right-radius:4px; }
+  .msg.ai { align-self:flex-start; background:var(--bg); border:1px solid var(--line); border-bottom-left-radius:4px; }
+  .msg.err { color:#f66; border-color:#7a2a4a; }
+  .msg small { display:block; margin-top:4px; font-size:11px; opacity:.6; }
   .curves svg { width:100%; height:120px; background:var(--bg); border-radius:6px; display:block; }
   .legend { display:flex; gap:12px; font-size:12px; margin:6px 0 2px; flex-wrap:wrap; align-items:center; }
   .legend label.check { font-size:12px; gap:4px; }
@@ -193,9 +199,10 @@
     <a href="#news">News<span class="n" id="n-news"></span></a>
     <a href="#reports">Reports</a>
     <a href="#logs">Logs</a>
+    <a href="#chat">AI Chat</a>
     <a href="#settings">⚙ Settings</a>
   </nav>
-  <div class="yt"><span id="quota"></span><span id="ds"></span><span id="yt"></span></div>
+  <div class="yt"><span id="quota"></span><span id="ds"></span><a href="#chat" title="Chat with the AI model to check it works" style="text-decoration:none">💬</a><span id="yt"></span></div>
 </header>
 <main>
  <div class="banner" id="banner"></div>
@@ -341,6 +348,17 @@
       <button>Add to queue</button>
     </form>
     <div id="topics" style="margin-top:12px"></div>
+  </section>
+ </div>
+
+ <div class="page" id="page-chat">
+  <div class="page-head"><h2>AI Chat</h2><p>Talk to the AI model the app uses (<span id="chatmodel">…</span>) to check it works.</p></div>
+  <section class="panel">
+   <div id="chatlog"></div>
+   <form class="row" onsubmit="sendChat(event)" style="margin-top:12px">
+    <input id="chatin" placeholder="Type a message…" autocomplete="off" style="flex:1">
+    <button id="chatgo">Send</button><button type="button" class="ghost" onclick="clearChat()">Clear</button>
+   </form>
   </section>
  </div>
 
@@ -530,6 +548,28 @@ async function sendReport(btn) {
 async function stopTopic(id) { await post(`/api/topics/${id}/stop`); refresh(); }
 async function removeTopic(id) { const r = await fetch(`/api/topics/${id}`, {method: "DELETE"}); if (!r.ok) alertBox((await r.json()).detail); refresh(); }
 const alertBox = msg => { $("#jobs").insertAdjacentHTML("afterbegin", `<p style="color:#f66">${esc(msg)}</p>`); };
+
+// AI Chat page: the conversation lives in this array (gone on reload); the server gets it all each turn.
+let chat = [];
+function drawChat() {
+  $("#chatlog").innerHTML = chat.length ? chat.map(m => `<div class="msg ${m.role}${m.err ? " err" : ""}">${esc(m.text)}${
+    m.secs != null ? `<small>${m.secs}s</small>` : ""}</div>`).join("")
+    : `<p class="dim" style="margin:auto;text-align:center">Say something to check the model answers.</p>`;
+  $("#chatlog").scrollTop = $("#chatlog").scrollHeight;
+}
+async function sendChat(e) {
+  e.preventDefault();
+  const box = $("#chatin"), text = box.value.trim();
+  if (!text) return;
+  chat.push({role: "user", text}); box.value = ""; $("#chatgo").disabled = true;
+  chat.push({role: "ai", text: "…"}); drawChat();
+  const r = await post("/api/ai/chat", {messages: chat.slice(0, -1).filter(m => !m.err).slice(-40).map(({role, text}) => ({role, text}))});
+  const j = await r.json();
+  chat[chat.length - 1] = r.ok ? {role: "ai", text: j.reply, secs: j.seconds} : {role: "ai", text: `Not working: ${j.detail}`, err: true};
+  $("#chatgo").disabled = false; drawChat(); box.focus();
+}
+function clearChat() { chat = []; drawChat(); }
+drawChat();
 
 async function connectYT(btn) {
   btn.disabled = true; btn.textContent = "Finish sign-in in the new browser tab…";
@@ -1228,7 +1268,9 @@ let clipKey = "";
 async function refresh() {
   const s = await (await fetch("/api/state")).json();
   const ds = s.deepseek || {}, b = (ds.balances || [])[0];
-  $("#ds").innerHTML = ds.error ? `<span style="color:#f66" title="${esc(ds.error)}">DeepSeek balance: error</span>`
+  $("#chatmodel").textContent = ds.model ? `${ds.model} at ${ds.url}` : "DeepSeek";
+  $("#ds").innerHTML = ds.model ? `<span style="color:var(--ok)" title="${esc(ds.url)}">AI: ${esc(ds.model)}</span>`
+    : ds.error ? `<span style="color:#f66" title="${esc(ds.error)}">DeepSeek balance: error</span>`
     : b ? `<span style="color:${!ds.available || +b.total < 1 ? "#f66" : +b.total < 3 ? "var(--warn)" : "var(--ok)"}"
         title="topped up ${esc(b.topped_up)} + granted ${esc(b.granted)} ${esc(b.currency)}">DeepSeek left: ${b.currency === "USD" ? "$" : ""}${esc(b.total)} ${b.currency === "USD" ? "" : esc(b.currency)}${ds.available ? "" : " (empty)"}</span>` : "";
   const up = s.uploads || {}, hhmm = t => new Date(t * 1000).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"});

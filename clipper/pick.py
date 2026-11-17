@@ -7,12 +7,13 @@ Two ways in:
 Both return the same list of clip dicts, always passed through validate() first.
 """
 import json
+import re
 import time
 
 import httpx
-from openai import OpenAI
+from openai import BadRequestError, OpenAI
 
-from .config import (DEEPSEEK_API_KEY, DEEPSEEK_MODEL, LONG_MAX, LONG_MIN, SHORT_HARD_MAX, SHORT_MAX, SHORT_MIN,
+from .config import (LLM_API_KEY, LLM_BASE_URL, LLM_MODEL, DEEPSEEK_API_KEY, DEEPSEEK_MODEL, LONG_MAX, LONG_MIN, SHORT_HARD_MAX, SHORT_MAX, SHORT_MIN,
                      STRETCH_LONG, STRETCH_SHORT)
 
 # Clip kinds (all rendered vertical 9:16):
@@ -286,6 +287,8 @@ _balance = {"at": 0, "value": None}
 def balance():
     """DeepSeek credit left, e.g. {"available": True, "balances": [{"currency": "USD", "total": "10.59", ...}]}.
     Cached 60s (the UI polls every 2s). Never raises: errors come back as {"error": ...}."""
+    if LLM_BASE_URL:  # another provider/local model: no DeepSeek balance, just say which model is in use
+        return {"model": LLM_MODEL, "url": LLM_BASE_URL}
     if time.time() - _balance["at"] < 60:
         return _balance["value"]
     try:
@@ -305,17 +308,28 @@ def balance():
 
 
 def _ask(task, system=SYSTEM, key="clips", full=False):
-    """Send one request to DeepSeek (OpenAI-compatible API) in JSON mode; return the raw `key` list
-    (full=True: the whole answer as a dict)."""
-    if not DEEPSEEK_API_KEY:
-        raise RuntimeError("DEEPSEEK_API_KEY missing in .env")
-    client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
-    r = client.chat.completions.create(
-        model=DEEPSEEK_MODEL,
-        response_format={"type": "json_object"},  # forces valid JSON back
-        messages=[{"role": "system", "content": system}, {"role": "user", "content": task}],
-    )
-    answer = json.loads(r.choices[0].message.content)
+    """Send one request to the LLM in JSON mode; return the raw `key` list (full=True: the whole answer as a dict).
+    Every AI call in the app goes through here. DeepSeek by default, or any OpenAI-compatible provider set by
+    LLM_BASE_URL / LLM_API_KEY / LLM_MODEL (cloud with a key, or local like Ollama)."""
+    if LLM_BASE_URL:
+        if not LLM_MODEL:
+            raise RuntimeError("LLM_MODEL missing in .env (the model name at LLM_BASE_URL)")
+        # ponytail: local models can be slow on full transcripts; 30 min timeout instead of the SDK's 10 min
+        client = OpenAI(api_key=LLM_API_KEY or "none", base_url=LLM_BASE_URL, timeout=1800)
+    else:
+        if not DEEPSEEK_API_KEY:
+            raise RuntimeError("DEEPSEEK_API_KEY missing in .env")
+        client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
+    kw = dict(model=LLM_MODEL if LLM_BASE_URL else DEEPSEEK_MODEL,
+              messages=[{"role": "system", "content": system}, {"role": "user", "content": task}])
+    try:
+        r = client.chat.completions.create(response_format={"type": "json_object"}, **kw)  # forces valid JSON
+    except BadRequestError:  # provider/model without JSON mode: ask plainly, the prompts already demand JSON
+        r = client.chat.completions.create(**kw)
+    text = re.sub(r"<think>.*?</think>", "", r.choices[0].message.content or "", flags=re.S)  # reasoning models
+    if "{" in text:
+        text = text[text.index("{"):text.rindex("}") + 1]  # drop ```json fences or chatter around the object
+    answer = json.loads(text)
     if full:
         return answer if isinstance(answer, dict) else {}
     return answer.get(key, [])

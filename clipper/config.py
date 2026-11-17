@@ -10,6 +10,11 @@ DATA = Path(os.getenv("CLIPPER_DATA", ROOT / "data"))
 FFMPEG = os.getenv("FFMPEG", "ffmpeg")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-pro")
+# Any OpenAI-compatible provider instead of DeepSeek: cloud with an API key (OpenAI, OpenRouter, Groq, Gemini...)
+# or local (Ollama/LM Studio, also on another machine). Empty LLM_BASE_URL = DeepSeek with the keys above.
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "").rstrip("/")
+LLM_API_KEY = os.getenv("LLM_API_KEY", "")  # empty is fine for local servers
+LLM_MODEL = os.getenv("LLM_MODEL", "")
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "small")
 LIVE_CHUNK_SECONDS = int(os.getenv("LIVE_CHUNK_SECONDS", "600"))
 # The downloaded/uploaded source video (0.5-2 GB) and live recordings are deleted once a job finishes; clips stay.

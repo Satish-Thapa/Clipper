@@ -573,6 +573,7 @@ It uses Meta's official **WhatsApp Cloud API**, from the same Meta app.
 |---|---|---|
 | `DEEPSEEK_API_KEY` | (required) | DeepSeek key, for picking moments, titles, trends, judging and news |
 | `DEEPSEEK_MODEL` | `deepseek-v4-pro` | DeepSeek model |
+| `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` | empty (= DeepSeek) | use any other model instead: cloud with a key or local Ollama ([below](#use-another-ai-model-any-provider-or-local-ollama)) |
 | `FFMPEG` | `ffmpeg` | ffmpeg path (needs libass); ffprobe must sit next to it |
 | `WHISPER_MODEL` | `small` | `tiny` / `base` / `small` / `medium` / `large-v3` |
 | `SHORT_MIN` / `SHORT_MAX` | 15 / 60 | short clip length (s) |
@@ -597,6 +598,64 @@ It uses Meta's official **WhatsApp Cloud API**, from the same Meta app.
 | `CLIPPER_DATA` | `data/` | where everything is stored (tests point it at a temp folder) |
 
 Autopilot settings are set on the Auto page (stored in the database), not in `.env`.
+
+### Use another AI model (any provider or local Ollama)
+
+Every AI call (picking moments, titles, voice-over, news, autopilot) goes to DeepSeek unless `LLM_BASE_URL` is
+set. Then it goes to any OpenAI-compatible API instead. The top bar shows **AI: (model name)** in place of the
+DeepSeek balance.
+
+**Cloud, with an API key:** set all three and restart.
+
+| Provider | `LLM_BASE_URL` |
+|---|---|
+| OpenAI | `https://api.openai.com/v1` |
+| OpenRouter (Claude, Gemini, Llama, … with one key) | `https://openrouter.ai/api/v1` |
+| Groq | `https://api.groq.com/openai/v1` |
+| Google Gemini | `https://generativelanguage.googleapis.com/v1beta/openai` |
+
+Set `LLM_API_KEY` to that provider's key and `LLM_MODEL` to the model name exactly as the provider writes it.
+
+**Local, with Ollama on another machine** (e.g. a PC with a GPU on your home network):
+
+1. Install [Ollama](https://ollama.com) on that machine and pull a model. JSON-reliable models work best.
+   Rough guide by GPU memory: 8 GB → `qwen2.5:7b`, 16 GB → `qwen2.5:14b`, 24 GB+ → `qwen2.5:32b`.
+   ```bash
+   ollama pull qwen2.5:14b
+   ```
+2. **Let other machines reach it.** Set the environment variable `OLLAMA_HOST=0.0.0.0` on that machine, then
+   restart Ollama:
+   - Windows: System Properties → Environment Variables → New (user), then quit Ollama from the tray and start it again.
+   - Linux: `sudo systemctl edit ollama`, add `Environment="OLLAMA_HOST=0.0.0.0"` under `[Service]`, then
+     `sudo systemctl restart ollama`.
+   - macOS: `launchctl setenv OLLAMA_HOST 0.0.0.0`, then restart the Ollama app.
+
+   Allow port **11434** through that machine's firewall.
+3. **Give it a big context.** Ollama's default context is only a few thousand tokens and silently cuts long
+   prompts, which would cut off full transcripts. Also set `OLLAMA_CONTEXT_LENGTH=32768` (same way as step 2).
+   On older Ollama versions, make a bigger copy of the model instead and use its name as `LLM_MODEL`:
+   ```bash
+   printf 'FROM qwen2.5:14b\nPARAMETER num_ctx 32768\n' > Modelfile
+   ollama create qwen2.5-32k -f Modelfile
+   ```
+4. Find that machine's IP (`ipconfig` on Windows, `ip addr` on Linux). From the Clipper machine, check it answers:
+   ```bash
+   curl http://192.168.1.50:11434/v1/models
+   ```
+5. In Clipper's `.env`, leave `LLM_API_KEY` empty, then restart Clipper:
+   ```
+   LLM_BASE_URL=http://192.168.1.50:11434/v1
+   LLM_MODEL=qwen2.5:14b
+   ```
+
+LM Studio works the same way, using its server URL (`http://(ip):1234/v1`).
+
+Notes:
+- **Quality and speed:** local models are usually weaker than DeepSeek at picking moments and writing titles,
+  and slower on full transcripts. For long videos, the "hype curves" mode sends much shorter prompts.
+- **JSON:** if a provider doesn't support JSON mode, Clipper retries without it and pulls the JSON out of
+  the reply.
+- **No password:** Ollama has no login, so only expose it on your home network, never to the internet.
 
 ---
 
