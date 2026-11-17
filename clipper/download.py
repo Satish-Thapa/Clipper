@@ -81,10 +81,16 @@ def search(query, n=20, recent=RECENT[0]):
     return [e for e in es if e and e.get("id") and e.get("ie_key") == "Youtube"]  # videos only, no channels/playlists
 
 
-def download_vod(url, out_path, height=1080):
+def download_vod(url, out_path, height=1080, stop=None):
+    """stop: a threading.Event; when it's set the download is aborted at the next progress update."""
     form, sort = fmt(height)
+
+    def hook(_):
+        if stop is not None and stop.is_set():
+            raise yt_dlp.utils.DownloadCancelled("stopped by you")
     opts = {"quiet": True, "noprogress": True, "outtmpl": str(out_path), "merge_output_format": "mp4", "format": form,
-            "format_sort": sort, "concurrent_fragment_downloads": FRAGMENTS, "ffmpeg_location": FFMPEG}
+            "format_sort": sort, "concurrent_fragment_downloads": FRAGMENTS, "ffmpeg_location": FFMPEG,
+            "progress_hooks": [hook]}
     with ydl(opts) as y:
         y.download([url])
 

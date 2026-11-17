@@ -381,7 +381,7 @@
 
  <div class="page" id="page-jobs">
   <div class="page-head"><h2>Jobs</h2><p>Every video being clipped: logs, hype curves, and manual cuts.</p></div>
-  <section class="panel"><div id="jobs"></div></section>
+  <section class="panel"><div class="row" id="jobBulk" style="margin-bottom:10px;gap:8px"></div><div id="jobs"></div></section>
  </div>
 
  <div class="page" id="page-clips">
@@ -755,7 +755,26 @@ async function submitCuts(id, btn) {
   drafts.delete(id); $(`#cuts-${id}`).value = ""; btn.disabled = false; refresh();
 }
 
-async function stopJob(id) { await post(`/api/jobs/${id}/stop`); refresh(); }
+async function stopJob(id, btn) { if (btn) { btn.disabled = true; btn.textContent = "Stopping…"; } await post(`/api/jobs/${id}/stop`); refresh(); }
+async function retryJob(id, btn) {
+  btn.disabled = true; btn.textContent = "Starting…";
+  const r = await post(`/api/jobs/${id}/retry`);
+  if (!r.ok) { alertBox((await r.json()).detail); btn.disabled = false; btn.textContent = "↻ Retry"; }
+  refresh();
+}
+async function retryFailed(btn) {
+  btn.disabled = true;
+  const j = await (await post("/api/jobs/retry-failed")).json();
+  j.skipped.forEach(x => alertBox(`Job #${x.id}: ${x.why}`)); refresh();
+}
+async function stopAllJobs(btn) { btn.disabled = true; await post("/api/jobs/stop-all"); refresh(); }
+function jobBulk(s) {
+  const live = s.jobs.filter(j => !["done", "failed", "stopped", "interrupted"].includes(j.status)).length;
+  const failed = s.jobs.filter(j => ["failed", "interrupted"].includes(j.status) && !/retried as job #/.test(j.log || "")).length;
+  const html = `<button class="ghost" ${failed ? "" : "disabled"} onclick="retryFailed(this)">↻ Retry all failed (${failed})</button>
+    <button class="ghost danger" ${live ? "" : "disabled"} onclick="stopAllJobs(this)">■ Stop all running (${live})</button>`;
+  if ($("#jobBulk").dataset.k !== `${failed}/${live}`) { $("#jobBulk").innerHTML = html; $("#jobBulk").dataset.k = `${failed}/${live}`; }
+}
 
 // Logs follow the newest line. If you scrolled up to read, the 2s refresh keeps your place instead;
 // scroll back to the bottom and it follows again.
@@ -1502,6 +1521,7 @@ async function refresh() {
   loadAuto(s);
   renderPosts(s);
   loadNewsRuns();
+  jobBulk(s);
   const logScroll = saveLogs();
   $("#topics").innerHTML = s.topics.length ? s.topics.map(t => {
     const running = !["done","failed","stopped","interrupted","queued"].includes(t.status);
@@ -1530,7 +1550,10 @@ async function refresh() {
       <span class="badge ${cls}">${esc(j.status)}</span>
       <span class="dim">${j.mode === "manual" ? "manual cuts" : `${j.shorts} shorts · ${j.longs} long · ${esc(j.mode || "hype")}`}${j.voiceover ? " · voice-over" : ""}${layoutName(j)}${j.hq ? " · 4K" : ""}
         · ${esc(j.auto_upload ? JSON.parse(j.platforms || '["youtube"]').map(p => PLATFORMS[p]).join(", ") : "no auto-upload")}${j.topic_id ? ` · topic T${j.topic_id}` : ""}</span>
-      ${running ? `<button class="ghost" onclick="stopJob(${j.id})">Stop</button>` : ""}
+      ${running ? `<button class="ghost danger" onclick="stopJob(${j.id}, this)" title="Stops at the next step; clips already made stay">■ Stop</button>` : ""}
+      ${["failed", "interrupted", "stopped"].includes(j.status) && !/retried as job #/.test(j.log || "")
+        ? `<button class="ghost" onclick="retryJob(${j.id}, this)" title="Run it again as a new job with the same settings">↻ Retry</button>` : ""}
+      ${(j.log || "").match(/retried as job #(\d+)/) ? `<span class="dim">↻ retried as #${(j.log || "").match(/retried as job #(\d+)/)[1]}</span>` : ""}
     </div>
     ${j.is_live && running ? liveCtl(j) : ""}
     <details ${openLogs.has(j.id) ? "open" : ""} ontoggle="this.open ? (openLogs.add(${j.id}), toBottom(this)) : openLogs.delete(${j.id})">

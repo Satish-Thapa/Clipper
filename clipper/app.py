@@ -237,8 +237,36 @@ def delete_cookies():
 
 @app.post("/api/jobs/{jid}/stop")
 def stop_job(jid: int):
-    worker.stop(jid)
-    return {"ok": True}
+    return {"ok": worker.stop(jid)}
+
+
+@app.post("/api/jobs/{jid}/retry")
+def retry_job(jid: int):
+    """Run a failed / interrupted / stopped job again as a new job with the same settings."""
+    try:
+        return {"id": worker.retry(jid)}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/jobs/retry-failed")
+def retry_failed():
+    """Retry every failed or interrupted job (not stopped ones: you stopped those) that wasn't retried already."""
+    done, skipped = [], []
+    for j in db.all("jobs", "status IN ('failed', 'interrupted')"):
+        if "retried as job #" in (j.get("log") or ""):
+            continue
+        try:
+            done.append(worker.retry(j["id"]))
+        except ValueError as e:
+            skipped.append({"id": j["id"], "why": str(e)})
+    return {"started": done, "skipped": skipped}
+
+
+@app.post("/api/jobs/stop-all")
+def stop_all_jobs():
+    """Stop every running job (live recordings included). Clips already made stay."""
+    return {"stopped": [j["id"] for j in db.all("jobs") if j["status"] not in worker.FINISHED and worker.stop(j["id"])]}
 
 
 @app.post("/api/clips/{cid}/upload")

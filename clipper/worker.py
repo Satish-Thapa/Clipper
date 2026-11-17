@@ -26,10 +26,61 @@ def run(job_id):
     _run(job_id)
 
 
+class Stopped(Exception):
+    """Raised at the next step boundary after Stop was pressed (see _check)."""
+
+
+def _check(job_id):
+    if STOPS.get(job_id) is not None and STOPS[job_id].is_set():
+        raise Stopped()
+
+
+FINISHED = ("done", "failed", "stopped", "interrupted")
+
+
 def stop(job_id):
+    """Stop a job now: the download is aborted, and every step (loudness, transcript, AI pick, each render) checks the
+    flag before it starts. Clips already rendered stay. A job with no thread any more (server restarted) is just
+    marked stopped."""
+    job = db.get("jobs", job_id)
+    if not job or job["status"] in FINISHED:
+        return False
     if job_id in STOPS:
         STOPS[job_id].set()
-        db.log(job_id, "stop requested")
+        db.log(job_id, "stop requested: stopping at the next step (clips already made stay)")
+    else:
+        db.update("jobs", job_id, status="stopped")
+        db.log(job_id, "stopped (it wasn't running any more)")
+    return True
+
+
+RETRY_SKIP = ("id", "status", "log", "created", "is_live", "title")
+
+
+def retry(job_id):
+    """Run a failed / interrupted / stopped job again as a NEW job with the same settings (the old one stays as a
+    record). An uploaded file is copied over if it's still there. -> the new job's id."""
+    import shutil
+    old = db.get("jobs", job_id)
+    if not old:
+        raise ValueError("job not found")
+    if old["status"] not in FINISHED or old["status"] == "done":
+        raise ValueError(f"job #{job_id} is {old['status']}: only failed, interrupted or stopped jobs can be retried")
+    src = None
+    if str(old["url"]).startswith("file:"):
+        src = next((DATA / "jobs" / str(job_id)).glob("source.*"), None)
+        if not src:
+            raise ValueError("the uploaded file was already deleted (KEEP_SOURCES=1 in .env keeps it); upload it again")
+    new = db.insert("jobs", **{k: v for k, v in old.items() if k not in RETRY_SKIP}, title=old.get("title"),
+                    created=time.time())
+    if src:
+        d = DATA / "jobs" / str(new)
+        d.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, d / src.name)
+    db.log(new, f"retry of job #{job_id} (it was {old['status']})")
+    db.log(job_id, f"retried as job #{new}")
+    start(new)
+    return new
 
 
 def _run(job_id):
@@ -65,7 +116,11 @@ def _run(job_id):
         db.update("jobs", job_id, status=status)
         db.log(job_id, f"job {status} in {(time.time() - t0) / 60:.1f} min")
     except Exception as e:
-        _fail(job_id, e)
+        if STOPS.get(job_id) is not None and STOPS[job_id].is_set():  # Stop pressed: aborted download/step, not a failure
+            db.update("jobs", job_id, status="stopped")
+            db.log(job_id, f"job stopped by you after {(time.time() - t0) / 60:.1f} min")
+        else:
+            _fail(job_id, e)
     finally:
         drop_sources(job_id)
 
@@ -100,17 +155,21 @@ def _vod(job, i, d):
     jid, url = job["id"], job["url"]
     db.update("jobs", jid, status="downloading")
     db.log(jid, "downloading video + comments + chat replay")
-    with ThreadPoolExecutor(2) as ex:
+    ex = ThreadPoolExecutor(2)  # not a `with`: on Stop it must not wait for the chat replay (up to 15 min)
+    try:
         meta = ex.submit(download.info, url, True)
         chat = ex.submit(download.chat_replay_times, url)
         h = download.height_for(job.get("hq"))
         with db.step(jid, f"downloading video (up to {h}p, {download.FRAGMENTS} chunks at once)"):
-            download.download_vod(url, d / "source.%(ext)s", h)
+            download.download_vod(url, d / "source.%(ext)s", h, stop=STOPS.get(jid))
+        _check(jid)
         with db.step(jid, "waiting for comments + chat replay"):
             comments = download.comment_times(meta.result().get("comments"))
             chat, chat_err = chat.result()
         if chat_err:
             db.log(jid, f"chat replay not read: {chat_err}")
+    finally:
+        ex.shutdown(wait=False, cancel_futures=True)
     db.log(jid, f"heatmap: {'yes' if i.get('heatmap') else 'no'}, chat msgs: {len(chat)}, timestamped comments: {len(comments)}")
     src = next(d.glob("source.*"))
     db.log(jid, f"source file: {src.name}, {src.stat().st_size / 1e6:.0f} MB, {_describe(src)}")
@@ -324,6 +383,7 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None, live=No
         # broadcast unit for how loud audio *feels* to a person (not raw volume). We keep one value
         # per second, roughly -35 = calm talking, -10 = screaming/explosion, floored at -70 (silence).
         # len(audio) doubles as the video length in seconds.
+        _check(jid)
         with db.step(jid, tag + f"STEP 1 analysing loudness of {src.name}"):
             audio = signals.loudness(src)
         n = len(audio)
@@ -381,6 +441,7 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None, live=No
         # "ai" modes: the whole video, so DeepSeek can find moments the curves missed. Slow on long videos.
         spans = [[0, n]] if mode != "hype" else transcribe.merge([(c["start"], c["end"]) for c in cands])
         words = []
+        _check(jid)
         with db.step(jid, tag + f"STEP 4 transcribing {sum(e - s for s, e in spans):.0f}s in {len(spans)} part(s) "
                           f"({transcribe.device()})"):
             for s, e in spans:
@@ -392,6 +453,7 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None, live=No
         # STEP 5: DeepSeek picks the final clips, trims them to sentence boundaries and writes
         # title/description/hashtags. Its numbers are clamped by pick.validate(). If the API fails,
         # fall back to the strongest raw hype windows so the job still produces something.
+        _check(jid)
         try:
             with db.step(jid, tag + f"STEP 5 asking {pick.ai_name()} to pick {counts['short']} short / {counts['long']} long"):
                 note, verdict = pick.live_note(B) if live else "", {}
@@ -441,6 +503,8 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None, live=No
         # STEP 6: Save each clip to the DB, render it with ffmpeg (every kind vertical 9:16), burn in the
         # headline (top) + captions (bottom) if the job asked for subtitles, then upload if auto-upload is on.
         _render_clips(job, src, d, chosen, words, job.get("subtitles", 1))
+    except Stopped:
+        say("stopped by you: no more clips from this part")
     except Exception as e:
         say(f"ERROR processing {src.name}: {e!r}", exc=True)
 
@@ -455,6 +519,7 @@ def _render_clips(job, src, d, chosen, words, subtitles):
 
 def _render_one(job, src, d, c, words, subtitles):
     jid = job["id"]
+    _check(jid)  # Stop pressed: don't start the next render
     cid = db.insert("clips", job_id=jid, kind=c["kind"], start=c["start"], end=c["end"], score=c["score"],
                     title=c["title"], description=c["description"], tags=json.dumps(c["tags"]),
                     reason=c["reason"], headline=c.get("headline", ""), status="rendering")
