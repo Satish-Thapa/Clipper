@@ -1,17 +1,21 @@
 # Connecting your socials
 
-How to connect **YouTube, Facebook, Instagram, TikTok** and the **WhatsApp report** to Clipper.
+How to get the keys and tokens for **YouTube, Facebook, Instagram, TikTok** and the **WhatsApp report**.
 
-Each one is optional. Set up only the ones you want. Every key goes in the `.env` file in the project folder, and
-then you **restart the server**. The **Socials** page shows a green dot for each platform that's connected.
+Everything is entered **in the app** now and saved (encrypted) in its database: nothing goes in `.env` and no restart
+is needed. Wherever a step below says "put it in `.env`", enter it here instead:
 
-| Platform | What you need | Time | Goes in `.env` |
-|---|---|---|---|
-| YouTube | `client_secret.json` + click Connect | 10 min | nothing |
-| Facebook | A Facebook **Page** + a Meta developer app | 20 min | `FB_PAGE_ID`, `FB_PAGE_TOKEN` |
-| Instagram | A **Business/Creator** Instagram linked to that Page | +5 min | `IG_USER_ID` |
-| TikTok | A TikTok developer app | 30 min + review | `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`, `TIKTOK_REFRESH_TOKEN` |
-| WhatsApp report | The Meta app from Facebook + your phone | 20 min + template approval | `WA_PHONE_NUMBER_ID`, `WA_TOKEN`, `WA_TO`, `WA_TEMPLATE` |
+| What the guide gives you | Where it goes in Clipper |
+|---|---|
+| YouTube `client_secret.json` | Settings → General → YouTube: paste the file's contents. Then Accounts → YouTube → **Connect a channel** (once per channel). |
+| Facebook Page token / Page id | Accounts → Facebook & Instagram → **Connect with a Meta token** (lists every Page and linked Instagram account), or **Add one by id**. |
+| Instagram user id | Same as above: found automatically from the Meta token. |
+| TikTok client key + secret | Settings → General → TikTok. |
+| TikTok refresh token | Accounts → TikTok → paste it, **Connect TikTok** (once per TikTok account). |
+| WhatsApp ids, token, number, template | Settings → General → WhatsApp report. |
+| `IG_MAX_SECONDS`, `REPORT_MINUTES`, `GRAPH_VERSION` | Settings → General. |
+
+Accounts belong to the brand you're working in (sidebar, top). Then map them to categories on **Categories**.
 
 > Developer portals change their menus often. If a button has a slightly different name, look for the closest match.
 

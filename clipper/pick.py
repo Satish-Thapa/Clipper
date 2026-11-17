@@ -12,18 +12,21 @@ import time
 import httpx
 from openai import OpenAI
 
-from .config import (DEEPSEEK_API_KEY, DEEPSEEK_MODEL, LONG_MAX, LONG_MIN, SHORT_HARD_MAX, SHORT_MAX, SHORT_MIN,
-                     STRETCH_LONG, STRETCH_SHORT)
+from . import config
+from .config import SHORT_HARD_MAX
 
 # Clip kinds (all rendered vertical 9:16):
 #   short = a full moment with its context (<= 1 min), long = a longer segment (<= 3 min).
 # Every kind is capped at 180s, so every clip is a YouTube Short.
 KINDS = ("short", "long")
-# Target clip length in seconds: (min, max). Set in .env.
-LIMITS = {"short": (SHORT_MIN, SHORT_MAX), "long": (LONG_MIN, LONG_MAX)}
+# Target clip length in seconds: (min, max), from Settings.
+def limits():
+    return {"short": (config.SHORT_MIN, config.SHORT_MAX), "long": (config.LONG_MIN, config.LONG_MAX)}
 # How far over the max DeepSeek may go when a moment needs a bit more context (setup/payoff),
 # but never past YouTube's 180s Shorts limit.
-HARD_MAX = {"short": min(SHORT_MAX + STRETCH_SHORT, SHORT_HARD_MAX), "long": min(LONG_MAX + STRETCH_LONG, SHORT_HARD_MAX)}
+def hard_max():
+    return {"short": min(config.SHORT_MAX + config.STRETCH_SHORT, SHORT_HARD_MAX),
+            "long": min(config.LONG_MAX + config.STRETCH_LONG, SHORT_HARD_MAX)}
 # What each kind is for, told to DeepSeek.
 KIND_DESC = {
     "short": "a complete moment WITH its context: the setup a stranger needs, the payoff and the reaction.",
@@ -31,10 +34,9 @@ KIND_DESC = {
 }
 
 # System prompt: who DeepSeek is and what a good clip looks like. Shared by both modes.
-# Works for any content (gaming like GTA, IRL streams, podcasts, commentary, tutorials...).
+# Works for any content; Settings → "What your channel is about" adds the channel's focus (system_prompt()).
 SYSTEM = """You are a top short-form clip editor. You have cut thousands of viral clips from gaming
-streams (GTA V / GTA Online / GTA RP, shooters, horror, Minecraft...), IRL streams, podcasts,
-interviews, commentary and tutorials. First work out what kind of video this is from the title and
+streams, IRL streams, sports, podcasts, interviews, commentary and tutorials. First work out what kind of video this is from the title and
 transcript, then judge it the way that audience would.
 
 What pops, in any content:
@@ -46,8 +48,8 @@ What pops, in any content:
 - Drama: arguments, betrayals, awkward moments, someone getting called out.
 - Big satisfying moments: a win, a reveal, a huge payout, finally beating something hard.
 - Clear, useful "aha" moments in educational content: one tip that stands on its own.
-Gaming extras (e.g. GTA): physics glitches, cars flying, NPCs doing something insane, police chases
-going off the rails, heist fails, RP characters staying in role in absurd situations, trolling.
+Gaming extras: physics glitches, absurd AI/NPC behaviour, plans going off the rails, roleplay in absurd
+situations, trolling.
 
 What does NOT pop:
 - Dead air: menus, loading screens, driving/walking with nothing happening, setup and housekeeping,
@@ -74,25 +76,42 @@ action from what people say and how they react: "WHAT", screaming, laughing, sud
 "no no no", "we're dead", panicked swearing.
 
 Titles: punchy, curiosity-driven, under 60 chars, in the style of that niche on YouTube
-(gaming: "This Heist Went SO Wrong"; podcast: "He Didn't Expect This Question"), never lying about
-what happens. Put the searchable keyword (game or topic name, e.g. "GTA 5") in the title naturally: on Shorts
-the title and description work as search signals more than hashtags do. Headline: 3-4 words burned onto the top
-of the video for the whole clip, so a viewer instantly gets the topic (e.g. "HITLER'S SKULL TEST",
-"COPS REMEMBER YOU", "HEIST GONE WRONG"). Not the same as the title.
+(e.g. "This Plan Went SO Wrong", "He Didn't Expect This Question"), never lying about
+what happens. Put the searchable keyword (the game, sport, show or topic name) in the title naturally: on Shorts
+the title and description work as search signals more than hashtags do. Headline = the HOOK, burned onto the top
+of the video for the whole clip: it must stop the scroll in the first second. 3-6 words that open a question the
+clip answers (a curiosity gap), never a flat label of the topic. Ways that work: stakes or conflict ("HE BET HIS WHOLE
+TEAM"), a bold claim the clip proves ("GTA 6 LOOKS TOO REAL"), a specific number or name ("$162M FOR THIS?",
+"1 HP CLUTCH"), a direct question to the viewer ("WOULD YOU TAKE THIS?"), something to watch for ("WATCH THE LEFT
+DOOR"). Specific beats generic: "MINI-GAME CHAOS" is weak, "THIS MINI-GAME BROKE THEM" is a hook. Don't give away the
+payoff, don't promise what the clip doesn't show, no "wait for it". Not the same as the title.
 Description: 1-2 lines. First line keyword-rich (game/topic + what happens); end with a short question that makes
-people comment (e.g. "Would you have bailed?"). Hashtags: exactly 4-5, specific beats broad: the game or topic
-(#gta5, #gtaonline, #gtarp only for roleplay, #podcast), the moment type (#gtafails, #funnymoments, #clutch),
-one niche/community tag, and at most one broad tag (#gaming). No #shorts/#fyp/#viral (added per platform).
+people comment (e.g. "Would you have bailed?"). Hashtags: exactly 4-5, specific beats broad: the game, sport or
+topic itself, the moment type (#funnymoments, #fails, #clutch), one niche/community tag, and at most one broad tag.
+No #shorts/#fyp/#viral (added per platform).
 
 Return JSON only:
 {"clips": [{"candidate": <id>, "kind": "short"|"long", "start": <sec>, "end": <sec>,
 "virality": <0-100>, "title": "...", "headline": "...", "description": "...", "hashtags": ["..."],
 "reason": "one line: what happens and why it will pop"}]}"""
 
+def system_prompt(context="", examples=""):
+    """The clip editor prompt + the channel's focus from Settings + the clip's category (description, keywords)
+    + what worked / didn't on this channel before (learn.examples)."""
+    focus, lang = config.CHANNEL_FOCUS.strip(), config.CONTENT_LANGUAGE.strip() or "English"
+    return (SYSTEM + (f"\n\nThis channel is about: {focus}. Judge every moment, title, headline and hashtag for that "
+                      "audience." if focus else "")
+            + (f"\n\n{context}\nA candidate that isn't about this category gets virality 0, even if it's funny. "
+               "Use the category's keywords in titles, descriptions and hashtags where they fit." if context else "")
+            + (f"\n\n{examples}" if examples else "")
+            + ("" if lang.lower() == "english" else f"\n\nWrite title, headline, description and hashtags in {lang}."))
+
+
 # "hype" mode: only pre-found windows.
 WINDOWS_TASK = """Video title: "{title}"
-Below are candidate windows found by hype signals (loud audio, chat spikes, YouTube most-replayed,
-timestamped comments). "signal" = how strongly they spiked. Each has a transcript with [seconds]
+Below are candidate windows found by hype signals (loudness jumps, chat spikes, YouTube most-replayed,
+timestamped comments, laughter/cheering caption tags, shot changes). "signal" = how strongly they spiked overall,
+"signals" = each one (0-1). Each has a transcript with [seconds]
 markers (absolute time in the source).
 
 {pick}
@@ -127,17 +146,17 @@ NO_SIGNALS = "\nNo audience signals: judge from the transcript alone.\n"
 
 def fit_counts(counts, n):
     """Don't ask for more clips than an n-second video can hold.
-    Roughly one short per SHORT_MAX seconds and one long per LONG_MAX seconds (at least 1 if it fits at all).
+    Roughly one short per config.SHORT_MAX seconds and one long per config.LONG_MAX seconds (at least 1 if it fits at all).
     No long at all if the whole video already fits in a single short: a 1-min video gives 1 short, 0 long."""
-    (smin, smax), (lmin, lmax) = LIMITS["short"], LIMITS["long"]
+    (smin, smax), (lmin, lmax) = limits()["short"], limits()["long"]
     cap = {"short": max(1, n // smax) if n >= smin else 0,
-           "long": max(1, n // lmax) if n > HARD_MAX["short"] and n >= lmin else 0}
+           "long": max(1, n // lmax) if n > hard_max()["short"] and n >= lmin else 0}
     return {k: min(v, cap[k]) for k, v in counts.items()}
 
 
 def pick_text(counts):
     """The "what to pick" part of the prompt, only for the kinds the user asked for. counts: {kind: how many}."""
-    lines = [f'- {counts[k]} x {k.upper()} ("kind": "{k}"): target {LIMITS[k][0]}-{LIMITS[k][1]}s, hard max {HARD_MAX[k]}s. '
+    lines = [f'- {counts[k]} x {k.upper()} ("kind": "{k}"): target {limits()[k][0]}-{limits()[k][1]}s, hard max {hard_max()[k]}s. '
              f'{KIND_DESC[k]}' for k in KINDS if counts.get(k, 0) > 0]
     return "Pick:\n" + "\n".join(lines) + """
 The max is a ceiling, not a goal: make each clip only as long as the moment needs (a 1-2 min LONG or a
@@ -148,18 +167,52 @@ Clips of the same kind must not overlap. A SHORT and a LONG MAY reuse the same m
 best moment AND a long with the bigger story around it), but only for the very best moments."""
 
 
-def choose(title, candidates, counts):
-    """hype mode. candidates: [{id, kind, start, end, signal, transcript}] -> list of clip dicts."""
-    task = WINDOWS_TASK.format(title=title, pick=pick_text(counts), candidates=json.dumps(candidates, indent=1))
-    return validate(_ask(task), candidates, counts)
+def choose(title, candidates, counts, context="", examples="", images=None):
+    """hype mode. candidates: [{id, kind, start, end, signal, signals, transcript}] -> list of clip dicts.
+    images: [(label, jpeg base64)] a few frames per candidate, sent to Settings' vision model when one is set
+    (if that call fails, it's asked again without pictures)."""
+    task = WINDOWS_TASK.format(title=title, pick=pick_text(counts),
+                               candidates=json.dumps(candidates, indent=1, ensure_ascii=False))
+    system = system_prompt(context, examples)
+    if images and config.VISION_MODEL.strip():
+        try:
+            return validate(_ask(task + "\n\nFrames from the candidates follow (2 per candidate, labelled): use what you "
+                                        "see (action, faces, on-screen text) as well as what is said.", system,
+                                 model=config.VISION_MODEL.strip(), images=images), candidates, counts)
+        except Exception as e:
+            from . import db
+            db.syslog(f"vision model failed ({e!r}), picking from text only")
+    return validate(_ask(task, system), candidates, counts)
 
 
-def choose_full(title, n, transcript, parts, counts):
+PRESCORE_SYSTEM = """You screen candidate moments for short viral clips. For each candidate you get its transcript
+(speech with [seconds] markers, plus caption tags like [Laughter]) and how strongly audience signals spiked in it
+(0-1 each: heatmap = viewers rewatched, chat, reactions = laughter/cheering tags, audio = loudness jumps,
+visual = shot changes / motion). Score 0-10 how likely it holds a complete, gripping moment a stranger would watch to
+the end: a hook, a payoff, a reaction. Be harsh: most candidates are average (4-6).
+Reply as JSON: {"scores": [{"id": <id>, "score": <0-10>}]} with every id."""
+
+
+def prescore(title, candidates, context=""):
+    """First pass with the fast model: {candidate id: score 0-10}, to keep only the best for the thorough pass."""
+    rows = [{"id": c["id"], "kind": c["kind"], "signals": c.get("signals", {}), "transcript": c["transcript"][:800]}
+            for c in candidates]
+    out = {}
+    for r in _ask(f'Video title: "{title}"\n{context}\nCandidates:\n{json.dumps(rows, ensure_ascii=False)}',
+                  PRESCORE_SYSTEM, "scores", config.POST_MODEL):
+        try:
+            out[int(r["id"])] = float(r["score"])
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
+
+
+def choose_full(title, n, transcript, parts, counts, context="", examples=""):
     """ai modes. transcript: whole video with [sec] markers. parts: {signal: 0..1 per second} or None."""
     # ponytail: whole transcript in one request; a 3h video is ~40k tokens. Chunk it if videos get much longer.
     signals = SIGNALS_HINT.format(step=10, names=" ".join(parts), table=curve_table(parts, n)) if parts else NO_SIGNALS
     task = FULL_TASK.format(title=title, n=n, pick=pick_text(counts), signals=signals, transcript=transcript)
-    clips = _ask(task)
+    clips = _ask(task, system_prompt(context, examples))
     for c in clips:
         if isinstance(c, dict):
             c["candidate"] = 0  # one "candidate" = the whole video, so validate() only clamps to [0, n]
@@ -176,12 +229,12 @@ def curve_table(parts, n, step=10):
     return "\n".join(rows)
 
 
-VOICE_SYSTEM = """You write voice-over commentary for short vertical clips (any content: gaming like GTA,
-streams, podcasts, commentary...). The narrator is the channel's own voice: confident, funny, hyped,
+VOICE_SYSTEM = """You write voice-over commentary for short vertical clips (any content: gaming,
+streams, sports, podcasts, commentary...). The narrator is the channel's own voice: confident, funny, hyped,
 talking to the viewer like a friend.
 Rules:
-- 2-5 lines, each at most 12 words, plain spoken English. No emojis, hashtags or stage directions.
-- Line 1 at 0-1s is a hook that makes people stay ("This cop had NO idea what was coming.").
+- 2-5 lines, each at most 12 words, plain spoken language. No emojis, hashtags or stage directions.
+- Line 1 at 0-1s is a hook that makes people stay ("He had NO idea what was coming.").
 - Later lines add context, a reaction or a joke. Put them where nobody important is speaking (use the
   transcript timing), NEVER over the punchline or the key line. Fewer lines is better than talking over it.
 - Don't just repeat what is said in the clip, and don't invent facts that contradict the transcript.
@@ -197,9 +250,11 @@ or events in that topic if you know them). Short queries, the way people actuall
 no quotes, no years unless the topic is about one. Reply as JSON: {"queries": ["...", "..."]} with 4-6 queries."""
 
 
-def search_queries(topic):
-    """DeepSeek: topic -> 4-6 YouTube search queries (just the topic itself if the answer is unusable)."""
-    qs = [str(q).strip()[:100] for q in _ask(f"Topic: {topic}", QUERIES_SYSTEM, "queries") if str(q).strip()]
+def search_queries(topic, scope=""):
+    """DeepSeek: topic -> 4-6 YouTube search queries (just the topic itself if the answer is unusable).
+    scope: the category rule (categories.scope): every query stays inside it."""
+    qs = [str(q).strip()[:100] for q in _ask(f"Topic: {topic}" + (f"\n{scope}\nEvery query must find videos of this "
+                                             "category." if scope else ""), QUERIES_SYSTEM, "queries") if str(q).strip()]
     return list(dict.fromkeys(qs))[:6] or [topic]
 
 
@@ -225,13 +280,15 @@ Score every video 0-10 for how well it would clip (7+ = clearly good, 4 or less 
 Reply as JSON: {"videos": [{"id": "...", "score": 0-10, "reason": "short why"}]} with every id you were given."""
 
 
-def clippable(topic, videos):
-    """DeepSeek judges flat search results -> {id: (score 0-10, reason)}. Unscored ids are left out."""
+def clippable(topic, videos, scope=""):
+    """DeepSeek judges flat search results -> {id: (score 0-10, reason)}. Unscored ids are left out.
+    scope: the category rule: a video outside it scores 0 (a meme compilation for a CS2 / GTA channel)."""
     rows = [{"id": v["id"], "title": v.get("title"), "channel": v.get("channel"),
              "minutes": round((v.get("duration") or 0) / 60), "views": v.get("view_count"),
              "description": (v.get("description") or "")[:200]} for v in videos]
     out = {}
-    for r in _ask(f"Topic: {topic}\nVideos:\n{json.dumps(rows, indent=1)}", CLIPPABLE_SYSTEM, "videos"):
+    rule = f"\n{scope}\nA video that isn't about this category scores 0." if scope else ""
+    for r in _ask(f"Topic: {topic}{rule}\nVideos:\n{json.dumps(rows, indent=1)}", CLIPPABLE_SYSTEM, "videos"):
         try:
             out[str(r["id"])] = (min(max(float(r.get("score", 0)), 0), 10), str(r.get("reason", ""))[:150])
         except (KeyError, TypeError, ValueError):
@@ -244,7 +301,8 @@ def voice_script(video_title, clip_title, length, transcript):
     task = (f'Video: "{video_title}". Clip title: "{clip_title}". Clip length: {length:.0f}s.\n'
             f"Transcript ([seconds] from clip start):\n{transcript or '(no speech)'}")
     out = []
-    for ln in _ask(task, VOICE_SYSTEM, "lines"):
+    lang = config.CONTENT_LANGUAGE.strip() or "English"
+    for ln in _ask(task, VOICE_SYSTEM + ("" if lang.lower() == "english" else f"\nWrite the lines in {lang}."), "lines"):
         if not isinstance(ln, dict) or not str(ln.get("text", "")).strip():
             continue
         try:
@@ -264,10 +322,14 @@ def balance():
     if time.time() - _balance["at"] < 60:
         return _balance["value"]
     try:
-        if not DEEPSEEK_API_KEY:
-            raise RuntimeError("DEEPSEEK_API_KEY missing in .env")
+        if "deepseek.com" not in (config.LLM_BASE_URL or ""):  # only DeepSeek has a balance endpoint
+            value = {"provider": config.LLM_PROVIDER, "set": bool(config.DEEPSEEK_API_KEY)}
+            _balance.update(at=time.time(), value=value)
+            return value
+        if not config.DEEPSEEK_API_KEY:
+            raise RuntimeError("no AI API key: add it in Settings → AI")
         r = httpx.get("https://api.deepseek.com/user/balance", timeout=10,
-                      headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}"})
+                      headers={"Authorization": f"Bearer {config.DEEPSEEK_API_KEY}"})
         r.raise_for_status()
         d = r.json()
         value = {"available": d.get("is_available", False),
@@ -279,15 +341,43 @@ def balance():
     return value
 
 
-def _ask(task, system=SYSTEM, key="clips"):
-    """Send one request to DeepSeek (OpenAI-compatible API) in JSON mode; return the raw `key` list."""
-    if not DEEPSEEK_API_KEY:
-        raise RuntimeError("DEEPSEEK_API_KEY missing in .env")
-    client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
-    r = client.chat.completions.create(
-        model=DEEPSEEK_MODEL,
+_client = []
+
+
+def _local():
+    """Your own Ollama server: no API key, and longer answers are fine (it's not billed, a big prompt takes a while)."""
+    return config.LLM_PROVIDER == "ollama"
+
+
+def _deepseek():
+    """One client per provider setting (keeps the connection open between calls; a changed address / key / provider
+    in Settings takes effect on the next request). 3 min timeout instead of the SDK's 10 min (10 for a local server),
+    so a hung request doesn't stall a job; the SDK retries twice on its own."""
+    local = _local()
+    key = "ollama" if local else config.DEEPSEEK_API_KEY  # never send your provider key to another server
+    url = config.LLM_BASE_URL.strip() or "https://api.deepseek.com"
+    sig = (key, url, local)
+    if not _client or _client[0][0] != sig:
+        _client[:] = [(sig, OpenAI(api_key=key, base_url=url, timeout=600 if local else 180))]
+    return _client[0][1]
+
+
+def _ask(task, system=SYSTEM, key="clips", model=None, images=None):
+    """Send one request to the AI provider (OpenAI-compatible API) in JSON mode; return the raw `key` list.
+    model: default config.DEEPSEEK_MODEL (clip picking); posts pass the faster POST_MODEL.
+    images: [(label, jpeg base64)] for a vision model: each sent as a labelled picture after the text."""
+    if not config.DEEPSEEK_API_KEY and not _local():
+        raise RuntimeError("no AI API key: add it in Settings → AI")
+    content = task
+    if images:
+        content = [{"type": "text", "text": task}]
+        for label, b64 in images:
+            content += [{"type": "text", "text": label},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "low"}}]
+    r = _deepseek().chat.completions.create(
+        model=model or config.DEEPSEEK_MODEL,
         response_format={"type": "json_object"},  # forces valid JSON back
-        messages=[{"role": "system", "content": system}, {"role": "user", "content": task}],
+        messages=[{"role": "system", "content": system}, {"role": "user", "content": content}],
     )
     return json.loads(r.choices[0].message.content).get(key, [])
 
@@ -309,20 +399,20 @@ def validate(clips, candidates, counts):
         kind = c.get("kind")
         if not cand or kind not in want or want[kind] <= 0:  # unknown window, bad kind, or quota full
             continue
-        lo = LIMITS[kind][0]
+        lo = limits()[kind][0]
         # Clamp start/end inside the candidate window.
         s = max(cand["start"], num(c.get("start"), cand["start"]))
         e = min(cand["end"], num(c.get("end"), cand["end"]))
         if e - s < lo:  # too short: grow it to the minimum length, staying inside the window
             e = min(cand["end"], s + lo)
             s = max(cand["start"], e - lo)
-        e = min(e, s + HARD_MAX[kind])  # too long: cut to max length (+ the allowed stretch)
+        e = min(e, s + hard_max()[kind])  # too long: cut to max length (+ the allowed stretch)
         if e - s < lo * 0.8:  # window itself too small to fit a real clip
             continue
         want[kind] -= 1
         out.append({"kind": kind, "start": s, "end": e, "score": num(c.get("virality"), 0),
                     "title": str(c.get("title", ""))[:100],
-                    "headline": " ".join(str(c.get("headline", "")).split()[:5]),  # 3-4 words asked; hard cap 5
+                    "headline": " ".join(str(c.get("headline", "")).split()[:6]),  # 3-6 words asked; hard cap 6
                     "description": str(c.get("description", "")),
                     "tags": [str(t).lstrip("#") for t in c.get("hashtags", [])][:15],
                     "reason": str(c.get("reason", ""))})
@@ -335,15 +425,15 @@ def fallback(candidates, counts, title):
     for c in sorted(candidates, key=lambda c: -c["signal"]):
         if want[c["kind"]] > 0:
             want[c["kind"]] -= 1
-            out.append({"kind": c["kind"], "start": c["start"], "end": min(c["end"], c["start"] + LIMITS[c["kind"]][1]),
+            out.append({"kind": c["kind"], "start": c["start"], "end": min(c["end"], c["start"] + limits()[c["kind"]][1]),
                         "score": round(c["signal"] * 10, 1), "title": f"{title} highlight"[:100], "headline": "",
                         "description": "", "tags": [], "reason": "hype signal only (LLM unavailable)"})
     return out
 
 
 if __name__ == "__main__":
-    LIMITS.update(short=(15, 59), long=(60, 600))
-    HARD_MAX.update(short=74, long=660)
+    limits = lambda: {"short": (15, 59), "long": (60, 600)}  # test values, independent of Settings
+    hard_max = lambda: {"short": 74, "long": 660}
     C = lambda short, long: {"short": short, "long": long}
     cands = [{"id": 0, "kind": "short", "start": 100, "end": 150, "signal": 1},
              {"id": 1, "kind": "long", "start": 0, "end": 400, "signal": 1}]
@@ -357,7 +447,7 @@ if __name__ == "__main__":
                     {"candidate": 0, "kind": "long", "start": 0, "end": 900}],    # long cut to 600+60
                    [{"id": 0, "start": 0, "end": 1000}, {"id": 1, "start": 0, "end": 1000}], C(2, 1))
     assert [(g["start"], g["end"]) for g in got] == [(0, 70), (100, 174), (0, 660)], got
-    assert got[0]["headline"] == "one two three four five", got[0]
+    assert got[0]["headline"] == "one two three four five six", got[0]
     import numpy as np
     assert curve_table({"audio": np.array([0, 1, 0.5, 0])}, 4, step=2) == "t audio\n0 9\n2 4", curve_table(
         {"audio": np.array([0, 1, 0.5, 0])}, 4, step=2)

@@ -47,9 +47,12 @@ def frames(url, n=FRAMES):
     sb = max(sbs, key=lambda f: f.get("width") or 0)  # sb0: 320x180 frames, 3x3 per image
     frags, per = sb["fragments"], (sb.get("rows") or 1) * (sb.get("columns") or 1)
     want = min(len(frags), max(1, -(-n // per)))  # images needed for ~n frames
+    from concurrent.futures import ThreadPoolExecutor
+    urls = [frags[i]["url"] for i in np.linspace(0, len(frags) - 1, want).round().astype(int)]
+    with httpx.Client(timeout=20, follow_redirects=True) as http, ThreadPoolExecutor(4) as ex:
+        responses = list(ex.map(http.get, urls))  # the few mosaics at once, over one connection pool
     out = []
-    for i in np.linspace(0, len(frags) - 1, want).round().astype(int):
-        r = httpx.get(frags[i]["url"], timeout=20, follow_redirects=True)
+    for r in responses:
         img = cv2.imdecode(np.frombuffer(r.content, np.uint8), cv2.IMREAD_COLOR) if r.is_success else None
         if img is not None:
             out += tiles(img, sb.get("rows") or 1, sb.get("columns") or 1, sb["width"], sb["height"])

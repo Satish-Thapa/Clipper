@@ -1,13 +1,14 @@
 """Topic queue: topic -> DeepSeek search queries -> trending YouTube videos -> one normal clipping job per video.
 
-Topics run one at a time, and inside a topic the videos are clipped one after another (worker.run), so the
-GPU/CPU is never shared between jobs. Queued topics survive a server restart; loop() picks them up again."""
+Up to Settings → "Automations at once" topics run side by side (several autopilots / topics at the same time);
+inside a topic the videos are clipped one after another (worker.run). Queued topics survive a server restart;
+loop() picks them up again."""
 import json
 import threading
 import time
 
-from . import db, download, pick, vision, worker
-from .config import TOPIC_MAX_MINUTES, TOPIC_MIN_MINUTES
+from . import categories, db, download, pick, vision, worker
+from . import config
 
 WAKE = threading.Event()  # set when a topic is added, so the loop doesn't wait for its next poll
 STOPS = {}  # topic_id -> threading.Event
@@ -37,19 +38,36 @@ def stop(tid):
     db.log(tid, "stop requested", "topics")
 
 
+RUNNING = set()  # topic ids being worked on right now
+_claim = threading.Lock()
+
+
 def _loop():
     while True:
-        queued = db.all("topics", "status='queued'")
-        if not queued:
-            WAKE.wait(10)
-            WAKE.clear()
-            continue
-        _run(queued[-1])  # db.all is newest first -> oldest queued topic first
+        at_once = max(1, min(int(config.AUTOMATIONS_AT_ONCE or 1), 6))
+        with _claim:
+            queued = [t for t in reversed(db.all("topics", "status='queued'")) if t["id"] not in RUNNING]  # oldest first
+            if queued and len(RUNNING) < at_once:
+                t = queued[0]
+                RUNNING.add(t["id"])
+                threading.Thread(target=_run_one, args=(t,), daemon=True).start()
+                continue
+        WAKE.wait(10)
+        WAKE.clear()
+
+
+def _run_one(t):
+    try:
+        _run(t)
+    finally:
+        with _claim:
+            RUNNING.discard(t["id"])
+        WAKE.set()  # a slot is free: start the next queued topic
 
 
 def choose_videos(entries, n, used):
     """Most-viewed eligible videos: right length, not live/upcoming, not clipped before. entries: flat yt-dlp results."""
-    lo, hi = TOPIC_MIN_MINUTES * 60, TOPIC_MAX_MINUTES * 60
+    lo, hi = config.TOPIC_MIN_MINUTES * 60, config.TOPIC_MAX_MINUTES * 60
     ok = {e["id"]: e for e in entries
           if lo <= (e.get("duration") or 0) <= hi and e.get("live_status") not in ("is_live", "is_upcoming")
           and e["id"] not in used}
@@ -63,7 +81,8 @@ def _judge(tid, topic, videos, face_check=True):
         return {}
     try:
         with db.step(tid, f"DeepSeek judging {len(videos)} videos", "topics"):
-            verdicts = pick.clippable(topic, videos)
+            t = db.get("topics", tid) or {}
+            verdicts = pick.clippable(topic, videos, categories.scope(t.get("category_id")))
     except Exception as e:
         db.log(tid, f"clippability check failed ({e!r}), using views only", "topics", exc=True)
         verdicts = {}
@@ -105,7 +124,7 @@ def _run(t):
     try:
         db.update("topics", tid, status="searching")
         try:
-            queries = pick.search_queries(t["topic"])
+            queries = pick.search_queries(t["topic"], categories.scope(t.get("category_id")))
         except Exception as e:
             db.log(tid, f"DeepSeek failed ({e!r}), searching the topic itself", "topics")
             queries = [t["topic"]]
@@ -118,16 +137,15 @@ def _run(t):
         used = {j["url"].rsplit("v=", 1)[-1] for j in db.all("jobs")}
         entries, videos, judged = [], [], {}
         for recent in download.RECENT:
-            for q in queries:
-                try:
-                    found = download.search(q, recent=recent)
+            when = ["this week", "this month", "any time"][download.RECENT.index(recent)]
+            for q, found, e in download.search_many(queries, recent=recent):  # all queries at once
+                if e is None:
                     entries += found
-                    db.log(tid, f"search '{q}' ({['this week', 'this month', 'any time'][download.RECENT.index(recent)]}): "
-                                f"{len(found)} videos", "topics")
-                except Exception as e:
-                    db.log(tid, f"search '{q}' failed: {e!r}", "topics", exc=True)
-                    if download.bot_checked(e):
-                        raise RuntimeError("YouTube bot check: add YouTube cookies on the Socials page") from None
+                    db.log(tid, f"search '{q}' ({when}): {len(found)} videos", "topics")
+                    continue
+                db.log(tid, f"search '{q}' failed: {e!r}", "topics")
+                if download.bot_checked(e):
+                    raise RuntimeError("YouTube bot check: add YouTube cookies on the Socials page") from None
             rejected = {i for i, (score, _) in judged.items() if score < MIN_CLIPPABLE}
             # how many candidates get judged: the topic's "research" size (autopilot setting), else 3x the clips wanted
             pool = choose_videos(entries, max(t.get("pool") or t["videos"] * 3, t["videos"]), used | rejected)
@@ -152,7 +170,8 @@ def _run(t):
             jid = db.insert("jobs", url=f"https://www.youtube.com/watch?v={v['id']}", title=v.get("title"),
                             shorts=t["shorts"], longs=t["longs"], auto_upload=int(bool(platforms)),
                             platforms=json.dumps(platforms), mode=t["mode"], subtitles=t["subtitles"],
-                            voiceover=t["voiceover"], aspect=t.get("aspect"), hq=t.get("hq", 0), topic_id=tid, created=time.time())
+                            voiceover=t["voiceover"], aspect=t.get("aspect"), hq=t.get("hq", 0), topic_id=tid,
+                            category_id=t.get("category_id"), created=time.time())
             db.log(tid, f"video {k}/{len(videos)} -> job #{jid}", "topics")
             CURRENT[tid] = jid
             t0 = time.time()
@@ -175,7 +194,9 @@ def _tidy(tid, jid):
     autopilot's 'keep source videos' is on. Clips are kept; only re-cutting that video by hand needs the source."""
     from . import autopilot
     from .config import DATA
-    if autopilot.settings()["keep_sources"]:
+    t = db.get("topics", tid) or {}
+    s = autopilot.settings(t.get("autopilot_id")) or autopilot.settings()
+    if s["keep_sources"]:
         return
     freed = 0
     for f in (DATA / "jobs" / str(jid)).glob("source.*"):

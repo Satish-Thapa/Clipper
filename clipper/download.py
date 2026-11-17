@@ -1,4 +1,5 @@
 """Everything that talks to YouTube for input: metadata, video, chat, comments."""
+import json
 import re
 import subprocess
 import threading
@@ -7,16 +8,20 @@ import urllib.parse
 
 import yt_dlp
 
-from .config import FFMPEG, SEARCH_REGION, YT_COOKIES, YT_COOKIES_FROM_BROWSER
+from . import config
+from .config import YT_COOKIES
 
 
 BOT_CHECK = "Sign in to confirm"  # YouTube's anti-bot wall: needs cookies (see config.YT_COOKIES)
 
 
 def ydl(opts):
-    """yt_dlp.YoutubeDL with the YouTube cookies added, when there are any (every YouTube call goes through this)."""
-    if YT_COOKIES_FROM_BROWSER:
-        opts = {**opts, "cookiesfrombrowser": (YT_COOKIES_FROM_BROWSER,)}
+    """yt_dlp.YoutubeDL with the YouTube cookies added, when there are any (every YouTube call goes through this).
+    IPv4 only by default (config.YT_FORCE_IPV4): yt-dlp's --force-ipv4."""
+    if config.YT_FORCE_IPV4:
+        opts = {**opts, "source_address": "0.0.0.0"}
+    if config.YT_COOKIES_FROM_BROWSER:
+        opts = {**opts, "cookiesfrombrowser": (config.YT_COOKIES_FROM_BROWSER,)}
     elif YT_COOKIES.exists():
         opts = {**opts, "cookiefile": str(YT_COOKIES)}
     return yt_dlp.YoutubeDL(opts)
@@ -33,7 +38,7 @@ def bot_checked(e):
 
 def cookies_state():
     """For the UI: where cookies come from, and the last bot check (if newer than the cookies)."""
-    src = (f"browser: {YT_COOKIES_FROM_BROWSER}" if YT_COOKIES_FROM_BROWSER
+    src = (f"browser: {config.YT_COOKIES_FROM_BROWSER}" if config.YT_COOKIES_FROM_BROWSER
            else "cookies.txt" if YT_COOKIES.exists() else "")
     from . import db
     hit = float(db.get_setting("yt_bot_check") or 0)
@@ -69,19 +74,89 @@ RECENT = ("EgIIAw%3D%3D", "EgIIBA%3D%3D", "")
 def search(query, n=20, recent=RECENT[0]):
     """YouTube search results (flat: id, title, duration, view_count, live_status...), no download."""
     # gl/hl = the country and language YouTube ranks results for (US English by default: US-trending videos).
-    url = (f"https://www.youtube.com/results?search_query={urllib.parse.quote(query)}&gl={SEARCH_REGION}&hl=en"
+    url = (f"https://www.youtube.com/results?search_query={urllib.parse.quote(query)}&gl={config.SEARCH_REGION}&hl=en"
            + (f"&sp={recent}" if recent else ""))
     with ydl({"quiet": True, "extract_flat": True, "playlistend": n, "skip_download": True}) as y:
         es = y.extract_info(url, download=False).get("entries") or []
     return [e for e in es if e and e.get("id") and e.get("ie_key") == "Youtube"]  # videos only, no channels/playlists
 
 
-def download_vod(url, out_path, height=1080):
+SEARCH_THREADS = 4  # a few at once: ~4x faster topic research, still gentle enough not to trip YouTube's bot check
+
+
+def search_many(queries, n=20, recent=RECENT[0]):
+    """search() for every query in parallel -> [(query, results, error or None)] in query order."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def one(q):
+        try:
+            return q, search(q, n, recent), None
+        except Exception as e:
+            return q, [], e
+    with ThreadPoolExecutor(min(SEARCH_THREADS, max(1, len(queries)))) as ex:
+        return list(ex.map(one, queries))
+
+
+def download_vod(url, out_path, height=1080, stop=None, progress=None):
+    """stop: a threading.Event; when it's set, the download is cancelled at the next progress update (~every chunk).
+    progress: called with 0..1 as it downloads (video and audio are fetched one after the other: each 0..1)."""
+    import threading
+    form, sort = fmt(height)
+    last, lock = [0.0], threading.Lock()
+
+    def hook(d):
+        # yt-dlp calls this from all FRAGMENTS download threads at once. Only the Stop button may raise here: any
+        # other exception (e.g. the progress write failing) makes yt-dlp drop a fragment and fail the whole merge.
+        if stop is not None and stop.is_set():
+            raise yt_dlp.utils.DownloadCancelled("stopped by you")
+        try:
+            total = d.get("total_bytes") or d.get("total_bytes_estimate")
+            if progress and d.get("status") == "downloading" and total:
+                with lock:  # at most one progress write a second, from one thread at a time
+                    if time.time() - last[0] < 1:
+                        return
+                    last[0] = time.time()
+                progress(min(d.get("downloaded_bytes", 0) / total, 1.0))
+        except Exception:
+            pass
+    opts = {"quiet": True, "noprogress": True, "outtmpl": str(out_path), "merge_output_format": "mp4", "format": form,
+            "format_sort": sort, "concurrent_fragment_downloads": FRAGMENTS, "ffmpeg_location": config.FFMPEG,
+            "progress_hooks": [hook], "fragment_retries": 10, "retries": 10}
+    for attempt in (1, 2):
+        try:
+            with ydl(opts) as y:
+                y.download([url])
+            return
+        except yt_dlp.utils.DownloadError:
+            if attempt == 2 or (stop is not None and stop.is_set()):
+                raise
+            # a broken half-download (e.g. a missing fragment): clear its pieces and start once more from scratch
+            from pathlib import Path
+            folder = Path(out_path).parent
+            for f in folder.glob(Path(out_path).name.split("%")[0] + "*.part*"):
+                f.unlink(missing_ok=True)
+
+
+def download_section(url, out_path, start, end, height=1080, tries=2):
+    """Only [start, end) seconds of a video (cut exactly: keyframes are forced at the edges), e.g. to re-render a clip
+    whose source was deleted."""
     form, sort = fmt(height)
     opts = {"quiet": True, "noprogress": True, "outtmpl": str(out_path), "merge_output_format": "mp4", "format": form,
-            "format_sort": sort, "concurrent_fragment_downloads": FRAGMENTS, "ffmpeg_location": FFMPEG}
-    with ydl(opts) as y:
-        y.download([url])
+            "format_sort": sort, "ffmpeg_location": config.FFMPEG, "retries": 10, "fragment_retries": 10,
+            "download_ranges": yt_dlp.utils.download_range_func(None, [(max(start, 0), end)]),
+            "force_keyframes_at_cuts": True}
+    from pathlib import Path
+    for attempt in range(1, tries + 1):  # a stream that drops mid-cut ("ffmpeg exited with code 8") usually works the second time
+        try:
+            with ydl(opts) as y:
+                y.download([url])
+            return
+        except yt_dlp.utils.DownloadError:
+            if attempt == tries:
+                raise
+            for f in Path(out_path).parent.glob("*"):
+                f.unlink(missing_ok=True)
+            time.sleep(3)
 
 
 def record_live_chunk(url, out_path, seconds, stop, height=1080):
@@ -95,7 +170,7 @@ def record_live_chunk(url, out_path, seconds, stop, height=1080):
     # YouTube live usually serves video and audio as separate HLS streams.
     inputs = [x for f in i.get("requested_formats") or [i] for x in ("-i", f["url"])]
     maps = ["-map", "0:v", "-map", "1:a"] if len(inputs) == 4 else []
-    p = subprocess.Popen([FFMPEG, "-y", "-loglevel", "error", *inputs, *maps, "-t", str(seconds),
+    p = subprocess.Popen([config.FFMPEG, "-y", "-loglevel", "error", *inputs, *maps, "-t", str(seconds),
                           "-c", "copy", str(out_path)], stdin=subprocess.PIPE)
     while p.poll() is None:
         if stop.wait(1):
@@ -128,6 +203,47 @@ class LiveChat(threading.Thread):
                     return
         except Exception:
             pass  # ponytail: chat is a bonus signal; audio still works without it
+
+
+def captions(info, spoken=None):
+    """YouTube's own captions for a video, as words with timestamps [{"w", "s", "e"}], or None.
+    Prefers captions made by the uploader in the video's language, then YouTube's automatic ones in the ORIGINAL
+    language ("hi-orig": not a machine translation). Instant, and usually better than Whisper for Hindi etc.
+    json3 gives automatic captions word by word; uploaded ones come as lines, spread evenly over their time.
+    spoken: the language detected from the audio (transcribe.detect). Given, only captions in that language are used:
+    YouTube's automatic captioner sometimes guesses the language wrong (English commentary captioned as "ar-orig")."""
+    lang = spoken or (info.get("language") or "").split("-")[0]
+    subs, auto = info.get("subtitles") or {}, info.get("automatic_captions") or {}
+    pick = None
+    manual = [k for k in subs if k != "live_chat"]
+    same = lambda k: lang and k.split("-")[0] == lang
+    for k in ([x for x in manual if same(x)] or (manual if len(manual) == 1 and not spoken else [])):
+        pick, src = subs[k], k
+        break
+    if not pick:
+        origs = [x for x in auto if x.endswith("-orig")]
+        for k in ([x for x in origs if same(x)] if spoken else origs + ([lang] if lang in auto else [])):
+            pick, src = auto[k], k
+            break
+    url = next((f["url"] for f in pick or [] if f.get("ext") == "json3"), None)
+    if not url:
+        return None
+    with ydl({"quiet": True}) as y:
+        data = json.loads(y.urlopen(url).read().decode("utf-8"))
+    out = []
+    for ev in data.get("events", []):
+        segs, t0, dur = ev.get("segs") or [], ev.get("tStartMs", 0), ev.get("dDurationMs", 0)
+        pieces = [(t0 + s.get("tOffsetMs", 0), s.get("utf8", "")) for s in segs if s.get("utf8", "").strip()]
+        for n, (start_ms, text) in enumerate(pieces):
+            end_ms = pieces[n + 1][0] if n + 1 < len(pieces) else t0 + dur
+            ws = text.split()
+            step = max(end_ms - start_ms, 1) / len(ws)
+            for k, w in enumerate(ws):
+                out.append({"w": w, "s": round((start_ms + k * step) / 1000, 2), "e": round((start_ms + (k + 1) * step) / 1000, 2)})
+    if not out:
+        return None
+    out.sort(key=lambda w: w["s"])
+    return {"words": out, "source": src}
 
 
 TS = re.compile(r"\b(?:(\d{1,2}):)?(\d{1,2}):(\d{2})\b")
