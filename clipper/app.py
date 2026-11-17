@@ -471,15 +471,19 @@ def schedule_clip(cid: int, b: ScheduleIn):
     c = db.get("clips", cid)
     if not c:
         raise HTTPException(404, "clip not found")
-    if b.platforms is not None:
-        db.update("jobs", c["job_id"], platforms=json.dumps(b.platforms), auto_upload=int(bool(b.platforms)))
     if b.at:
-        if not json.loads((db.get("jobs", c["job_id"]) or {}).get("platforms") or "[]"):
+        if c["status"] in ("rendering", "uploading") or not c.get("path"):
+            raise HTTPException(400, "this clip isn't ready to schedule")
+        if b.at < time.time() - 60:
+            raise HTTPException(400, "that time has already passed")
+        plats = b.platforms if b.platforms is not None else json.loads((db.get("jobs", c["job_id"]) or {}).get("platforms") or "[]")
+        if not plats:
             raise HTTPException(400, "pick where to post")
-        db.update("clips", cid, status="timed", post_at=b.at)
-        db.log(c["job_id"], f"#{cid} scheduled for {time.strftime('%d %b %H:%M', time.localtime(b.at))}")
+        # the platforms go on the clip itself, so the job's other clips keep theirs
+        db.update("clips", cid, status="timed", post_at=b.at, post_to=json.dumps(plats))
+        db.log(c["job_id"], f"#{cid} scheduled for {time.strftime('%d %b %H:%M', time.localtime(b.at))} to {', '.join(plats)}")
     elif c["status"] in ("timed", "scheduled"):
-        db.update("clips", cid, status="rendered", post_at=None)
+        db.update("clips", cid, status="rendered", post_at=None, post_to=None)
         db.log(c["job_id"], f"#{cid} schedule cancelled")
     return db.get("clips", cid)
 

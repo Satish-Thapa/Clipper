@@ -389,7 +389,7 @@ def timed_tick():
     from . import worker
     for c in db.all("clips", f"status='timed' AND post_at <= {time.time():.0f}"):
         job = db.get("jobs", c["job_id"]) or {}
-        plats = json.loads(job.get("platforms") or "[]")
+        plats = json.loads(c.get("post_to") or "null") or json.loads(job.get("platforms") or "[]")  # the clip's own choice first
         if not plats:
             db.update("clips", c["id"], status="rendered")
             continue

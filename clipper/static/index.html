@@ -488,6 +488,10 @@
   <p class="dim" style="margin-top:0;font-size:13px">Drag a box around the streamer's facecam. It becomes the streamer's panel; the rest of the
     video is the gameplay. <span id="cammsg"></span></p>
   <div id="camstage"><img id="camimg" alt=""><div id="camrect" hidden></div></div>
+  <div class="row" style="margin-top:12px;gap:8px"><button type="button" onclick="camSave()">Use this box</button>
+    <button type="button" class="ghost" onclick="camOpen(camForm)">New frame</button>
+    <button type="button" class="ghost" onclick="$('#camdlg').hidden = true">Cancel</button></div>
+</div></div>
 <script>
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -1138,7 +1142,33 @@ async function schedPost(id, btn) {
   const r = await post(`/api/clips/${id}/schedule`, {at: new Date(v).getTime() / 1000});
   if (!r.ok) return alertBox((await r.json()).detail); refresh();
 }
-async function unschedPost(id) { await post(`/api/clips/${id}/schedule`, {at: null}); refresh(); }
+async function unschedPost(id) { await post(`/api/clips/${id}/schedule`, {at: null}); clipKey = ""; refresh(); }
+// Clips page: schedule any clip that isn't posted yet: when + where (the clip keeps its own platforms).
+const schedOpenIds = new Set();
+const canSched = c => c.path && !["rendering", "uploading", "uploaded"].includes(c.status);
+const localInput = t => { const d = new Date(t * 1000); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
+function schedOpen(id) { schedOpenIds.has(id) ? schedOpenIds.delete(id) : schedOpenIds.add(id); clipKey = ""; refresh(); }
+function schedForm(s, c) {
+  const done = JSON.parse(c.uploads || "{}"), job = s.jobs.find(j => j.id === c.job_id) || {};
+  const want = c.post_to ? JSON.parse(c.post_to) : JSON.parse(job.platforms || "[]");
+  const next = new Date(); next.setHours(next.getHours() + 1, 0, 0, 0);  // default: the next full hour, local time
+  const at = c.status === "timed" && c.post_at ? c.post_at : next.getTime() / 1000;
+  const plats = Object.keys(PLATFORMS).filter(p => s.platforms[p] && !(done[p] || {}).id);
+  return `<form class="row" style="margin-top:8px;gap:8px;align-items:flex-end;flex-wrap:wrap" onsubmit="schedSave(event, ${c.id})">
+    <label>When<input type="datetime-local" name="at" required value="${localInput(at)}" min="${localInput(Date.now() / 1000)}"></label>
+    <span>${plats.length ? plats.map(p => `<label class="check"><input type="checkbox" name="p" value="${p}" ${want.includes(p) ? "checked" : ""}> ${PLATFORMS[p]}</label>`).join(" ")
+      : `<span class="dim">Connect a platform on <a href="#socials">Socials</a> first.</span>`}</span>
+    <button>Save</button><button type="button" class="ghost" onclick="schedOpen(${c.id})">Close</button></form>`;
+}
+async function schedSave(e, id) {
+  e.preventDefault();
+  const f = new FormData(e.target), platforms = f.getAll("p");
+  const say = m => { e.target.querySelector(".err")?.remove(); e.target.insertAdjacentHTML("beforeend", `<span class="err">${esc(m)}</span>`); };
+  if (!platforms.length) return say("Pick at least one platform to post to.");
+  const r = await post(`/api/clips/${id}/schedule`, {at: new Date(f.get("at")).getTime() / 1000, platforms});
+  if (!r.ok) return say((await r.json()).detail);
+  schedOpenIds.delete(id); clipKey = ""; refresh();
+}
 function renderPosts(s) {
   const jobs = Object.fromEntries(s.jobs.filter(j => ["news", "fact"].includes(j.kind)).map(j => [j.id, j]));
   const posts = s.clips.filter(c => jobs[c.job_id]), making = Object.values(jobs).filter(j => !["done", "failed"].includes(j.status));
@@ -1486,7 +1516,7 @@ async function refresh() {
       ${t === "instagram" && igMax ? `title="only clips up to ${igMax}s: Instagram's API rejects longer Reels right now"` : ""}>${TARGET_NAMES[t]}${
       t === "instagram" && igMax ? ` ≤${igMax}s` : ""} (${n})</button>`).join("")
     : `<span class="dim">Connect a platform on the <a href="#socials">Socials</a> page to upload.</span>`;
-  const key = JSON.stringify([s.platforms, igMax, s.clips.map(c => [c.id, c.status, c.path, c.uploads, c.views])]);
+  const key = JSON.stringify([s.platforms, igMax, [...schedOpenIds], s.clips.map(c => [c.id, c.status, c.path, c.uploads, c.views, c.post_at, c.post_to])]);
   if (key === clipKey) return;
   clipKey = key;
   $("#clips").innerHTML = s.clips.length ? s.clips.map(c => {
@@ -1507,7 +1537,9 @@ async function refresh() {
         ${Object.entries(JSON.parse(c.uploads || "{}")).filter(([, u]) => u.error).map(([p, u]) =>
           `<div style="color:#f88;font-size:12px"><b>${PLATFORMS[p] || p} error:</b> ${esc(u.error)}</div>`).join("")}
         <div class="row">
-          ${c.status === "timed" ? `<span class="chip">⏰ posts ${new Date(c.post_at * 1000).toLocaleString([], {dateStyle: "short", timeStyle: "short"})}</span>` : ""}
+          ${c.status === "timed" ? `<span class="chip">⏰ posts ${new Date(c.post_at * 1000).toLocaleString([], {dateStyle: "short", timeStyle: "short"})}${
+            c.post_to ? " to " + JSON.parse(c.post_to).map(p => PLATFORMS[p] || p).join(", ") : ""}</span>
+            <button class="ghost" onclick="schedOpen(${c.id})">Change</button><button class="ghost" onclick="unschedPost(${c.id})">Cancel schedule</button>` : ""}
           ${ups ? `<span class="ups">${ups}</span>` : c.youtube_id ? `<a href="https://youtu.be/${esc(c.youtube_id)}" target="_blank">▶ on YouTube</a>` : `<span class="dim">${esc(c.status)}</span>`}
           ${canUpload ? `<button class="ghost" onclick="uploadClip(${c.id}, this)" title="to the job's platforms; only retries the ones not done yet">${ups ? "Retry upload" : "Upload"}</button>` : ""}
           ${c.path ? `<a href="/media/${esc(c.path)}" target="_blank">Open</a>` : ""}
@@ -1518,17 +1550,15 @@ async function refresh() {
               onclick="uploadTo(${c.id}, '${notOn(s, c, t).join(",")}', this)">↑ ${TARGET_NAMES[t]}</button>`).join("") : ""}
           ${ready(c) && igRisky(s, c) ? `<button class="ig-risk" onclick="uploadTo(${c.id}, 'instagram', this, true)"
               title="${Math.round(c.end - c.start)}s is over ${igMax}s: Instagram's API often rejects Reels this long (ProcessingFailedError). It retries once by itself.">↑ Instagram (${Math.round(c.end - c.start)}s, may fail)</button>` : ""}
+          ${canSched(c) && c.status !== "timed" ? `<button class="ghost" onclick="schedOpen(${c.id})">⏰ Schedule</button>` : ""}
           ${!["rendering","uploading"].includes(c.status) ? `<button class="ghost danger" onclick="deleteClip(${c.id})">Delete</button>` : ""}
         </div>
+        ${schedOpenIds.has(c.id) ? schedForm(s, c) : ""}
       </div></div>`;
   }).join("") : `<p class="empty">Clips will appear here as they render.</p>`;
 }
 const fmt = s => `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;
 refresh(); setInterval(refresh, 2000);
 </script>
-  <div class="row" style="margin-top:12px;gap:8px"><button type="button" onclick="camSave()">Use this box</button>
-    <button type="button" class="ghost" onclick="camOpen(camForm)">New frame</button>
-    <button type="button" class="ghost" onclick="$('#camdlg').hidden = true">Cancel</button></div>
-</div></div>
 </body>
 </html>

@@ -132,7 +132,7 @@ Open **http://127.0.0.1:8000**.
 | **Auto** | The autopilot: ON/OFF, **Stop everything**, today's posting slots, settings, and the **Activity** view of every round. |
 | **Topics** | Queue a topic. It finds the most-viewed recent videos about it, checks they clip well, and clips them one after another. |
 | **Jobs** | Every video being or already clipped: status, full log, hype curves, "cut it yourself", and live controls for streams. |
-| **Clips** | Every clip: preview, title, score, why it was picked, where it's posted (with links), errors, upload buttons per platform, and bulk upload. |
+| **Clips** | Every clip: preview, title, score, why it was picked, where it's posted (with links), errors, upload buttons per platform, bulk upload, and **⏰ Schedule**: pick a date and time and which platforms for any clip not posted yet; it posts then by itself (even with the autopilot off) as long as the server is running. Scheduled clips show the time and platforms, with **Change** and **Cancel schedule**. Each clip keeps its own platforms, so the job's other clips aren't affected. |
 | **Socials** | Which platforms are connected, uploads in the last 24h, limit timers, the YouTube cookies card, and the WhatsApp report. |
 | **News** | News and fact posts: find stories for a topic, tick the ones to post, make the videos, post now, at a time, or on the autopilot's slots. |
 | **Reports** | **What works** (views per topic, platform and clip length; best and weakest clips; the niche it would pick) and the hourly views reports. |
@@ -155,9 +155,9 @@ Open **http://127.0.0.1:8000**.
     ready. Delete any you don't want. Stored in `data/fillers/`, kept by "Reset everything". When Split is picked, a **Your video below** dropdown appears
     next to Framing.
 - ***Streamer on top, gameplay below*** / ***Gameplay on top, streamer below*** (for streams with a facecam,
-  live or not): full screen, no bars. The streamer's facecam is cut out of the frame into a 1080×768 panel, and the
-  gameplay (the middle of the frame, pushed away from the facecam's side so the streamer isn't in it twice) fills
-  the other 1080×1152.
+  live or not): full screen, no bars. The streamer's facecam is cut out of the frame into a 1080×600 panel (about a
+  third of the screen), and the gameplay (the middle of the frame, pushed away from the facecam's side so the
+  streamer isn't in it twice) fills the rest.
   - **Where's the streamer** appears next to Framing:
     - *Find the face automatically:* face detection (YuNet) on a few frames of each clip. It takes the face that stays
       in the same spot (a facecam doesn't move, faces in the game do) and frames head and shoulders. If no face is
@@ -166,8 +166,10 @@ Open **http://127.0.0.1:8000**.
     - *I'll draw a box…* (Create page): paste the link first. Clipper grabs one real frame (the live edge of a live
       stream, or a bit into a video) and you drag a rectangle around the streamer. Exact, best when the facecam has an
       odd size or spot.
-  - **Text:** streamer on top puts the follow message and headline on the line between the two panels (clear of the
-    face), with captions near the bottom. Streamer below puts the captions just above the facecam.
+  - **Text:** streamer on top puts the follow message and headline at the very top, on their own strip (a blurred,
+    darkened copy of the video, so they never cover the face), then the facecam (1080×500), then the gameplay, with
+    captions near the bottom. Streamer below keeps the headline at the top over the gameplay and puts the captions
+    just above the facecam.
 
 **Follow message** (Create, Topics, Auto and News, on by default): the red "please follow" line at the top (the 5
 messages in `FOLLOW_LINES` in `config.py` take turns, or `FOLLOW_LINE` in `.env` for always the same one). It has its
