@@ -145,12 +145,12 @@ Open **http://127.0.0.1:8000**.
 - *4:5*, *Square* and *Whole frame 16:9* keep more of the scene, with black bars above and below that hold the
   headline and captions.
 - ***Split: clip on top + your video below*** (split-screen):
-  - **Top:** the follow message and headline on a blurred strip, then the clip **whole** (16:9 at full width, so
-    the centre and everything around it is visible; nothing is cut off).
-  - **Below it:** a **background video you provide** (gameplay, satisfying clips, parkour...), muted, starting
-    at a random point and looped if it's shorter than the clip.
-  - **Text:** the follow message, headline, logo, captions and end card are the same as other clips (captions at the
-    bottom, over the background video).
+  - **Top (the bigger part, 1080×1180):** the main clip, filling the full width edge to edge (cropped to fill, no
+    bars), with no text over it.
+  - **Below it (1080×740):** a **background video you provide** (gameplay, satisfying clips, parkour...), muted,
+    starting at a random point and looped if it's shorter than the clip.
+  - **Text:** the follow message and headline sit at the top of the background video, with the logo under them and
+    the captions near the bottom, so the main clip stays clean. The end card is the same as other clips.
   - **Your library:** on **⚙ Settings → Background videos**, upload a file or **paste a YouTube link**; it
     downloads in the background (video only, up to 1080p, since it plays muted) and shows "downloading…" until it's
     ready. Delete any you don't want. Stored in `data/fillers/`, kept by "Reset everything". When Split is picked, a **Your video below** dropdown appears
@@ -390,6 +390,8 @@ record piece 1 ──▶ record piece 2 ──▶ record piece 3 ──▶ ...  
   the GPU.
 - **Decisions in the log.** Every line from a piece starts with `[piece N]`: what it analysed, the candidates, what
   DeepSeek picked (score, title, why), what was dropped and why, joins and skips.
+- **Clean starts.** The joined tail always starts on a video keyframe, so clips that begin in the overlap have
+  picture and sound from the first frame (see [Live pieces start on a keyframe](#live-pieces-start-on-a-keyframe)).
 - **Cleanup.** The recordings and the joined pieces are deleted when the job ends.
 
 Past streams (replays) work like normal videos, and their chat replay (via yt-dlp) is used as a signal too.
@@ -628,8 +630,11 @@ It uses Meta's official **WhatsApp Cloud API**, from the same Meta app.
 | `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` | empty (= DeepSeek) | use any other model instead: cloud with a key or local Ollama ([below](#use-another-ai-model-any-provider-or-local-ollama)) |
 | `FFMPEG` | `ffmpeg` | ffmpeg path (needs libass); ffprobe must sit next to it |
 | `WHISPER_MODEL` | `small` | `tiny` / `base` / `small` / `medium` / `large-v3` |
-| `SHORT_MIN` / `SHORT_MAX` | 15 / 60 | short clip length (s) |
-| `LONG_MIN` / `LONG_MAX` | 60 / 180 | long clip length (s); nothing goes over 180 (Shorts limit) |
+| `SHORT_MIN` / `SHORT_MAX` | 20 / 90 | short clip length (s) |
+| `LONG_MIN` / `LONG_MAX` | 90 / 180 | long clip length (s); nothing goes over 180 (Shorts limit) |
+| `CLIP_PAD_BEFORE` / `CLIP_PAD_AFTER` | 0.8 / 1.5 | breathing room (s) before the first word and after the last, once a clip is snapped to whole sentences |
+| `SNAP_REACH` | 8 | how far (s) a clip edge may move to reach the start/end of a sentence |
+| `LONG_VIDEO_MINUTES` | 60 | videos this long or longer are clipped like a stream, in pieces (0 = never) |
 | `STRETCH_SHORT` / `STRETCH_LONG` | 10 / 10 | how far over the max the AI may go for context |
 | `CROP_ASPECT` | 1 | default framing (0.5625 = full 9:16 ... 1.78 = whole frame) |
 | `LOGO` | `clipper/assets/logo.png` | watermark; empty = none |
@@ -958,6 +963,27 @@ worked out as `end − piece length`, and the boundary (seconds of the previous 
 ranges, chat and comment times are moved onto the piece's clock and clipped to it. Each piece runs `_process` with
 `live={"piece", "boundary"}`, the same switch live pieces use: the AI may skip a dull piece, picks under 55 are
 dropped, and a clip may start in the overlap only if the moment continues into the new piece.
+
+### Making every clip complete (no cut mid-thought)
+
+1. **Sentence markers.** The transcript the AI reads has a `[seconds]` marker at **every sentence start** (and at
+   least every 5s), so it picks real sentence boundaries instead of guessing between markers.
+2. **The prompt's story check.** Every clip must have a SETUP (the first line a stranger needs), THE MOMENT, and THE
+   LANDING (the reaction or resolution finishing). A clip may not end mid-thought or mid-action, nor start on
+   "and / but / so / he / it" pointing at something earlier. Before answering, the AI re-reads each clip's first and
+   last sentence and moves the edges until they stand on their own. When in doubt: one sentence earlier, one later.
+3. **Snapping.** In code, each edge is moved out to the start/end of its sentence (up to `SNAP_REACH` seconds), using
+   Whisper's punctuation and word timings.
+4. **Breathing room.** `CLIP_PAD_BEFORE` before the first word and `CLIP_PAD_AFTER` after the last, so a clip doesn't
+   open on a clipped syllable and the reaction has time to land. Never past the video's end or the hard max.
+
+### Live pieces start on a keyframe
+
+A live piece is processed with the previous piece's last 60s in front. That tail is joined with ffmpeg's concat
+demuxer and `-c copy`, so it must start **on a video keyframe** (live streams have one every ~2-5s): `inpoint` is the
+exact timestamp of the last keyframe before the wanted start, found with ffprobe (`packet=pts_time,flags`). Starting
+anywhere else keeps the audio from there but the video only from the next keyframe, which showed as a stuck or black
+first few seconds on clips that started in the overlap.
 
 ### Post statuses
 

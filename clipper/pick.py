@@ -18,7 +18,7 @@ from .config import (PC_LLM_BASE_URL, PC_LLM_MODEL, LLM_API_KEY, LLM_BASE_URL, L
                      STRETCH_LONG, STRETCH_SHORT)
 
 # Clip kinds (all rendered vertical 9:16):
-#   short = a full moment with its context (<= 1 min), long = a longer segment (<= 3 min).
+#   short = a full moment with its context (SHORT_MIN-SHORT_MAX, default 20-90s), long = a longer segment (<= 3 min).
 # Every kind is capped at 180s, so every clip is a YouTube Short.
 KINDS = ("short", "long")
 # Target clip length in seconds: (min, max). Set in .env.
@@ -62,10 +62,21 @@ How to judge a clip:
 - Hook in the first 1-2 seconds (a shout, a crash, a weird line, a question). Slow setup? Start later.
 - A clear payoff (the crash, the punchline, the reaction, the answer), then end soon after.
 - Must make sense to someone scrolling who has never seen this creator.
-- The clip must be COMPLETE. Include the setup a stranger needs to understand it, and let the payoff
-  AND the reaction to it finish. Ending mid-thought or before the punchline is the worst mistake;
-  when in doubt, start a sentence earlier and end a sentence later.
-- Start and end on sentence boundaries; never cut someone off mid-word.
+- The clip must be COMPLETE and make sense ON ITS OWN. Every clip has three parts:
+    1. SETUP: the first line a stranger needs (what's going on / who / what they're trying to do).
+    2. THE MOMENT: the crash, the line, the play, the reveal.
+    3. THE LANDING: the reaction or resolution finishing (the laugh dies down, the answer is given, the chase
+       ends, the joke's punchline lands).
+  Ending mid-thought, mid-action ("he's about to...") or before the punchline is the worst mistake a clip can
+  make; a clip that starts with "and", "but", "so", "that's why", "he" or "it" pointing at something earlier
+  is broken too. When in doubt, start one sentence earlier and end one sentence later: a slightly longer
+  complete clip always beats a shorter broken one (within the max).
+- Start and end exactly on sentence boundaries; never cut someone off mid-word. Every sentence in the
+  transcript starts with its [seconds] marker: use those times for "start", and the start of the sentence
+  AFTER your last one for "end".
+- SELF-CHECK before you answer, for every clip: read its first sentence (would someone who just scrolled in
+  understand it?) and its last sentence (does the thought close, is the question answered, has the reaction
+  finished?). If not, move the start earlier or the end later until it does.
 - Loop-friendly ending: end right after the payoff/reaction lands, not after a fade-out of chatter, so the
   replay starts straight back on the hook (replays count heavily on Shorts/Reels/TikTok).
 - Formats that keep winning: "wait for it" build-ups with a clear payoff, fails and near-misses, clutch plays,
@@ -89,7 +100,7 @@ one niche/community tag, and at most one broad tag (#gaming). No #shorts/#fyp/#v
 Return JSON only:
 {"clips": [{"candidate": <id>, "kind": "short"|"long", "start": <sec>, "end": <sec>,
 "virality": <0-100>, "title": "...", "headline": "...", "description": "...", "hashtags": ["..."],
-"reason": "one line: what happens and why it will pop"}]}"""
+"reason": "one line: setup -> moment -> landing, and why it will pop"}]}"""
 
 # "hype" mode: only pre-found windows.
 WINDOWS_TASK = """Video title: "{title}"

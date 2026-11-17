@@ -7,7 +7,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from . import db, download, pick, render, signals, social, transcribe
-from .config import DATA, IG_MAX_SECONDS, KEEP_SOURCES, LIVE_CHUNK_SECONDS, LONG_VIDEO_MINUTES
+from .config import (CLIP_PAD_AFTER, CLIP_PAD_BEFORE, DATA, IG_MAX_SECONDS, KEEP_SOURCES, LIVE_CHUNK_SECONDS,
+                     LONG_VIDEO_MINUTES, SNAP_REACH)
 
 STOPS = {}  # job_id -> threading.Event
 RENDER_JOBS = 2  # clips rendered at once (GPU encoder + CPU side by side)
@@ -278,8 +279,21 @@ def _join_tail(prev, cur, out):
                                           "csv=p=0", str(f)], capture_output=True, text=True).stdout.strip() or 0)
     pd = dur(prev)
     tail = min(JOIN_SECONDS, pd / 2)
+    # The tail must start ON a video keyframe. `inpoint` is in the file's own timestamps (a live .ts starts at ~1.4s,
+    # not 0); any other point keeps the audio from there but the video only from the next keyframe, so clips starting
+    # in the overlap had seconds of sound over a stuck/black first frame.
+    probe = lambda *a: subprocess.run([render.FFPROBE, "-v", "error", *a, str(prev)], capture_output=True, text=True).stdout
+    try:
+        t0 = float(probe("-show_entries", "format=start_time", "-of", "csv=p=0").strip() or 0)
+    except ValueError:
+        t0 = 0.0
+    want = t0 + max(0.0, pd - tail)
+    keys = [float(ln.split(",")[0]) for ln in probe("-select_streams", "v", "-read_intervals", f"{max(0.0, want - 20):.2f}%{want + 0.5:.2f}",
+                                                     "-show_entries", "packet=pts_time,flags", "-of", "csv=p=0").splitlines()
+            if ",K" in ln and ln.split(",")[0].replace(".", "", 1).isdigit()]
+    inpoint = max([k for k in keys if k <= want] or [want])
     lst = out.with_suffix(".txt")
-    lst.write_text(f"file '{prev.name}'\ninpoint {max(0, pd - tail):.2f}\nfile '{cur.name}'\n", encoding="utf-8")
+    lst.write_text(f"file '{prev.name}'\ninpoint {inpoint:.6f}\nfile '{cur.name}'\n", encoding="utf-8")
     subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", lst.name, "-c", "copy",
                     "-avoid_negative_ts", "make_zero", out.name], check=True, cwd=out.parent, capture_output=True)
     lst.unlink(missing_ok=True)
@@ -413,8 +427,10 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None, live=No
                         f"\"{c['title']}\" [{c.get('headline', '')}] {' '.join('#' + t for t in c['tags'])} | {c['reason']}")
         # Snap every pick out to whole sentences (AI times are guesses from coarse markers), within the
         # video and never past the hard max (YouTube rejects Shorts over 3 min).
+        # Then breathing room: CLIP_PAD_BEFORE before the first word, CLIP_PAD_AFTER after the last (the reaction lands).
         for c in chosen:
-            s, e = transcribe.snap(words, c["start"], c["end"])
+            s, e = transcribe.snap(words, c["start"], c["end"], reach=SNAP_REACH)
+            s, e = max(0.0, s - CLIP_PAD_BEFORE), e + CLIP_PAD_AFTER
             s, e = s, min(e, n, s + pick.HARD_MAX[c["kind"]])
             if (s, e) != (c["start"], c["end"]):
                 say(f"snapped to sentences: {_mmss(c['start'])}-{_mmss(c['end'])} -> {_mmss(s)}-{_mmss(e)} "

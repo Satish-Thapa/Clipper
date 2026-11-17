@@ -123,6 +123,12 @@ def hook_lines(text, width=44):
 HOOK_LINE_H, HEAD_H = 42, 106  # one follow-message line / the headline box (px) on a 1080x1920 canvas
 
 
+def split_head_y(hook):
+    """Split layout: the follow + headline block sits 28px into the background video (below the main clip)."""
+    n = len(hook_lines(hook))
+    return SPLIT_CLIP_H + 28 + (n * HOOK_LINE_H + (14 if n else 0) + HEAD_H) // 2
+
+
 def seam_block(y, lines=1):
     """Like top_block, but the follow message + headline centred on line y (the facecam layout's seam, so they
     don't cover the streamer's face)."""
@@ -309,7 +315,7 @@ def find_cam(src, start, end, samples=6, face_at=0.45):
     return x / W, y / H, pw / W, ph / H
 
 
-SPLIT_CLIP_H = 608  # split layout: the clip is shown whole (16:9 at 1080 wide = 1080x608), nothing cut off
+SPLIT_CLIP_H = 1180  # split layout: the main clip fills the top 1080x1180; your background video the bottom 1080x740
 
 
 def filler_path(layout):
@@ -355,21 +361,18 @@ def cut(src, out, start, end, vertical, words=(), headline="", voice=(), aspect=
         sub = out.with_suffix(".ass")
         sub.write_text(ass(words, start, end, vertical, headline, aspect=aspect, hook=hook, split=bool(filler),
                            cap_margin=CAM_H + 40 if cam and cam[0] == "bottom" else None,
-                           ),
+                           head_y=split_head_y(hook) if filler else None),
                        encoding="utf-8")
         subs = f",subtitles={sub.name}"  # relative name + cwd avoids ffmpeg path escaping
     n_in = 1 + (1 if LOGO and LOGO.exists() else 0) + len(voice)  # the background video is the last input
     if filler:
-        # Split, top to bottom: follow message + headline (over a blurred, darkened copy of the clip), then the clip
-        # WHOLE (16:9 at full width, the centre and everything around it visible), then your video filling the rest.
-        top = top_block(9 / 16, len(hook_lines(hook)))[2] + 24 if headline or hook else 140
-        bot_h = 1920 - top - SPLIT_CLIP_H
-        head = (f"[0:v]split=2[a][b];[a]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
-                f"boxblur=24:2,eq=brightness=-0.35,setsar=1[bg];"
-                f"[b]scale=1080:{SPLIT_CLIP_H}:force_original_aspect_ratio=decrease:flags=lanczos,"
-                f"pad=1080:{SPLIT_CLIP_H}:(ow-iw)/2:(oh-ih)/2:black,setsar=1[clip];"
+        # Split: the main clip fills the top (full width, cropped to fill, the bigger part), your background video fills
+        # the bottom. The follow message + headline sit at the top of the background video, so the clip stays clean.
+        bot_h = 1920 - SPLIT_CLIP_H
+        head = (f"[0:v]scale=1080:{SPLIT_CLIP_H}:force_original_aspect_ratio=increase:flags=lanczos,"
+                f"crop=1080:{SPLIT_CLIP_H},setsar=1[clip];"
                 f"[{n_in}:v]scale=1080:{bot_h}:force_original_aspect_ratio=increase,crop=1080:{bot_h},setsar=1,fps=30[fill];"
-                f"[bg][clip]overlay=0:{top}[t];[t][fill]overlay=0:{top + SPLIT_CLIP_H}:shortest=1{subs}")
+                f"[clip][fill]vstack=inputs=2:shortest=1{subs}")
     elif cam:
         # Facecam stack, full screen: the streamer's box cut out of the frame fills the whole width of a 1080xCAM_H
         # panel (cropped top/bottom inside the box only, so nothing around the facecam comes in), the gameplay (middle
@@ -395,6 +398,8 @@ def cut(src, out, start, end, vertical, words=(), headline="", voice=(), aspect=
         # so it never covers the headline. 16:9: in the video's top-right corner.
         bar = bar_height(aspect) if vertical else 0
         below = top_block(aspect, len(hook_lines(hook)))[2] if headline else 230  # bottom of the follow + headline block
+        if filler:  # split: the text block is on the background video, the logo just under it
+            below = seam_block(split_head_y(hook), len(hook_lines(hook)))[2] if headline or hook else SPLIT_CLIP_H
         y = f"{bar}-h-24" if bar - below >= 110 else f"{max(bar, below) if vertical else 0}+24"  # h = logo height
         logo_in = ["-i", str(LOGO.resolve())]
         graph = f"{head}[v];[1:v]scale={220 if vertical else 260}:-1[l];[v][l]overlay=W-w-24:{y}[o]"

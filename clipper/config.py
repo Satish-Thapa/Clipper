@@ -27,8 +27,14 @@ LONG_VIDEO_MINUTES = float(os.getenv("LONG_VIDEO_MINUTES", "60"))
 # KEEP_SOURCES=1 keeps them (needed to cut more clips from that video later by hand).
 KEEP_SOURCES = os.getenv("KEEP_SOURCES", "0").lower() in ("1", "true", "yes")
 SHORT_HARD_MAX = 180  # YouTube Shorts can't be longer than 3 min; no clip of any kind ever exceeds it
-SHORT_MIN, SHORT_MAX = int(os.getenv("SHORT_MIN", "15")), min(int(os.getenv("SHORT_MAX", "60")), SHORT_HARD_MAX)
-LONG_MIN, LONG_MAX = int(os.getenv("LONG_MIN", "60")), min(int(os.getenv("LONG_MAX", "180")), SHORT_HARD_MAX)
+SHORT_MIN, SHORT_MAX = int(os.getenv("SHORT_MIN", "20")), min(int(os.getenv("SHORT_MAX", "90")), SHORT_HARD_MAX)
+LONG_MIN, LONG_MAX = int(os.getenv("LONG_MIN", "90")), min(int(os.getenv("LONG_MAX", "180")), SHORT_HARD_MAX)
+# Breathing room around every clip, after it is snapped to whole sentences: a little lead-in before the first word
+# and room after the last word for the reaction to land (seconds). SNAP_REACH = how far (s) a clip edge may move
+# to reach the start/end of a sentence.
+CLIP_PAD_BEFORE = float(os.getenv("CLIP_PAD_BEFORE", "0.8"))
+CLIP_PAD_AFTER = float(os.getenv("CLIP_PAD_AFTER", "1.5"))
+SNAP_REACH = float(os.getenv("SNAP_REACH", "8"))
 _logo = os.getenv("LOGO", str(ROOT / "clipper" / "assets" / "logo.png"))
 LOGO = Path(_logo) if _logo else None  # watermark on every clip; LOGO= (empty) in .env turns it off
 END_CARD = os.getenv("END_CARD", "FOLLOW")
