@@ -5,12 +5,12 @@ import time
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import autopilot, db, download, insights, news, pick, reset, social, stats, topics, upload, worker
+from . import autopilot, db, download, insights, news, pick, render, reset, social, stats, topics, upload, worker
 from .config import CROP_ASPECT, DATA, IG_MAX_SECONDS, LIVE_CHUNK_SECONDS, SHORT_HARD_MAX, YT_COOKIES
 
 app = FastAPI(title="Clipper")
@@ -42,10 +42,11 @@ class NewJob(BaseModel):
     longs: int = Field(1, ge=0, le=10)
     platforms: list[Platform] = ["youtube"]  # where finished clips are uploaded; [] = don't upload
     aspect: float = Field(CROP_ASPECT, ge=0.56, le=1.78)  # framing: kept w/h of the frame (0.5625 = fills the phone)
-    layout: str = Field("", max_length=200, pattern=r"^(split:[^/\\\\:*?\"<>|]+)?$")  # "split:<file>" = clip on top, that background video below
+    layout: str = Field("", max_length=200, pattern=r"^(split:[^/\\\\:*?\"<>|]+|cam:(top|bottom):(auto|tl|tr|bl|br|[0-9.]+,[0-9.]+,[0-9.]+,[0-9.]+))?$")  # "split:<file>" = clip on top, that background video below; "cam:top|bottom:<where>" = facecam stack
     hq: bool = False  # download up to 4K instead of 1080p (slower)
     mode: Mode = "hype"
     subtitles: bool = True
+    follow: bool = True  # the follow message at the top (with or without a headline)
     voiceover: bool = False
     chunk_minutes: int | None = Field(None, ge=1, le=120)  # live streams: length of each recorded piece
     max_chunks: int = Field(0, ge=0, le=500)  # live streams: pieces to record and clip; 0 = until the stream ends
@@ -66,10 +67,11 @@ class NewTopic(BaseModel):
     longs: int = Field(1, ge=0, le=10)   # per video
     platforms: list[Platform] = []
     aspect: float = Field(CROP_ASPECT, ge=0.56, le=1.78)
-    layout: str = Field("", max_length=200, pattern=r"^(split:[^/\\\\:*?\"<>|]+)?$")
+    layout: str = Field("", max_length=200, pattern=r"^(split:[^/\\\\:*?\"<>|]+|cam:(top|bottom):(auto|tl|tr|bl|br|[0-9.]+,[0-9.]+,[0-9.]+,[0-9.]+))?$")
     hq: bool = False
     mode: Literal["hype", "ai+hype", "ai"] = "hype"  # no "manual": nobody is there to type the cuts
     subtitles: bool = True
+    follow: bool = True  # the follow message at the top (with or without a headline)
     voiceover: bool = False
     face_check: bool = True  # skip videos that are mostly a person on screen (vision.py)
 
@@ -89,12 +91,36 @@ def index():
     return FileResponse(INDEX)
 
 
+@app.get("/api/frame")
+def video_frame(url: str = Query(..., pattern=r"^https?://", max_length=500)):
+    """One frame of a video / the live edge of a stream, for drawing where the streamer's facecam is."""
+    import hashlib
+    d = DATA / "frames"
+    d.mkdir(parents=True, exist_ok=True)
+    out = d / f"{hashlib.sha1(f'{url}{int(time.time() // 60)}'.encode()).hexdigest()[:16]}.jpg"  # fresh each minute
+    if not out.exists():
+        for old in d.glob("*.jpg"):
+            if time.time() - old.stat().st_mtime > 3600:
+                old.unlink(missing_ok=True)
+        try:
+            download.frame(url, out)
+        except Exception as e:
+            raise HTTPException(502, f"Couldn't get a frame: {e}"[:300])
+    return FileResponse(out, media_type="image/jpeg")
+
+
+@app.get("/privacy")
+def privacy():
+    """Privacy policy (Facebook/Instagram app review asks for one; host the same file publicly, see README)."""
+    return FileResponse(INDEX.parent / "privacy.html")
+
+
 @app.post("/api/jobs")
 def create_job(j: NewJob):
     if j.shorts + j.longs == 0:
         raise HTTPException(400, "ask for at least one clip")
     jid = db.insert("jobs", url=j.url, shorts=j.shorts, longs=j.longs, auto_upload=int(bool(j.platforms)),
-                    platforms=json.dumps(j.platforms), aspect=j.aspect, hq=int(j.hq), mode=j.mode, subtitles=int(j.subtitles), voiceover=int(j.voiceover),
+                    platforms=json.dumps(j.platforms), aspect=j.aspect, hq=int(j.hq), mode=j.mode, subtitles=int(j.subtitles), follow=int(j.follow), voiceover=int(j.voiceover),
                     chunk_minutes=j.chunk_minutes, max_chunks=j.max_chunks, layout=j.layout, created=time.time())
     worker.start(jid)
     return {"id": jid}
@@ -117,14 +143,14 @@ def live_controls(jid: int, c: LiveControls):
 @app.post("/api/jobs/file")
 async def create_file_job(request: Request, filename: str, shorts: int = 3, longs: int = 1,
                           platforms: str = "youtube", mode: Mode = "hype", aspect: float = CROP_ASPECT,
-                          subtitles: bool = True, voiceover: bool = False, layout: str = ""):
+                          subtitles: bool = True, voiceover: bool = False, layout: str = "", follow: bool = True):
     """Raw file bytes in the body (no multipart, so no python-multipart dependency)."""
     plats = [p for p in platforms.split(",") if p in social.PLATFORMS]  # comma-separated in the query string
     ext = Path(filename).suffix.lower()
     if ext not in (".mp4", ".mkv", ".mov", ".webm", ".ts", ".avi"):
         raise HTTPException(400, f"unsupported file type {ext or '(none)'}")
     jid = db.insert("jobs", url=f"file:{Path(filename).name}", title=Path(filename).stem, shorts=shorts,
-                    longs=longs, auto_upload=int(bool(plats)), platforms=json.dumps(plats), aspect=min(max(aspect, 0.5625), 16 / 9), layout=layout if layout.startswith("split:") else "", mode=mode, subtitles=int(subtitles), voiceover=int(voiceover), status="uploading", created=time.time())
+                    longs=longs, auto_upload=int(bool(plats)), platforms=json.dumps(plats), aspect=min(max(aspect, 0.5625), 16 / 9), layout=layout if layout.startswith("split:") or render.cam_layout(layout) else "", mode=mode, subtitles=int(subtitles), follow=int(follow), voiceover=int(voiceover), status="uploading", created=time.time())
     d = DATA / "jobs" / str(jid)
     d.mkdir(parents=True, exist_ok=True)
     with open(d / f"source{ext}", "wb") as f:
@@ -139,7 +165,7 @@ def create_topic(t: NewTopic):
     if t.shorts + t.longs == 0:
         raise HTTPException(400, "ask for at least one clip per video")
     tid = topics.enqueue(topic=t.topic.strip(), videos=t.videos, shorts=t.shorts, longs=t.longs, mode=t.mode,
-                         subtitles=int(t.subtitles), voiceover=int(t.voiceover), platforms=json.dumps(t.platforms),
+                         subtitles=int(t.subtitles), follow=int(t.follow), voiceover=int(t.voiceover), platforms=json.dumps(t.platforms),
                          face_check=int(t.face_check), aspect=t.aspect, hq=int(t.hq), layout=t.layout)
     return {"id": tid}
 
@@ -288,27 +314,45 @@ def learn_now():
     return out
 
 
-class ChatMsg(BaseModel):
-    role: Literal["user", "ai"]
-    text: str = Field(..., min_length=1, max_length=4000)
+@app.get("/api/ai/models")
+def ai_models():
+    """Settings → AI models: the order (main + fallbacks, each with its model and what's missing) and the local models."""
+    from .config import LLM_BASE_URL, PC_LLM_BASE_URL
+    pc = pick.local_models(PC_LLM_BASE_URL)
+    return {**pick.ai_choice(), "providers": pick.PROVIDERS, "local_url": LLM_BASE_URL, **pick.local_models(),
+            "pc_url": PC_LLM_BASE_URL, "pc_models": pc.get("models", []), "pc_error": pc.get("error", "")}
 
 
-class Chat(BaseModel):
-    messages: list[ChatMsg] = Field(..., min_length=1, max_length=40)  # the conversation so far, last = the question
+class AiUse(BaseModel):
+    order: list[Literal["deepseek", "local", "pc"]] = Field(..., min_length=1, max_length=3)  # main first
+    local_model: str = Field("", max_length=200)
+    pc_model: str = Field("", max_length=200)
 
 
-@app.post("/api/ai/chat")
-def ai_chat(c: Chat):
-    """Chat page: talk to the configured AI model (DeepSeek, Ollama or any provider) to check it works -> {reply, seconds}.
-    ponytail: the history goes in as one text through pick._ask, so it reuses the provider/JSON handling."""
-    t = time.time()
-    history = "\n\n".join(f"{'User' if m.role == 'user' else 'You'}: {m.text}" for m in c.messages)
+@app.post("/api/ai/use")
+def ai_use(u: AiUse):
+    """Set which AI every call uses (clips, titles, autopilot, news) and the fallbacks when it fails."""
     try:
-        reply = pick._ask(f"Conversation so far:\n\n{history}\n\nReply to the user's last message. "
-                          'Answer in JSON: {"reply": "your answer"}', system="You are a helpful assistant.", key="reply")
+        pick.set_ai(u.order, u.local_model.strip(), u.pc_model.strip())
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    pick._balance["at"] = 0  # header refreshes right away
+    return pick.ai_choice()
+
+
+class AiTest(BaseModel):
+    provider: Literal["deepseek", "local", "pc"]
+
+
+@app.post("/api/ai/test")
+def ai_test(t: AiTest):
+    """Settings → AI models → Test: ask that one AI "What model are you?" -> {reply, model, seconds}."""
+    try:
+        return pick.test(t.provider)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     except Exception as e:
-        raise HTTPException(502, f"AI error: {e}")
-    return {"reply": str(reply), "seconds": round(time.time() - t, 1)}
+        raise HTTPException(502, f"{pick.PROVIDERS[t.provider]} failed: {e}"[:400])
 
 
 class NewsFind(BaseModel):
@@ -331,13 +375,17 @@ def news_find(f: NewsFind):
     say = news.run_logger(rid)
 
     def run():
+        with db.log_to(say):  # the AI lines ("🤖 AI: gpt-oss:20b answered…") land in this run's log
+            _run()
+
+    def _run():
         try:
             say(f"▶ find {f.n} {f.kind} post(s) about '{topic or 'anything trending'}' (topic: {how})")
             if f.kind == "facts":
                 stories = news.facts(topic or "video games", f.n, say)
                 data = {"topic": topic, "how": how, "stories": [{**x, "pick": True} for x in stories]}
             else:
-                say("🧠 DeepSeek writing search queries…")
+                say("🧠 AI writing search queries…")
                 queries = list(dict.fromkeys(([topic] + news.queries_for(topic)) if topic else news.queries_for(autopilot.ANY_NICHE)))
                 say("   queries: " + " | ".join(queries))
                 db.update("news_runs", rid, status="searching")
@@ -345,7 +393,7 @@ def news_find(f: NewsFind):
                 picked = []
                 if stories:
                     db.update("news_runs", rid, status="picking")
-                    say(f"🧠 DeepSeek picking the best {f.n} of {len(stories)}…")
+                    say(f"🧠 AI picking the best {f.n} of {len(stories)}…")
                     picked = news.pick_stories(topic or "trending", stories, f.n, [r["headline"] for r in db.all("news")])
                     for x in picked:
                         say(f"   ★ {x['title'][:100]} ({x['source']}): {x.get('why', '')}")
@@ -372,6 +420,7 @@ class NewsMake(BaseModel):
     platforms: list[Platform] = []
     voiceover: bool = False
     picture: bool = True
+    follow: bool = True  # the follow message at the top of the post
     when: Literal["now", "hold", "at", "autopilot"] = "hold"  # post right away / keep / at a time / autopilot slots
     at: float | None = None  # "at": first post time (seconds since 1970); the rest every `every_min` after it
     every_min: int = Field(60, ge=0, le=1440)
@@ -401,7 +450,7 @@ def news_make(m: NewsMake):
                 status = {"now": "rendered", "hold": "rendered", "at": "timed", "autopilot": "scheduled"}[m.when]
                 post_at = m.at + i * m.every_min * 60 if m.when == "at" else None
                 cid = news.make_post({"age_h": None, "snippet": "", **st}, m.kind, m.platforms, m.voiceover, m.picture,
-                                     say, status=status, post_at=post_at, run_id=rid, fmt=m.format)
+                                     say, status=status, post_at=post_at, run_id=rid, fmt=m.format, follow=m.follow)
                 if cid and m.when == "now":
                     say(f"   ⬆ posting #{cid} now…")
                     worker.upload_clip(cid, m.platforms, force=True)
@@ -564,6 +613,7 @@ class AutoSettings(BaseModel):
     hq: bool | None = None
     face_check: bool | None = None
     subtitles: bool | None = None
+    follow: bool | None = None
     voiceover: bool | None = None
     platforms: list[Platform] | None = None
     news_per_day: int | None = Field(None, ge=0, le=24)  # news/fact posts a day, on top of the clips

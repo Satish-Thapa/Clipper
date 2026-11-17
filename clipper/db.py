@@ -2,6 +2,7 @@ import logging
 import logging.handlers
 import re
 import sqlite3
+import threading
 import time
 import traceback
 from contextlib import contextmanager
@@ -78,7 +79,8 @@ def init():
                            ("topics", "source TEXT DEFAULT 'manual'"), ("topics", "pool INTEGER"),
                            ("jobs", "chunk_minutes INTEGER"), ("jobs", "max_chunks INTEGER DEFAULT 0"),
                            ("jobs", "kind TEXT DEFAULT 'video'"), ("clips", "post_at REAL"), ("news", "run_id INTEGER"),
-                           ("jobs", "layout TEXT DEFAULT ''"), ("topics", "layout TEXT DEFAULT ''")):  # columns added after v0.1
+                           ("jobs", "layout TEXT DEFAULT ''"), ("topics", "layout TEXT DEFAULT ''"),
+                           ("jobs", "follow INTEGER DEFAULT 1"), ("topics", "follow INTEGER DEFAULT 1")):  # columns added after v0.1
             try:
                 c.execute(f"ALTER TABLE {table} ADD COLUMN {col}")
             except sqlite3.OperationalError:
@@ -167,13 +169,33 @@ def syslog(msg, exc=False):
     _file.log(logging.ERROR if exc else logging.INFO, f"[system] {msg}" + (f"\n{scrub(traceback.format_exc())}" if exc else ""))
 
 
+_ctx = threading.local()  # where this thread's AI calls log: the running step's job/topic, or a run's own log
+
+
+def here(msg):
+    """Log into whatever this thread is working on (see log_to / step), or the system log when nothing."""
+    sink = getattr(_ctx, "sink", None)
+    sink(msg) if sink else syslog(msg)
+
+
+@contextmanager
+def log_to(fn):
+    """Inside the block, here() lines go to fn (e.g. a News run's log)."""
+    prev, _ctx.sink = getattr(_ctx, "sink", None), fn
+    try:
+        yield
+    finally:
+        _ctx.sink = prev
+
+
 @contextmanager
 def step(job_id, what, table="jobs"):
     """Log `what`, run the block, log how long it took (or that it failed, with the traceback in the file)."""
     t = time.time()
     log(job_id, f"{what}...", table)
     try:
-        yield
+        with log_to(lambda m: log(job_id, m, table)):
+            yield
     except Exception:
         log(job_id, f"{what} FAILED after {time.time() - t:.1f}s", table, exc=True)
         raise

@@ -261,7 +261,7 @@ def write_post(story, kind="news", posted=()):
             + (f"\nFacts already posted: {json.dumps(list(posted)[-20:])}" if kind == "fact" else ""))
     p = pick._ask(task, FACT_SYSTEM if kind == "fact" else WRITE_SYSTEM, "post")
     if not isinstance(p, dict) or not p.get("headline"):
-        raise RuntimeError(f"DeepSeek returned no post: {p!r}"[:200])
+        raise RuntimeError(f"AI returned no post: {p!r}"[:200])
     lines = [str(x)[:90] for x in (p.get("lines") or []) if str(x).strip()][:3]
     return {"badge": str(p.get("badge") or "NEWS")[:16].upper(), "headline": str(p["headline"])[:80], "lines": lines,
             "title": str(p.get("title") or p["headline"])[:90], "caption": str(p.get("caption") or "")[:600],
@@ -287,7 +287,7 @@ def _download(url, out):
 
 
 def make_post(story, kind="news", platforms=(), voiceover=False, picture=True, log=None, status="rendered",
-              post_at=None, auto=False, run_id=None, fmt="video"):
+              post_at=None, auto=False, run_id=None, fmt="video", follow=True):
     """One story -> job + rendered clip. Returns the clip id. status: 'rendered' (wait), 'scheduled' (autopilot
     slots), 'timed' (post at post_at). Every step goes to the job's log and, via `log`, to the run's log."""
     say = log or (lambda m: None)
@@ -309,10 +309,10 @@ def make_post(story, kind="news", platforms=(), voiceover=False, picture=True, l
             say(f"   article read: {len(story.get('text') or '')} chars of text, picture: {'yes' if story.get('image') else 'no'}"
                 + ("" if story.get("text") else " → written from the headline only"))
         posted = [r["headline"] for r in _used() if r.get("kind") == "fact"]
-        with db.step(jid, "DeepSeek writing the post"):
+        with db.step(jid, "AI writing the post"):
             p = write_post(story, kind, posted)
         db.log(jid, f"post: [{p['badge']}] {p['headline']} | " + " | ".join(p["lines"]))
-        say(f"   DeepSeek wrote: [{p['badge']}] {p['headline']} | " + " | ".join(p["lines"]))
+        say(f"   AI wrote: [{p['badge']}] {p['headline']} | " + " | ".join(p["lines"]))
         img = _download(story["image"], d.parent / "picture.jpg") if picture and story.get("image") else None
         voice = None
         if voiceover and p["narration"] and render.can_speak():
@@ -325,9 +325,9 @@ def make_post(story, kind="news", platforms=(), voiceover=False, picture=True, l
         db.update("jobs", jid, status="rendering")
         with db.step(jid, f"rendering post #{cid} as a {fmt}"):
             if fmt == "photo":
-                secs = render.news_image(out, p, story["source"], story.get("age_h"), img)
+                secs = render.news_image(out, p, story["source"], story.get("age_h"), img, follow=follow)
             else:
-                secs = render.news_video(out, p, story["source"], story.get("age_h"), img, voice)
+                secs = render.news_video(out, p, story["source"], story.get("age_h"), img, voice, follow=follow)
         when = "" if story.get("age_h") is None else f" ({_ago(story['age_h'])})"
         desc = (f"{p['caption']}\n\nSource: {story['source']}{when}\n{story['link']}").strip()
         db.update("clips", cid, path=str(out.relative_to(DATA)), end=secs, description=desc, status=status,

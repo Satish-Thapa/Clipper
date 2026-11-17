@@ -71,12 +71,6 @@
   .score { color:var(--hot); font-weight:700; }
   .dim { color:var(--dim); } a { color:var(--hot); }
   textarea { width:100%; min-height:70px; font:12px/1.4 ui-monospace, monospace; }
-  #chatlog { height:60vh; overflow-y:auto; display:flex; flex-direction:column; gap:10px; padding:4px; }
-  .msg { max-width:75%; padding:10px 14px; border-radius:14px; white-space:pre-wrap; word-break:break-word; }
-  .msg.user { align-self:flex-end; background:var(--hot); color:#fff; border-bottom-right-radius:4px; }
-  .msg.ai { align-self:flex-start; background:var(--bg); border:1px solid var(--line); border-bottom-left-radius:4px; }
-  .msg.err { color:#f66; border-color:#7a2a4a; }
-  .msg small { display:block; margin-top:4px; font-size:11px; opacity:.6; }
   .curves svg { width:100%; height:120px; background:var(--bg); border-radius:6px; display:block; }
   .legend { display:flex; gap:12px; font-size:12px; margin:6px 0 2px; flex-wrap:wrap; align-items:center; }
   .legend label.check { font-size:12px; gap:4px; }
@@ -181,7 +175,13 @@
   .banner { background: linear-gradient(90deg, rgba(122,20,60,.65), rgba(90,20,80,.55)); border-color:#a33a6a; }
   ::selection { background: rgba(255,61,139,.45); }
   html { background:#0b0716; } body { min-height:100vh; background-repeat:no-repeat; background-attachment:fixed; }
-  label.fillwrap[hidden] { display:none; }
+  label.fillwrap[hidden], label.camwrap[hidden] { display:none; }
+  #camdlg { position:fixed; inset:0; background:rgba(0,0,0,.75); display:flex; align-items:center; justify-content:center; z-index:50; padding:16px; }
+  #camdlg[hidden] { display:none; }
+  #camdlg .box { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px; max-width:960px; width:100%; }
+  #camstage { position:relative; user-select:none; touch-action:none; cursor:crosshair; line-height:0; }
+  #camstage img { width:100%; border-radius:6px; }
+  #camrect { position:absolute; border:3px solid var(--hot); background:rgba(255,46,136,.18); pointer-events:none; }
   ::-webkit-scrollbar { width:10px; height:10px; } ::-webkit-scrollbar-thumb { background: linear-gradient(#ff3d8b, #b347ff); border-radius:10px; }
   ::-webkit-scrollbar-track { background: transparent; }
 </style>
@@ -199,10 +199,9 @@
     <a href="#news">News<span class="n" id="n-news"></span></a>
     <a href="#reports">Reports</a>
     <a href="#logs">Logs</a>
-    <a href="#chat">AI Chat</a>
     <a href="#settings">⚙ Settings</a>
   </nav>
-  <div class="yt"><span id="quota"></span><span id="ds"></span><a href="#chat" title="Chat with the AI model to check it works" style="text-decoration:none">💬</a><span id="yt"></span></div>
+  <div class="yt"><span id="quota"></span><span id="ds"></span><span id="yt"></span></div>
 </header>
 <main>
  <div class="banner" id="banner"></div>
@@ -227,6 +226,7 @@
         <option value="1.7778">Whole frame 16:9 (nothing cut off)</option><option value="split">Split: clip on top + your video below</option>
       </select></label>
       <label class="check"><input type="checkbox" name="subtitles" checked> Headline + subtitles</label>
+      <label class="check" title="The message at the top asking viewers to follow (FOLLOW_LINES in config.py)"><input type="checkbox" name="follow" checked> Follow message</label>
       <label class="check" title="Downloads up to 4K instead of 1080p. Sharper, mostly for full-screen 9:16 framing, but about 10x the data, so slower."><input type="checkbox" name="hq"> 4K quality (slower download)</label>
       <label class="check"><input type="checkbox" name="voiceover"> AI voice-over</label>
       <fieldset class="pf" data-default="youtube"><legend>Upload to (none = don't upload)</legend></fieldset>
@@ -286,6 +286,7 @@
             <option value="1.7778">Whole frame 16:9 (nothing cut off)</option><option value="split">Split: clip on top + your video below</option>
           </select></label>
           <label class="check"><input type="checkbox" name="subtitles"> Headline + subtitles</label>
+          <label class="check" title="The message at the top asking viewers to follow"><input type="checkbox" name="follow"> Follow message</label>
           <label class="check"><input type="checkbox" name="voiceover"> AI voice-over</label>
           <label class="check"><input type="checkbox" name="hq"> 4K source (sharper, slower)</label>
         </div>
@@ -341,6 +342,7 @@
         <option value="1.7778">Whole frame 16:9 (nothing cut off)</option><option value="split">Split: clip on top + your video below</option>
       </select></label>
       <label class="check"><input type="checkbox" name="subtitles" checked> Headline + subtitles</label>
+      <label class="check" title="The message at the top asking viewers to follow (FOLLOW_LINES in config.py)"><input type="checkbox" name="follow" checked> Follow message</label>
       <label class="check" title="Downloads up to 4K instead of 1080p. Sharper, mostly for full-screen 9:16 framing, but about 10x the data, so slower."><input type="checkbox" name="hq"> 4K quality (slower download)</label>
       <label class="check"><input type="checkbox" name="voiceover"> AI voice-over</label>
       <label class="check" title="Checks ~30 preview frames per video. Skips videos where a face fills the screen for over 40% of the video (talking heads, close-up podcasts) or the picture is a still image. Small facecams, creators in a box and groups of people are fine."><input type="checkbox" name="face_check" checked> Skip videos that are mostly a person (face check)</label>
@@ -348,17 +350,6 @@
       <button>Add to queue</button>
     </form>
     <div id="topics" style="margin-top:12px"></div>
-  </section>
- </div>
-
- <div class="page" id="page-chat">
-  <div class="page-head"><h2>AI Chat</h2><p>Talk to the AI model the app uses (<span id="chatmodel">…</span>) to check it works.</p></div>
-  <section class="panel">
-   <div id="chatlog"></div>
-   <form class="row" onsubmit="sendChat(event)" style="margin-top:12px">
-    <input id="chatin" placeholder="Type a message…" autocomplete="off" style="flex:1">
-    <button id="chatgo">Send</button><button type="button" class="ghost" onclick="clearChat()">Clear</button>
-   </form>
   </section>
  </div>
 
@@ -397,6 +388,7 @@
         <option value="photo">Photo (Facebook + Instagram)</option></select></label>
       <label class="check"><input type="checkbox" name="picture" checked> Use the article's picture</label>
       <label class="check"><input type="checkbox" name="voiceover"> AI voice-over</label>
+      <label class="check" title="The message at the top asking viewers to follow"><input type="checkbox" name="follow" checked> Follow message</label>
       <label>When<select name="when" onchange="nmWhen()">
         <option value="hold">Make them, I'll post them myself</option>
         <option value="now">Post each right away</option>
@@ -433,6 +425,21 @@
  <div class="page" id="page-settings">
   <div class="page-head"><h2>Settings</h2><p>What's stored, and a clean start. Platform keys live in <code>.env</code>;
     autopilot settings are on the <a href="#auto">Auto</a> page.</p></div>
+  <section class="panel"><h3>🤖 AI models</h3>
+    <p class="dim" style="margin-top:0;font-size:13px">Every AI call (clip picks, titles, voice-over, autopilot, news) goes to
+      the <b>Main</b> AI. If it's down, errors or gives a broken answer, the next one gets the same request. The logs say
+      which one answered. AIs without a key in <code>.env</code> are skipped.</p>
+    <div class="row" style="align-items:center;gap:8px;flex-wrap:wrap">
+     <label>Main <select id="ai0"></select></label>
+     <label>Fallback 1 <select id="ai1"></select></label>
+     <label>Fallback 2 <select id="ai2"></select></label>
+    </div>
+    <div class="row" style="margin-top:8px;align-items:center;gap:8px;flex-wrap:wrap">
+     <label>Local model <select id="aimodel"></select></label>
+     <label>This PC model <select id="pcmodel"></select></label>
+     <button type="button" onclick="useAi()">Save</button>
+    </div>
+    <div id="aistat" style="margin-top:10px"></div></section>
   <section class="panel"><h3>Background videos (split layout)</h3>
     <p class="dim" style="margin-top:0;font-size:13px">For <b>Framing → Split: clip on top + your video below</b>: the follow message and
       headline sit on top, then the clip whole (16:9, nothing cut off), and one of these plays muted below it (from a
@@ -476,6 +483,11 @@
   <div class="socials" id="socials"></div>
  </div>
 </main>
+<div id="camdlg" hidden><div class="box">
+  <h3 style="margin-top:0">Where's the streamer?</h3>
+  <p class="dim" style="margin-top:0;font-size:13px">Drag a box around the streamer's facecam. It becomes the streamer's panel; the rest of the
+    video is the gameplay. <span id="cammsg"></span></p>
+  <div id="camstage"><img id="camimg" alt=""><div id="camrect" hidden></div></div>
 <script>
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -515,7 +527,7 @@ const notOn = (s, c, t) => live(s, t).filter(p => !(JSON.parse(c.uploads || "{}"
 $("#f").onsubmit = async e => {
   e.preventDefault();
   const f = new FormData(e.target), file = f.get("file");
-  const opts = {shorts: +f.get("shorts"), longs: +f.get("longs"), ...framing(e.target), hq: f.has("hq"), mode: f.get("mode"), subtitles: f.has("subtitles"), voiceover: f.has("voiceover")};
+  const opts = {shorts: +f.get("shorts"), longs: +f.get("longs"), ...framing(e.target), hq: f.has("hq"), mode: f.get("mode"), subtitles: f.has("subtitles"), follow: f.has("follow"), voiceover: f.has("voiceover")};
   const live = {chunk_minutes: +f.get("chunk_minutes"), max_chunks: +f.get("max_chunks")};
   const btn = e.target.querySelector("button");
   let r;
@@ -533,7 +545,7 @@ $("#tf").onsubmit = async e => {
   e.preventDefault();
   const f = new FormData(e.target);
   const r = await post("/api/topics", {topic: f.get("topic"), ...framing(e.target), hq: f.has("hq"), videos: +f.get("videos"), shorts: +f.get("shorts"), longs: +f.get("longs"),
-    mode: f.get("mode"), subtitles: f.has("subtitles"), voiceover: f.has("voiceover"), face_check: f.has("face_check"), platforms: picked(e.target)});
+    mode: f.get("mode"), subtitles: f.has("subtitles"), follow: f.has("follow"), voiceover: f.has("voiceover"), face_check: f.has("face_check"), platforms: picked(e.target)});
   if (!r.ok) return alertBox(await r.text());
   e.target.topic.value = ""; refresh();
 };
@@ -549,27 +561,42 @@ async function stopTopic(id) { await post(`/api/topics/${id}/stop`); refresh(); 
 async function removeTopic(id) { const r = await fetch(`/api/topics/${id}`, {method: "DELETE"}); if (!r.ok) alertBox((await r.json()).detail); refresh(); }
 const alertBox = msg => { $("#jobs").insertAdjacentHTML("afterbegin", `<p style="color:#f66">${esc(msg)}</p>`); };
 
-// AI Chat page: the conversation lives in this array (gone on reload); the server gets it all each turn.
-let chat = [];
-function drawChat() {
-  $("#chatlog").innerHTML = chat.length ? chat.map(m => `<div class="msg ${m.role}${m.err ? " err" : ""}">${esc(m.text)}${
-    m.secs != null ? `<small>${m.secs}s</small>` : ""}</div>`).join("")
-    : `<p class="dim" style="margin:auto;text-align:center">Say something to check the model answers.</p>`;
-  $("#chatlog").scrollTop = $("#chatlog").scrollHeight;
+// AI order: main + 2 fallbacks; every AI call in the app tries them in this order.
+let aiInfo = {};
+async function loadAi(msg) {
+  aiInfo = await (await fetch("/api/ai/models")).json();
+  const names = aiInfo.providers || {}, order = (aiInfo.order || []).map(o => o.provider);
+  [0, 1, 2].forEach(i => $(`#ai${i}`).innerHTML = (i ? `<option value="">— none —</option>` : "") +
+    Object.entries(names).map(([k, n]) => `<option value="${k}"${order[i] === k ? " selected" : ""}>${esc(n)}</option>`).join(""));
+  const local = (aiInfo.order || []).find(o => o.provider === "local") || {};
+  const models = aiInfo.models || [];
+  $("#aimodel").innerHTML = (models.includes(local.model) || !local.model ? models : [local.model, ...models])
+    .map(n => `<option${n === local.model ? " selected" : ""}>${esc(n)}</option>`).join("") || `<option value="">(none found)</option>`;
+  const pc = (aiInfo.order || []).find(o => o.provider === "pc") || {}, pcm = aiInfo.pc_models || [];
+  $("#pcmodel").innerHTML = (pcm.includes(pc.model) || !pc.model ? pcm : [pc.model, ...pcm])
+    .map(n => `<option${n === pc.model ? " selected" : ""}>${esc(n)}</option>`).join("") || `<option value="">(none found)</option>`;
+  $("#aistat").innerHTML = (aiInfo.order || []).map((o, i) => `<div style="margin:6px 0">${i ? `Fallback ${i}` : "Main"}: <b>${esc(o.name)}</b> ${esc(o.model || "")} ${
+    o.missing ? `<span class="err">· skipped: ${esc(o.missing)}</span>` : `<span style="color:var(--ok)">· ready</span>`}
+    <button type="button" class="ghost" style="padding:2px 10px;font-size:12px" onclick="testAi('${o.provider}', this)">Test</button>
+    <div class="dim" id="aitest-${o.provider}" style="font-size:13px;margin-left:14px"></div></div>`).join("") +
+    (aiInfo.error ? `<div class="err">Local: ${esc(aiInfo.error)}</div>` : "") +
+    (aiInfo.pc_error ? `<div class="err">This PC: ${esc(aiInfo.pc_error)} (is Ollama installed and running here?)</div>` : "") + (msg ? `<div style="color:var(--ok)">${esc(msg)}</div>` : "");
 }
-async function sendChat(e) {
-  e.preventDefault();
-  const box = $("#chatin"), text = box.value.trim();
-  if (!text) return;
-  chat.push({role: "user", text}); box.value = ""; $("#chatgo").disabled = true;
-  chat.push({role: "ai", text: "…"}); drawChat();
-  const r = await post("/api/ai/chat", {messages: chat.slice(0, -1).filter(m => !m.err).slice(-40).map(({role, text}) => ({role, text}))});
+async function useAi() {
+  const order = [0, 1, 2].map(i => $(`#ai${i}`).value).filter(Boolean);
+  const r = await post("/api/ai/use", {order, local_model: $("#aimodel").value || "", pc_model: $("#pcmodel").value || ""});
   const j = await r.json();
-  chat[chat.length - 1] = r.ok ? {role: "ai", text: j.reply, secs: j.seconds} : {role: "ai", text: `Not working: ${j.detail}`, err: true};
-  $("#chatgo").disabled = false; drawChat(); box.focus();
+  if (!r.ok) return loadAi().then(() => $("#aistat").insertAdjacentHTML("beforeend", `<div class="err">${esc(typeof j.detail === "string" ? j.detail : "Bad choice")}</div>`));
+  await loadAi(`✓ Saved. Main AI is now ${j.model}`); refresh();
 }
-function clearChat() { chat = []; drawChat(); }
-drawChat();
+// Test one AI: asks "What model are you?" and shows its answer (saved models are used, so Save first).
+async function testAi(p, btn) {
+  const out = $(`#aitest-${p}`); btn.disabled = true; out.textContent = "asking “What model are you?”…";
+  const r = await post("/api/ai/test", {provider: p}), j = await r.json(); btn.disabled = false;
+  out.innerHTML = r.ok ? `<span style="color:var(--ok)">✓ ${esc(j.model)} in ${j.seconds}s:</span> ${esc(j.reply)}`
+    : `<span class="err">✕ ${esc(typeof j.detail === "string" ? j.detail : "failed")}</span>`;
+}
+loadAi();
 
 async function connectYT(btn) {
   btn.disabled = true; btn.textContent = "Finish sign-in in the new browser tab…";
@@ -714,6 +741,10 @@ const toBottom = details => { const p = details.querySelector("pre.log"); if (p)
 
 const ASPECTS = {0.5625: "9:16", 0.8: "4:5", 1: "1:1", 1.7778: "16:9"};
 const aspectName = a => a ? (ASPECTS[a] || `${(+a).toFixed(2)}:1`) : "";
+const layoutName = x => { const l = x.layout || "";
+  return l.startsWith("split:") ? " · split + " + esc(l.slice(6)) : l.startsWith("cam:")
+    ? ` · streamer ${l.split(":")[1] === "top" ? "on top" : "below"} (${{auto: "auto face", tl: "top-left", tr: "top-right", bl: "bottom-left", br: "bottom-right"}[l.split(":")[2]] || "your box"})`
+    : x.aspect ? " · " + aspectName(x.aspect) : ""; };
 let aspectSet = false;
 function defaultAspect(a) {  // pick the option closest to .env CROP_ASPECT, once
   if (aspectSet) return; aspectSet = true;
@@ -756,13 +787,15 @@ const dayName = t => new Date(t * 1000).toLocaleDateString([], {weekday: "short"
 const dur = m => m >= 60 ? `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ""}` : `${m} min`;
 let autoLoaded = false, autoSt = null;
 const AUTO_KEYS = ["niche", "posts_per_day", "news_per_day", "news_kind", "news_format", "post_from", "post_to", "shorts", "longs", "choosy", "hour", "mode"];
-const AUTO_CHECKS = ["subtitles", "hq", "voiceover", "face_check", "news_picture"];
+const AUTO_CHECKS = ["subtitles", "follow", "hq", "voiceover", "face_check", "news_picture"];
 function fillAuto(st) {
   const f = $("#af"), a = st.settings;
   for (const k of AUTO_KEYS) f[k].value = a[k];
   for (const k of AUTO_CHECKS) f[k].checked = !!a[k];
-  f.aspect.value = (a.layout || "").startsWith("split:") ? "split" : [...f.aspect.options].filter(o => o.value !== "split")
+  const camL = (a.layout || "").match(/^cam:(top|bottom):(\w+)$/);
+  f.aspect.value = camL ? "cam-" + camL[1] : (a.layout || "").startsWith("split:") ? "split" : [...f.aspect.options].filter(o => !isNaN(+o.value))
     .reduce((b, o) => Math.abs(o.value - a.aspect) < Math.abs(b.value - a.aspect) ? o : b).value;
+  if (camL) f.cam.value = camL[2];
   if (f.filler && a.layout) { fillerWanted = a.layout.slice(6); }
   showFiller(f.aspect);
   f.querySelectorAll("input[name=pf]").forEach(i => i.checked = i.value.split(",").every(p => a.platforms.includes(p)));
@@ -1091,7 +1124,7 @@ function nmWhen() {
 $("#nm").onsubmit = async e => {
   e.preventDefault();
   const f = new FormData(e.target), stories = [...document.querySelectorAll(".npick:checked")].map(i => nfound.stories[+i.dataset.i]);
-  const body = {stories, kind: nfound.kind, platforms: picked(e.target), picture: f.has("picture"), voiceover: f.has("voiceover"),
+  const body = {stories, kind: nfound.kind, platforms: picked(e.target), picture: f.has("picture"), voiceover: f.has("voiceover"), follow: f.has("follow"),
     when: f.get("when"), at: f.get("at") ? new Date(f.get("at")).getTime() / 1000 : null, every_min: +f.get("every_min"),
     run_id: nfound.run_id || null, format: f.get("format")};
   const r = await post("/api/news/make", body);
@@ -1133,18 +1166,67 @@ function renderPosts(s) {
             ${!["rendering", "uploading"].includes(c.status) ? `<button class="ghost danger" onclick="deleteClip(${c.id})">Delete</button>` : ""}</div>
         </div></div>`; }).join("") : making.length ? "" : `<p class="empty">No posts yet. Find some news above.</p>`);
 }
-// ---- Split layout: background videos ----
+// ---- Split layout: background videos, and the facecam layouts ----
 let fillers = [], fillerWanted = "";
 document.querySelectorAll("select.aspect").forEach(sel => {
-  sel.closest("label").insertAdjacentHTML("afterend", `<label class="fillwrap" hidden>Your video below<select name="filler" class="filler"></select></label>`);
+  sel.insertAdjacentHTML("beforeend", `<option value="cam-top">Streamer on top, gameplay below (full screen)</option>
+    <option value="cam-bottom">Gameplay on top, streamer below (full screen)</option>`);
+  const drawable = !!sel.form.url;  // only the Create form has one video to take a frame from
+  sel.closest("label").insertAdjacentHTML("afterend", `<label class="fillwrap" hidden>Your video below<select name="filler" class="filler"></select></label>
+    <label class="camwrap" hidden>Where's the streamer<select name="cam">
+      <option value="auto">Find the face automatically</option><option value="tl">Top-left corner</option>
+      <option value="tr">Top-right corner</option><option value="bl">Bottom-left corner</option><option value="br">Bottom-right corner</option>
+      ${drawable ? `<option value="box">I'll draw a box…</option>` : ""}</select>${drawable ? `<span class="dim camboxinfo" style="font-size:12px"></span>` : ""}</label>`);
   sel.addEventListener("change", () => showFiller(sel));
+  sel.form.cam.addEventListener("change", e => { if (e.target.value === "box") camOpen(sel.form); });
 });
 function showFiller(sel) {
   const w = sel.closest("label").nextElementSibling;
   if (w && w.classList.contains("fillwrap")) w.hidden = sel.value !== "split";
+  const c = sel.form.querySelector("label.camwrap");
+  if (c) c.hidden = !sel.value.startsWith("cam-");
+}
+// Draw a box: a real frame of the video (or the live edge of the stream), drag a rectangle on it.
+let camForm = null, camDrag = null, camBox = null;
+async function camOpen(form) {
+  camForm = form;
+  const url = (form.url && form.url.value || "").trim();
+  if (!/^https?:\/\//.test(url)) { form.cam.value = "auto"; return alertBox("Paste the video or live stream link first, then pick “I'll draw a box”."); }
+  $("#camdlg").hidden = false; $("#camrect").hidden = true; camBox = null;
+  $("#cammsg").textContent = "Getting a frame from the video…"; $("#camimg").removeAttribute("src");
+  const r = await fetch("/api/frame?url=" + encodeURIComponent(url));
+  if (!r.ok) { $("#cammsg").innerHTML = `<span class="err">${esc((await r.json()).detail)}</span>`; return; }
+  $("#camimg").src = URL.createObjectURL(await r.blob()); $("#cammsg").textContent = "";
+}
+function camPoint(e) {
+  const b = $("#camstage").getBoundingClientRect();
+  return [Math.min(Math.max((e.clientX - b.left) / b.width, 0), 1), Math.min(Math.max((e.clientY - b.top) / b.height, 0), 1)];
+}
+$("#camstage").addEventListener("pointerdown", e => { if (!$("#camimg").src) return; camDrag = camPoint(e); $("#camstage").setPointerCapture(e.pointerId); });
+$("#camstage").addEventListener("pointermove", e => {
+  if (!camDrag) return;
+  const [x2, y2] = camPoint(e), [x1, y1] = camDrag;
+  camBox = [Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1)];
+  Object.assign($("#camrect").style, {left: camBox[0] * 100 + "%", top: camBox[1] * 100 + "%", width: camBox[2] * 100 + "%", height: camBox[3] * 100 + "%"});
+  $("#camrect").hidden = false;
+});
+$("#camstage").addEventListener("pointerup", () => { camDrag = null; });
+function camSave() {
+  if (!camBox || camBox[2] < 0.03 || camBox[3] < 0.03) return $("#cammsg").innerHTML = `<span class="err">Drag a box around the streamer first.</span>`;
+  camForm.dataset.cambox = camBox.map(v => v.toFixed(3)).join(",");
+  camForm.querySelector(".camboxinfo").textContent = ` ✓ box set (${Math.round(camBox[2] * 100)}% × ${Math.round(camBox[3] * 100)}% of the frame)`;
+  $("#camdlg").hidden = true;
 }
 function framing(form) {  // -> {aspect, layout} for the API
   const v = form.aspect.value;
+  if (v.startsWith("cam-")) {
+    let where = form.cam.value;
+    if (where === "box") {
+      if (!form.dataset.cambox) { alertBox("Draw the streamer's box first (Where's the streamer → I'll draw a box)."); throw new Error("no box"); }
+      where = form.dataset.cambox;
+    }
+    return {aspect: 0.5625, layout: `cam:${v.slice(4)}:${where}`};
+  }
   if (v !== "split") return {aspect: +v, layout: ""};
   const name = form.filler && form.filler.value;
   if (!name) { alertBox("Add a background video first (Settings → Background videos)."); throw new Error("no filler"); }
@@ -1268,7 +1350,6 @@ let clipKey = "";
 async function refresh() {
   const s = await (await fetch("/api/state")).json();
   const ds = s.deepseek || {}, b = (ds.balances || [])[0];
-  $("#chatmodel").textContent = ds.model ? `${ds.model} at ${ds.url}` : "DeepSeek";
   $("#ds").innerHTML = ds.model ? `<span style="color:var(--ok)" title="${esc(ds.url)}">AI: ${esc(ds.model)}</span>`
     : ds.error ? `<span style="color:#f66" title="${esc(ds.error)}">DeepSeek balance: error</span>`
     : b ? `<span style="color:${!ds.available || +b.total < 1 ? "#f66" : +b.total < 3 ? "var(--warn)" : "var(--ok)"}"
@@ -1357,7 +1438,7 @@ async function refresh() {
     const jobs = s.jobs.filter(j => j.topic_id === t.id).map(j => `#${j.id}`).reverse().join(" ");
     return `<div class="job"><div class="row">
       <b>T${t.id}</b> <span>${esc(t.topic)}</span> <span class="badge ${cls}">${esc(t.status)}</span>
-      <span class="dim">${t.videos} videos × (${t.shorts} shorts + ${t.longs} long) · ${esc(t.mode)} · ${esc(plats)}${t.voiceover ? " · voice-over" : ""}${t.face_check ? " · face check" : " · no face check"}${(t.layout || "").startsWith("split:") ? " · split + " + esc(t.layout.slice(6)) : t.aspect ? " · " + aspectName(t.aspect) : ""}${t.hq ? " · 4K" : ""}</span>
+      <span class="dim">${t.videos} videos × (${t.shorts} shorts + ${t.longs} long) · ${esc(t.mode)} · ${esc(plats)}${t.voiceover ? " · voice-over" : ""}${t.face_check ? " · face check" : " · no face check"}${layoutName(t)}${t.hq ? " · 4K" : ""}</span>
       ${jobs ? `<span class="dim">jobs ${jobs}</span>` : ""}
       ${running || t.status === "queued" ? `<button class="ghost" onclick="stopTopic(${t.id})">${running ? "Stop" : "Cancel"}</button>`
         : `<button class="ghost danger" onclick="removeTopic(${t.id})">Remove</button>`}
@@ -1375,7 +1456,7 @@ async function refresh() {
       <b>#${j.id}</b> ${j.is_live ? '<span class="badge live">LIVE</span>' : ""}
       <span>${esc(j.title || j.url)}</span>
       <span class="badge ${cls}">${esc(j.status)}</span>
-      <span class="dim">${j.mode === "manual" ? "manual cuts" : `${j.shorts} shorts · ${j.longs} long · ${esc(j.mode || "hype")}`}${j.voiceover ? " · voice-over" : ""}${(j.layout || "").startsWith("split:") ? " · split + " + esc(j.layout.slice(6)) : j.aspect ? " · " + aspectName(j.aspect) : ""}${j.hq ? " · 4K" : ""}
+      <span class="dim">${j.mode === "manual" ? "manual cuts" : `${j.shorts} shorts · ${j.longs} long · ${esc(j.mode || "hype")}`}${j.voiceover ? " · voice-over" : ""}${layoutName(j)}${j.hq ? " · 4K" : ""}
         · ${esc(j.auto_upload ? JSON.parse(j.platforms || '["youtube"]').map(p => PLATFORMS[p]).join(", ") : "no auto-upload")}${j.topic_id ? ` · topic T${j.topic_id}` : ""}</span>
       ${running ? `<button class="ghost" onclick="stopJob(${j.id})">Stop</button>` : ""}
     </div>
@@ -1445,5 +1526,9 @@ async function refresh() {
 const fmt = s => `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;
 refresh(); setInterval(refresh, 2000);
 </script>
+  <div class="row" style="margin-top:12px;gap:8px"><button type="button" onclick="camSave()">Use this box</button>
+    <button type="button" class="ghost" onclick="camOpen(camForm)">New frame</button>
+    <button type="button" class="ghost" onclick="$('#camdlg').hidden = true">Cancel</button></div>
+</div></div>
 </body>
 </html>

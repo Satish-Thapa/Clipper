@@ -107,6 +107,32 @@ def record_live_chunk(url, out_path, seconds, stop, height=1080):
     return True
 
 
+def frame(url, out_path):
+    """One still frame as a JPEG, for drawing the facecam box: the live edge of a live stream, or a bit into a video
+    (past any intro). Only that one frame is fetched, nothing is downloaded."""
+    form, sort = fmt(720)
+    # Some formats of a video won't open in ffmpeg (e.g. an ended stream's mp4 pieces): try the next kind then.
+    for opts in ({"format": form}, {"format": "bv*[height<=720][ext=webm]/bv*[height<=720]"}, {"format": form, "format_sort": sort}):
+        with ydl({"quiet": True, **opts}) as y:
+            i = y.extract_info(url, download=False)
+        f = (i.get("requested_formats") or [i])[0]
+        headers = "".join(f"{k}: {v}\r\n" for k, v in (f.get("http_headers") or {}).items())  # YouTube wants these
+        at = f"{min((i.get('duration') or 0) * 0.3, 600):.1f}"
+        # Jump straight there (fast on most videos), else read 20s from the start (long single-file streams hang on a
+        # jump), else the very first frame (a stream that just ended can't be seeked yet). Live: the live edge.
+        tries = [([], [], 30)] if i.get("is_live") else [(["-ss", at], [], 12), ([], ["-ss", "20"], 30), ([], [], 30)]
+        for before, after, secs in tries:
+            try:
+                r = subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-headers", headers, *before, "-i", f["url"], *after,
+                                    "-frames:v", "1", "-vf", "format=yuvj420p", "-q:v", "3", str(out_path)],
+                                   capture_output=True, timeout=secs)
+            except subprocess.TimeoutExpired:  # too slow: the next way (the error would show the signed URL)
+                continue
+            if r.returncode == 0 and Path(out_path).exists():
+                return out_path
+    raise RuntimeError("ffmpeg couldn't read a frame of this video")  # not ffmpeg's error: it has the signed video URL
+
+
 # Chat comes from yt-dlp's "live_chat" subtitle track: one JSON line per chat event, for a live stream (followed
 # while it runs) and for a past stream's replay. Only real messages count (text, Super Chats, memberships, gifts),
 # not YouTube's placeholders / banners / "welcome" notices.

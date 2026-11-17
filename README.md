@@ -154,6 +154,25 @@ Open **http://127.0.0.1:8000**.
     downloads in the background (video only, up to 1080p, since it plays muted) and shows "downloading…" until it's
     ready. Delete any you don't want. Stored in `data/fillers/`, kept by "Reset everything". When Split is picked, a **Your video below** dropdown appears
     next to Framing.
+- ***Streamer on top, gameplay below*** / ***Gameplay on top, streamer below*** (for streams with a facecam,
+  live or not): full screen, no bars. The streamer's facecam is cut out of the frame into a 1080×768 panel, and the
+  gameplay (the middle of the frame, pushed away from the facecam's side so the streamer isn't in it twice) fills
+  the other 1080×1152.
+  - **Where's the streamer** appears next to Framing:
+    - *Find the face automatically:* face detection (YuNet) on a few frames of each clip. It takes the face that stays
+      in the same spot (a facecam doesn't move, faces in the game do) and frames head and shoulders. If no face is
+      found, that clip uses normal full-screen framing, and the job log says so.
+    - *Top-left / top-right / bottom-left / bottom-right corner:* the corner's 30% × 30% of the frame.
+    - *I'll draw a box…* (Create page): paste the link first. Clipper grabs one real frame (the live edge of a live
+      stream, or a bit into a video) and you drag a rectangle around the streamer. Exact, best when the facecam has an
+      odd size or spot.
+  - **Text:** streamer on top puts the follow message and headline on the line between the two panels (clear of the
+    face), with captions near the bottom. Streamer below puts the captions just above the facecam.
+
+**Follow message** (Create, Topics, Auto and News, on by default): the red "please follow" line at the top (the 5
+messages in `FOLLOW_LINES` in `config.py` take turns, or `FOLLOW_LINE` in `.env` for always the same one). It has its
+own checkbox, separate from **Headline + subtitles**: untick it to leave it off a job, or keep it on a clip that has
+no headline or subtitles. On the Auto page it applies to the autopilot's clips and its news/fact posts.
 
 **Who picks the moments:**
 - *AI picks from hype curves* (fast): the strongest moments by the signals, and DeepSeek chooses among them.
@@ -649,6 +668,21 @@ Set `LLM_API_KEY` to that provider's key and `LLM_MODEL` to the model name exact
    ```
 
 LM Studio works the same way, using its server URL (`http://(ip):1234/v1`).
+
+**Pick the AI and its fallbacks** without editing `.env` or restarting: open **⚙ Settings → AI models**, choose the **Main** AI
+and up to two **Fallbacks** (DeepSeek, Local (Ollama), This PC (Ollama)), pick the local models from
+the lists (read live from each Ollama), then click **Save**. Every AI call (clips, titles, voice-over, autopilot, news) tries them in
+that order. If one is down, returns an error or gives a broken answer, the next one gets the same request, and the
+log says so. AIs with no key in `.env` are skipped. Each AI has a **Test** button that asks it "What model
+are you?" and shows its reply. With nothing
+saved, the order is Local → DeepSeek → This PC when `LLM_BASE_URL` is set, otherwise
+DeepSeek → Local → This PC.
+
+**This PC** is a small model running on the Clipper computer itself, the last resort when the network or every
+other AI is down. Install [Ollama](https://ollama.com) on this computer, run `ollama pull qwen3.5:2b` (a 2B model
+fits a 4 GB GPU like a GTX 1650), and it shows up as ready. `PC_LLM_BASE_URL` (default
+`http://localhost:11434/v1`) and `PC_LLM_MODEL` set it in `.env`. Small models are weaker at picking and titles,
+so keep it last.
 
 Notes:
 - **Quality and speed:** local models are usually weaker than DeepSeek at picking moments and writing titles,

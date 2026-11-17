@@ -29,7 +29,7 @@ from .config import CROP_ASPECT
 
 DEFAULTS = {"enabled": False, "niche": "", "posts_per_day": 6, "post_from": 10, "post_to": 22,
             "shorts": 3, "longs": 0, "choosy": 3, "hour": 9,
-            "mode": "hype", "aspect": CROP_ASPECT, "layout": "", "hq": False, "face_check": True, "subtitles": True,
+            "mode": "hype", "aspect": CROP_ASPECT, "layout": "", "hq": False, "face_check": True, "subtitles": True, "follow": True,
             "voiceover": False, "platforms": ["youtube"],
             "news_per_day": 0, "news_kind": "news", "news_picture": True, "news_format": "video"}  # news/fact posts, on top of the clips
 NEWS_KINDS = ("news", "fact")
@@ -84,11 +84,12 @@ def _apply_live(s):
     plats = json.dumps(s["platforms"])
     for t in _active_topics():  # a running topic reads its row again before each video (topics._run)
         db.update("topics", t["id"], shorts=s["shorts"], longs=s["longs"], mode=s["mode"], aspect=s["aspect"], layout=s["layout"],
-                  hq=int(s["hq"]), subtitles=int(s["subtitles"]), voiceover=int(s["voiceover"]),
+                  hq=int(s["hq"]), subtitles=int(s["subtitles"]), follow=int(s["follow"]), voiceover=int(s["voiceover"]),
                   face_check=int(s["face_check"]), platforms=plats)
         for j in db.all("jobs", f"topic_id={int(t['id'])}"):
             if j["status"] not in FINISHED:  # its clips aren't posted yet: they go where the settings say now
-                db.update("jobs", j["id"], platforms=plats, auto_upload=int(bool(s["platforms"])), layout=s["layout"])
+                db.update("jobs", j["id"], platforms=plats, auto_upload=int(bool(s["platforms"])), layout=s["layout"],
+                          follow=int(s["follow"]))
 
 
 def _day_start(now):
@@ -291,7 +292,7 @@ def trending_topics(niche, k, research=None, history=""):
     `research` (a dict) is filled with what was searched and seen, for the activity view."""
     research = research if research is not None else {}
     niche = niche.strip() or ANY_NICHE
-    _step("asking DeepSeek for search queries")
+    _step("asking the AI for search queries")
     queries = pick.search_queries(niche)
     research["queries"] = []
     seen = {}
@@ -309,11 +310,11 @@ def trending_topics(niche, k, research=None, history=""):
                 raise RuntimeError("YouTube bot check ('Sign in to confirm you're not a bot'): add YouTube cookies "
                                    "on the Socials page") from None
     top = sorted(seen.values(), key=lambda e: e.get("view_count") or 0, reverse=True)[:40]
-    db.syslog(f"autopilot: {len(seen)} videos this week for '{niche}' ({len(queries)} searches), top {len(top)} sent to DeepSeek")
+    db.syslog(f"autopilot: {len(seen)} videos this week for '{niche}' ({len(queries)} searches), top {len(top)} sent to the AI")
     rows = [{"title": e.get("title"), "channel": e.get("channel"), "views": e.get("view_count")} for e in top]
     research["seen"] = len(seen)
     research["top"] = [{**r, "id": e["id"], "minutes": round((e.get("duration") or 0) / 60)} for r, e in zip(rows, top)]
-    _step(f"DeepSeek reading {len(top)} top videos to spot trends")
+    _step(f"AI reading {len(top)} top videos to spot trends")
     out = []
     for t in pick._ask(f"Niche: {niche}\nMost-viewed videos this week:\n{json.dumps(rows, indent=1)}\n"
                        f"Return at most {k} topics."
@@ -323,7 +324,7 @@ def trending_topics(niche, k, research=None, history=""):
         if isinstance(t, dict) and str(t.get("topic", "")).strip():
             out.append({"topic": str(t["topic"]).strip()[:100], "why": str(t.get("why", ""))[:200]})
     fallback = top[0]["title"] if niche == ANY_NICHE and top else niche  # nothing clear: the biggest video's subject
-    return out[:k] or [{"topic": fallback[:100], "why": "DeepSeek found no clear trend, using the top result"}]
+    return out[:k] or [{"topic": fallback[:100], "why": "the AI found no clear trend, using the top result"}]
 
 
 def plan(s, missing):
@@ -381,7 +382,7 @@ def run_round(reason="scheduled"):
             if k <= 0:
                 continue
             tid = topics.enqueue(topic=t["topic"], videos=k, shorts=s["shorts"], longs=s["longs"], mode=s["mode"],
-                                 subtitles=int(s["subtitles"]), voiceover=int(s["voiceover"]), face_check=int(s["face_check"]),
+                                 subtitles=int(s["subtitles"]), follow=int(s["follow"]), voiceover=int(s["voiceover"]), face_check=int(s["face_check"]),
                                  aspect=s["aspect"], layout=s["layout"], hq=int(s["hq"]), platforms=json.dumps(s["platforms"]), source="auto",
                                  pool=max(kp, k))
             db.log(tid, f"queued by autopilot ({reason}): {t['why']}", "topics")
@@ -436,14 +437,15 @@ def _news_round(s, subjects, n):
             stories = news.find_news(queries, say)
             info["found"] = len(stories)
             info["candidates"] = [{k: x.get(k) for k in ("title", "source", "age_h", "link")} for x in stories[:15]]
-            _step(f"DeepSeek picking {n_news} of {len(stories)} stories")
+            _step(f"AI picking {n_news} of {len(stories)} stories")
             picked = news.pick_stories(" / ".join(subjects), stories, n_news, posted) if stories else []
             for x in picked:
                 say(f"   ★ {x['title'][:100]} ({x['source']}): {x.get('why', '')}")
             for st in picked:
                 _step(f"writing + rendering news post: {st['title'][:60]}")
                 cid = news.make_post(st, "news", s["platforms"], bool(s["voiceover"]), bool(s.get("news_picture", True)),
-                                     say, status="scheduled", auto=True, run_id=rid, fmt=_fmt(s, len(info["made"])))
+                                     say, status="scheduled", auto=True, run_id=rid, fmt=_fmt(s, len(info["made"])),
+                                     follow=bool(s["follow"]))
                 info["made"].append({"kind": "news", "title": st["title"], "source": st["source"], "link": st["link"],
                                      "why": st.get("why", ""), "clip_id": cid})
         if n_fact:
@@ -453,7 +455,8 @@ def _news_round(s, subjects, n):
             for st in fact_stories:
                 _step("writing + rendering a fact post")
                 cid = news.make_post(st, "fact", s["platforms"], bool(s["voiceover"]), bool(s.get("news_picture", True)),
-                                     say, status="scheduled", auto=True, run_id=rid, fmt=_fmt(s, len(info["made"])))
+                                     say, status="scheduled", auto=True, run_id=rid, fmt=_fmt(s, len(info["made"])),
+                                     follow=bool(s["follow"]))
                 info["made"].append({"kind": "fact", "title": st["title"], "source": st["source"], "link": st["link"],
                                      "clip_id": cid})
     except Stopped:

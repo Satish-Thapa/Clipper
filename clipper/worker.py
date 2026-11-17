@@ -38,7 +38,7 @@ def _run(job_id):
     t0 = time.time()
     db.log(job_id, f"job started: {job['url']} | {job['shorts']} shorts, {job['longs']} long, mode {job.get('mode')}, "
                    f"framing {job.get('aspect') or 'default'}, {'4K' if job.get('hq') else '1080p'}, "
-                   f"subtitles {'on' if job.get('subtitles') else 'off'}, voice-over {'on' if job.get('voiceover') else 'off'}, "
+                   f"subtitles {'on' if job.get('subtitles') else 'off'}, follow message {'on' if job.get('follow', 1) else 'off'}, voice-over {'on' if job.get('voiceover') else 'off'}, "
                    f"upload to {job.get('platforms') if job.get('auto_upload') else 'nowhere'}"
                    + (f", topic T{job['topic_id']}" if job.get("topic_id") else ""))
     try:
@@ -320,7 +320,7 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None, live=No
         # title/description/hashtags. Its numbers are clamped by pick.validate(). If the API fails,
         # fall back to the strongest raw hype windows so the job still produces something.
         try:
-            with db.step(jid, tag + f"STEP 5 asking DeepSeek to pick {counts['short']} short / {counts['long']} long"):
+            with db.step(jid, tag + f"STEP 5 asking the AI to pick {counts['short']} short / {counts['long']} long"):
                 note, verdict = pick.live_note(B) if live else "", {}
                 if mode == "hype":
                     chosen = pick.choose(title, cands, counts, note, verdict)
@@ -328,7 +328,7 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None, live=No
                     chosen = pick.choose_full(title, n, transcribe.text_with_times(words, 0, n),
                                               parts if mode == "ai+hype" else None, counts, note, verdict)
         except Exception as e:
-            say(f"DeepSeek failed ({e!r}), using raw hype windows")
+            say(f"AI failed ({e!r}), using raw hype windows")
             chosen = pick.fallback(cands, counts, title)
         if live:  # live pieces: DeepSeek's decision, spelled out
             kept = []
@@ -389,7 +389,8 @@ def _render_one(job, src, d, c, words, subtitles):
         with db.step(jid, f"STEP 6 rendering {c['kind']} #{cid} ({c['end'] - c['start']:.0f}s, {render.encoder_name()}): "
                           f"{c['title']}"):
             render.cut(src, out, c["start"], c["end"], True, words if subtitles else (),
-                       c.get("headline", "") if subtitles else "", voice, job.get("aspect"), job.get("layout") or "")
+                       c.get("headline", "") if subtitles else "", voice, job.get("aspect"), job.get("layout") or "",
+                       follow=bool(job.get("follow", 1)))
     except Exception:
         db.update("clips", cid, status="render failed")
         raise

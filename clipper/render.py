@@ -123,6 +123,14 @@ def hook_lines(text, width=44):
 HOOK_LINE_H, HEAD_H = 42, 106  # one follow-message line / the headline box (px) on a 1080x1920 canvas
 
 
+def seam_block(y, lines=1):
+    """Like top_block, but the follow message + headline centred on line y (the facecam layout's seam, so they
+    don't cover the streamer's face)."""
+    hook_h = lines * HOOK_LINE_H + (14 if lines else 0)
+    top = y - (hook_h + HEAD_H) // 2
+    return top, top + hook_h, top + hook_h + HEAD_H
+
+
 def top_block(aspect=CROP_ASPECT, lines=1):
     """Where the follow message and the headline go: (hook_y, headline_y, bottom). Centred in the top bar when it's
     tall enough, else from y=110 (under YouTube's top icons), on the video. lines = follow-message lines (0 = none)."""
@@ -132,7 +140,8 @@ def top_block(aspect=CROP_ASPECT, lines=1):
     return y, y + hook_h, y + hook_h + HEAD_H
 
 
-def ass(words, start, end, vertical=True, headline="", per_line=3, aspect=CROP_ASPECT, hook=None, split=False):
+def ass(words, start, end, vertical=True, headline="", per_line=3, aspect=CROP_ASPECT, hook=None, split=False,
+        cap_margin=None, head_y=None):
     """Headline in a yellow box in the top black bar for the whole clip + big captions in the bottom black bar,
     a few words at a time. With no bars (aspect 9/16) they sit on the video instead."""
     ws = [w for w in words if start <= w["s"] < end]
@@ -146,7 +155,7 @@ def ass(words, start, end, vertical=True, headline="", per_line=3, aspect=CROP_A
         if vertical:  # follow message on top, then the headline under it
             hook = follow_line() if hook is None else hook
             hl = hook_lines(hook)
-            hy, ty, _ = top_block(aspect, len(hl))
+            hy, ty, _ = top_block(aspect, len(hl)) if head_y is None else seam_block(head_y, len(hl))
             hook = r"\N".join(hl)
             pulse = "".join(rf"\t({ms},{ms + 400},\fscx{105 if j % 2 == 0 else 100}\fscy{105 if j % 2 == 0 else 100})"
                             for j, ms in enumerate(range(1200, min(int((end - start) * 1000), 60000), 1600)))
@@ -156,6 +165,11 @@ def ass(words, start, end, vertical=True, headline="", per_line=3, aspect=CROP_A
             lines.insert(0, f"Dialogue: 0,{_t(0)},{_t(end - start)},Top,{{\\an8\\pos(540,{ty if hook else hy})}}{text}")
         else:
             lines.insert(0, f"Dialogue: 0,{_t(0)},{_t(end - start)},Top,{text}")
+    elif hook and vertical:  # follow message without a headline: same spot, on its own
+        hl = hook_lines(hook)
+        hy = (top_block(aspect, len(hl)) if head_y is None else seam_block(head_y, len(hl)))[0]
+        lines.insert(0, f"Dialogue: 1,{_t(0)},{_t(end - start)},Hook,"
+                        + rf"{{\an8\pos(540,{hy})\fad(200,0)}}" + r"\N".join(hl))
     # Headline: centred in the top bar (box is ~106px tall), but below YouTube's top icons (~120px).
     # Captions: just under the video, so they stay above YouTube's title/channel overlay at the very bottom.
     bar = bar_height(aspect)
@@ -164,6 +178,8 @@ def ass(words, start, end, vertical=True, headline="", per_line=3, aspect=CROP_A
             if vertical
             else dict(w=1920, h=1080, size=64, margin=70, top_size=60, top_margin=50, end_size=90, end_sub=64, end_small=56, end_hi=68,
                       hook_size=40))
+    if cap_margin and vertical:
+        size["margin"] = cap_margin  # captions this far from the bottom (facecam at the bottom: just above it)
     lines += end_card(end - start, w=size["w"], h=size["h"])
     return ASS_HEAD.format(**size) + "\n".join(lines) + "\n"
 
@@ -232,6 +248,67 @@ def encoder_name():
     return "GPU NVENC" if "h264_nvenc" in encoder() else "CPU x264"
 
 
+CAM_H = 768  # facecam layouts: the streamer's panel (40% of 1920); the gameplay gets the other 1152px
+CAM_CORNERS = {"tl": (0, 0, .3, .3), "tr": (.7, 0, .3, .3), "bl": (0, .7, .3, .3), "br": (.7, .7, .3, .3)}  # x, y, w, h
+
+
+def cam_layout(layout):
+    """'cam:<top|bottom>:<auto|tl|tr|bl|br|x,y,w,h>' -> (position, box or "auto"), else None.
+    The box is a share of the source frame (0-1): where the streamer's facecam is."""
+    parts = str(layout or "").split(":")
+    if len(parts) != 3 or parts[0] != "cam" or parts[1] not in ("top", "bottom"):
+        return None
+    where = parts[2]
+    if where == "auto":
+        return parts[1], "auto"
+    if where in CAM_CORNERS:
+        return parts[1], CAM_CORNERS[where]
+    try:
+        x, y, w, h = (min(max(float(v), 0.0), 1.0) for v in where.split(","))
+    except ValueError:
+        return None
+    w, h = min(w, 1 - x), min(h, 1 - y)
+    return (parts[1], (x, y, w, h)) if w > 0.02 and h > 0.02 else None
+
+
+def find_cam(src, start, end, samples=6):
+    """Face detection for the facecam: YuNet on a few frames of the clip -> the streamer's (x, y, w, h) box as a
+    share of the frame, or None. Takes the face seen in the most frames (a facecam doesn't move; faces in the game
+    do), then frames it with some room around the head at the panel's 1080x768 shape."""
+    import cv2
+    import numpy as np
+    from .vision import MODEL
+    cap = cv2.VideoCapture(str(src))
+    W, H = cap.get(cv2.CAP_PROP_FRAME_WIDTH), cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+    if not W or not H:
+        return None
+    det = cv2.FaceDetectorYN.create(str(MODEL), "", (int(W), int(H)), 0.7)
+    seen = []  # face boxes (x, y, w, h) in pixels, from every sampled frame
+    for t in np.linspace(start + 0.5, max(start + 0.5, end - 0.5), samples):
+        cap.set(cv2.CAP_PROP_POS_MSEC, t * 1000)
+        ok, img = cap.read()
+        if not ok:
+            continue
+        _, faces = det.detect(img)
+        seen += [tuple(f[:4]) for f in faces] if faces is not None else []
+    cap.release()
+    if not seen:
+        return None
+
+    def near(a, b):  # same spot (centres within one face width)
+        return abs((a[0] + a[2] / 2) - (b[0] + b[2] / 2)) < a[2] and abs((a[1] + a[3] / 2) - (b[1] + b[3] / 2)) < a[3]
+    best = max(seen, key=lambda f: sum(near(f, g) for g in seen))
+    group = [g for g in seen if near(best, g)]
+    if len(group) < 2:  # a face in one frame only: something in the game, not a facecam
+        return None
+    fx, fy, fw, fh = (float(np.median([g[i] for g in group])) for i in range(4))
+    ph = min(fh * 2.6, H)  # head + shoulders
+    pw = min(ph * 1080 / CAM_H, W)
+    x = min(max(fx + fw / 2 - pw / 2, 0), W - pw)
+    y = min(max(fy + fh / 2 - ph * 0.45, 0), H - ph)
+    return x / W, y / H, pw / W, ph / H
+
+
 SPLIT_CLIP_H = 608  # split layout: the clip is shown whole (16:9 at 1080 wide = 1080x608), nothing cut off
 
 
@@ -253,30 +330,39 @@ def _duration(path):
         return 0.0
 
 
-def cut(src, out, start, end, vertical, words=(), headline="", voice=(), aspect=CROP_ASPECT, layout=""):
+def cut(src, out, start, end, vertical, words=(), headline="", voice=(), aspect=CROP_ASPECT, layout="", follow=True):
     """words: burn these as captions; headline: text at the top. Pass ()/"" for none.
     voice: [(wav_path, seconds into clip)] voice-over lines; the original audio is ducked under them.
     aspect: w/h of the kept slice of the frame (9/16 = fills the phone ... 16/9 = whole frame with bars).
-    layout: "split:<file>" = the clip on the top half, that background video (data/fillers) on the bottom half."""
+    layout: "split:<file>" = the clip on the top half, that background video (data/fillers) on the bottom half.
+            "cam:<top|bottom>:<where>" = the streamer's facecam (cut out of the frame) and the gameplay stacked full screen."""
     filler = filler_path(layout) if vertical else None
-    aspect = 9 / 16 if filler else min(max(float(aspect or CROP_ASPECT), 9 / 16), 16 / 9)
+    cam = cam_layout(layout) if vertical and not filler else None
+    if cam and cam[1] == "auto":
+        box = find_cam(src, start, end)
+        db.here(f"   facecam: found at x {box[0]:.0%} y {box[1]:.0%} ({box[2]:.0%} x {box[3]:.0%} of the frame)" if box
+                else "   facecam: no face found, using normal full-screen framing")
+        cam = (cam[0], box) if box else None
+    aspect = 9 / 16 if filler or cam else min(max(float(aspect or CROP_ASPECT), 9 / 16), 16 / 9)
     # Vertical: keep a centred `aspect` slice of the frame (wider than a full 9:16 crop = more gameplay),
     # fit it to 1080 wide, and pad to 1080x1920 with black bars that hold the headline and captions.
     # ponytail: plain center crop; facecam/subject tracking is the upgrade if gameplay gets cut off
     vf = (f"crop='min(iw,ih*{aspect})':ih,scale=1080:1920:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos,"
           "pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,setsar=1" if vertical else "scale=-2:1080")
-    hook = follow_line() if headline and vertical else ""
+    hook = follow_line() if follow and vertical else ""  # the follow message: its own on/off, with or without a headline
     subs = ""
-    if words or headline or END_CARD.strip():
+    if words or headline or hook or END_CARD.strip():
         sub = out.with_suffix(".ass")
-        sub.write_text(ass(words, start, end, vertical, headline, aspect=aspect, hook=hook, split=bool(filler)),
+        sub.write_text(ass(words, start, end, vertical, headline, aspect=aspect, hook=hook, split=bool(filler),
+                           cap_margin=CAM_H + 40 if cam and cam[0] == "bottom" else None,
+                           head_y=CAM_H if cam and cam[0] == "top" else None),
                        encoding="utf-8")
         subs = f",subtitles={sub.name}"  # relative name + cwd avoids ffmpeg path escaping
     n_in = 1 + (1 if LOGO and LOGO.exists() else 0) + len(voice)  # the background video is the last input
     if filler:
         # Split, top to bottom: follow message + headline (over a blurred, darkened copy of the clip), then the clip
         # WHOLE (16:9 at full width, the centre and everything around it visible), then your video filling the rest.
-        top = top_block(9 / 16, len(hook_lines(hook)))[2] + 24 if headline else 140
+        top = top_block(9 / 16, len(hook_lines(hook)))[2] + 24 if headline or hook else 140
         bot_h = 1920 - top - SPLIT_CLIP_H
         head = (f"[0:v]split=2[a][b];[a]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
                 f"boxblur=24:2,eq=brightness=-0.35,setsar=1[bg];"
@@ -284,6 +370,21 @@ def cut(src, out, start, end, vertical, words=(), headline="", voice=(), aspect=
                 f"pad=1080:{SPLIT_CLIP_H}:(ow-iw)/2:(oh-ih)/2:black,setsar=1[clip];"
                 f"[{n_in}:v]scale=1080:{bot_h}:force_original_aspect_ratio=increase,crop=1080:{bot_h},setsar=1,fps=30[fill];"
                 f"[bg][clip]overlay=0:{top}[t];[t][fill]overlay=0:{top + SPLIT_CLIP_H}:shortest=1{subs}")
+    elif cam:
+        # Facecam stack: the streamer's box cut out of the frame fills a 1080x768 panel, the gameplay (centre of the
+        # frame) fills the other 1080x1152, one above the other. Captions sit over the gameplay, clear of the face.
+        x, y, w, h = cam[1]
+        game_h = 1920 - CAM_H
+        # Gameplay = a slice from the middle of the frame, pushed off the facecam's side so the streamer isn't in it twice.
+        gx = (f"min(max((iw-ow)/2,iw*{min(x + w + 0.05, 1):.4f}),iw-ow)" if x + w / 2 < 0.4 else
+              f"max(min((iw-ow)/2,iw*{max(x - 0.05, 0):.4f}-ow),0)" if x + w / 2 > 0.6 else "(iw-ow)/2")
+        panels = ["[cam]", "[game]"] if cam[0] == "top" else ["[game]", "[cam]"]
+        head = (f"[0:v]split=2[c][g];"
+                f"[c]crop=w=iw*{w:.4f}:h=ih*{h:.4f}:x=iw*{x:.4f}:y=ih*{y:.4f},"
+                f"scale=1080:{CAM_H}:force_original_aspect_ratio=increase:flags=lanczos,crop=1080:{CAM_H},setsar=1[cam];"
+                f"[g]crop=w='min(iw,ih*{1080 / game_h:.4f})':h=ih:x='{gx}',"
+                f"scale=1080:{game_h}:force_original_aspect_ratio=increase:flags=lanczos,crop=1080:{game_h},setsar=1[game];"
+                f"{''.join(panels)}vstack=inputs=2{subs}")
     else:
         head = f"[0:v]{vf}{subs}"
     graph, logo_in = f"{head}[o]", []
@@ -293,6 +394,8 @@ def cut(src, out, start, end, vertical, words=(), headline="", voice=(), aspect=
         # so it never covers the headline. 16:9: in the video's top-right corner.
         bar = bar_height(aspect) if vertical else 0
         below = top_block(aspect, len(hook_lines(hook)))[2] if headline else 230  # bottom of the follow + headline block
+        if cam and cam[0] == "top":  # headline on the seam: logo just under it, on the gameplay
+            below = seam_block(CAM_H, len(hook_lines(hook)))[2] if headline else CAM_H
         y = f"{bar}-h-24" if bar - below >= 110 else f"{max(bar, below) if vertical else 0}+24"  # h = logo height
         logo_in = ["-i", str(LOGO.resolve())]
         graph = f"{head}[v];[1:v]scale={220 if vertical else 260}:-1[l];[v][l]overlay=W-w-24:{y}[o]"
@@ -394,7 +497,7 @@ def news_seconds(post, voice_len=0):
     return round(min(max(voice_len + 1.5 if voice_len else 2.5 + 0.33 * words, 7), 15), 2)
 
 
-def news_video(out, post, source, age_h, picture=None, voice=None):
+def news_video(out, post, source, age_h, picture=None, voice=None, follow=True):
     """A 1080x1920 news/fact post: the article's picture (sharp, slow zoom) over a blurred copy of it, or an animated
     gradient when there's no picture; badge, headline, key facts, "Source: ..." and the logo; voice-over or silence.
     -> its length in seconds."""
@@ -405,14 +508,14 @@ def news_video(out, post, source, age_h, picture=None, voice=None):
             voice_len = w.getnframes() / w.getframerate()
     length = news_seconds(post, voice_len)
     sub = out.with_suffix(".ass")
-    sub.write_text(news_ass(post, source, age_h, length, bool(picture)), encoding="utf-8")
+    sub.write_text(news_ass(post, source, age_h, length, bool(picture), hook=None if follow else ""), encoding="utf-8")
     return _news_render(out, sub, length, picture, voice, 1920)
 
 
-def news_image(out, post, source, age_h, picture=None):
+def news_image(out, post, source, age_h, picture=None, follow=True):
     """The same post as one 1080x1350 photo (Facebook / Instagram feed): the last frame, everything shown."""
     sub = out.with_suffix(".ass")
-    sub.write_text(news_ass(post, source, age_h, 10, bool(picture), h=1350), encoding="utf-8")
+    sub.write_text(news_ass(post, source, age_h, 10, bool(picture), h=1350, hook=None if follow else ""), encoding="utf-8")
     return _news_render(out, sub, 10, picture, None, 1350, photo=True)
 
 

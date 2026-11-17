@@ -62,7 +62,7 @@ def _judge(tid, topic, videos, face_check=True):
     if not videos:
         return {}
     try:
-        with db.step(tid, f"DeepSeek judging {len(videos)} videos", "topics"):
+        with db.step(tid, f"AI judging {len(videos)} videos", "topics"):
             verdicts = pick.clippable(topic, videos)
     except Exception as e:
         db.log(tid, f"clippability check failed ({e!r}), using views only", "topics", exc=True)
@@ -107,7 +107,7 @@ def _run(t):
         try:
             queries = pick.search_queries(t["topic"])
         except Exception as e:
-            db.log(tid, f"DeepSeek failed ({e!r}), searching the topic itself", "topics")
+            db.log(tid, f"AI failed ({e!r}), searching the topic itself", "topics")
             queries = [t["topic"]]
         db.update("topics", tid, queries=json.dumps(queries))
         db.log(tid, f"queries: {' | '.join(queries)}", "topics")
@@ -151,7 +151,7 @@ def _run(t):
             db.update("topics", tid, status=f"clipping {k}/{len(videos)}")
             jid = db.insert("jobs", url=f"https://www.youtube.com/watch?v={v['id']}", title=v.get("title"),
                             shorts=t["shorts"], longs=t["longs"], auto_upload=int(bool(platforms)),
-                            platforms=json.dumps(platforms), mode=t["mode"], subtitles=t["subtitles"],
+                            platforms=json.dumps(platforms), mode=t["mode"], subtitles=t["subtitles"], follow=t.get("follow", 1),
                             voiceover=t["voiceover"], aspect=t.get("aspect"), hq=t.get("hq", 0), layout=t.get("layout") or "",
                             topic_id=tid, created=time.time())
             db.log(tid, f"video {k}/{len(videos)} -> job #{jid}", "topics")

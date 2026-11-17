@@ -15,6 +15,9 @@ DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-pro")
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "").rstrip("/")
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")  # empty is fine for local servers
 LLM_MODEL = os.getenv("LLM_MODEL", "")
+# A small model on THIS computer (Ollama installed here), the last fallback when everything else fails
+PC_LLM_BASE_URL = os.getenv("PC_LLM_BASE_URL", "http://localhost:11434/v1").rstrip("/")
+PC_LLM_MODEL = os.getenv("PC_LLM_MODEL", "qwen3.5:2b")
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "small")
 LIVE_CHUNK_SECONDS = int(os.getenv("LIVE_CHUNK_SECONDS", "600"))
 # The downloaded/uploaded source video (0.5-2 GB) and live recordings are deleted once a job finishes; clips stay.

@@ -13,7 +13,8 @@ import time
 import httpx
 from openai import BadRequestError, OpenAI
 
-from .config import (LLM_API_KEY, LLM_BASE_URL, LLM_MODEL, DEEPSEEK_API_KEY, DEEPSEEK_MODEL, LONG_MAX, LONG_MIN, SHORT_HARD_MAX, SHORT_MAX, SHORT_MIN,
+from . import db
+from .config import (PC_LLM_BASE_URL, PC_LLM_MODEL, LLM_API_KEY, LLM_BASE_URL, LLM_MODEL, DEEPSEEK_API_KEY, DEEPSEEK_MODEL, LONG_MAX, LONG_MIN, SHORT_HARD_MAX, SHORT_MAX, SHORT_MIN,
                      STRETCH_LONG, STRETCH_SHORT)
 
 # Clip kinds (all rendered vertical 9:16):
@@ -281,14 +282,89 @@ def voice_script(video_title, clip_title, length, transcript):
     return sorted(out, key=lambda x: x["at"])[:6]
 
 
+PROVIDERS = {"deepseek": "DeepSeek", "local": "Local (Ollama)", "pc": "This PC (Ollama)"}
+
+
+def _missing(p):
+    """Why provider p can't be used right now ('' = ready)."""
+    if p == "deepseek":
+        return "" if DEEPSEEK_API_KEY else "DEEPSEEK_API_KEY missing in .env"
+    if p == "local":
+        return "" if LLM_BASE_URL and _model("local") else "LLM_BASE_URL / LLM_MODEL missing in .env"
+    if p == "pc":
+        return "" if PC_LLM_BASE_URL and _model("pc") else "PC_LLM_BASE_URL / PC_LLM_MODEL missing in .env"
+    return "unknown provider"
+
+
+def _model(p):
+    return {"deepseek": DEEPSEEK_MODEL,
+            "local": db.get_setting("ai_model") or LLM_MODEL, "pc": db.get_setting("pc_model") or PC_LLM_MODEL}.get(p, "")
+
+
+def ai_order():
+    """Providers to try, first = main, the rest = fallbacks in order. Saved in Settings → AI models (setting ai_order);
+    default: local first when LLM_BASE_URL is set, then DeepSeek, then the small model on this PC."""
+    saved = [p for p in (db.get_setting("ai_order") or "").split(",") if p in PROVIDERS]
+    return saved or (["local", "deepseek", "pc"] if LLM_BASE_URL else ["deepseek", "local", "pc"])
+
+
+def ai_choice():
+    """The main AI -> {"provider", "model", "order": [{provider, model, name, missing}]} (first ready one is main)."""
+    order = [{"provider": p, "model": _model(p), "name": PROVIDERS[p], "missing": _missing(p)} for p in ai_order()]
+    main = next((o for o in order if not o["missing"]), order[0] if order else {"provider": "deepseek", "model": ""})
+    return {"provider": main["provider"], "model": main["model"], "order": order}
+
+
+_models = {}  # url -> (time, value)
+
+
+def local_models(url=None):
+    """Models on an Ollama/LM Studio server (default LLM_BASE_URL) -> {"models": [names]} or {"error": ...}.
+    Cached 30s, never raises. Ollama's /api/tags first (every pulled model), then the OpenAI-style /models."""
+    url = LLM_BASE_URL if url is None else url
+    if not url:
+        return {"error": "no server address in .env"}
+    if time.time() - _models.get(url, (0, None))[0] < 30:
+        return _models[url][1]
+    try:
+        try:
+            r = httpx.get(re.sub(r"/v1$", "", url) + "/api/tags", timeout=5)
+            r.raise_for_status()
+            names = [m["name"] for m in r.json().get("models", [])]
+        except Exception:
+            r = httpx.get(url + "/models", timeout=5,
+                          headers={"Authorization": f"Bearer {LLM_API_KEY}"} if LLM_API_KEY and url == LLM_BASE_URL else {})
+            r.raise_for_status()
+            names = [m["id"] for m in r.json().get("data", [])]
+        value = {"models": sorted(names)}
+    except Exception as e:
+        value = {"error": f"can't reach {url}: {e}"[:200]}
+    _models[url] = (time.time(), value)
+    return value
+
+
+def set_ai(order, local_model="", pc_model=""):
+    """Save the provider order (main first, then fallbacks) for every AI call; takes effect on the next call."""
+    order = list(dict.fromkeys(p for p in order if p in PROVIDERS))
+    if not order:
+        raise ValueError("Pick at least one AI")
+    db.set_setting("ai_order", ",".join(order))
+    if local_model:
+        db.set_setting("ai_model", local_model)
+    if pc_model:
+        db.set_setting("pc_model", pc_model)
+    db.syslog("AI order: " + " -> ".join(f"{PROVIDERS[p]} ({_model(p)})" for p in order))
+
+
 _balance = {"at": 0, "value": None}
 
 
 def balance():
     """DeepSeek credit left, e.g. {"available": True, "balances": [{"currency": "USD", "total": "10.59", ...}]}.
     Cached 60s (the UI polls every 2s). Never raises: errors come back as {"error": ...}."""
-    if LLM_BASE_URL:  # another provider/local model: no DeepSeek balance, just say which model is in use
-        return {"model": LLM_MODEL, "url": LLM_BASE_URL}
+    ch = ai_choice()
+    if ch["provider"] != "deepseek":  # local model: no DeepSeek balance, just say which model is in use
+        return {"model": ch["model"], "url": {"local": LLM_BASE_URL, "pc": PC_LLM_BASE_URL}.get(ch["provider"], "")}
     if time.time() - _balance["at"] < 60:
         return _balance["value"]
     try:
@@ -307,21 +383,23 @@ def balance():
     return value
 
 
-def _ask(task, system=SYSTEM, key="clips", full=False):
-    """Send one request to the LLM in JSON mode; return the raw `key` list (full=True: the whole answer as a dict).
-    Every AI call in the app goes through here. DeepSeek by default, or any OpenAI-compatible provider set by
-    LLM_BASE_URL / LLM_API_KEY / LLM_MODEL (cloud with a key, or local like Ollama)."""
-    if LLM_BASE_URL:
-        if not LLM_MODEL:
-            raise RuntimeError("LLM_MODEL missing in .env (the model name at LLM_BASE_URL)")
-        # ponytail: local models can be slow on full transcripts; 30 min timeout instead of the SDK's 10 min
-        client = OpenAI(api_key=LLM_API_KEY or "none", base_url=LLM_BASE_URL, timeout=1800)
-    else:
-        if not DEEPSEEK_API_KEY:
-            raise RuntimeError("DEEPSEEK_API_KEY missing in .env")
-        client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
-    kw = dict(model=LLM_MODEL if LLM_BASE_URL else DEEPSEEK_MODEL,
-              messages=[{"role": "system", "content": system}, {"role": "user", "content": task}])
+last_used = {"provider": "", "model": ""}  # which AI answered the latest call
+
+
+def _client(p):
+    if p in ("local", "pc"):
+        # ponytail: local models can be slow on full transcripts -> 30 min read timeout, but a dead server fails in 10s
+        return OpenAI(api_key=(LLM_API_KEY if p == "local" else "") or "none",
+                      base_url=LLM_BASE_URL if p == "local" else PC_LLM_BASE_URL, timeout=httpx.Timeout(1800, connect=10),
+                      max_retries=1)
+    return OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com", max_retries=1)
+
+
+def _ask_one(p, task, system):
+    kw = dict(model=_model(p), messages=[{"role": "system", "content": system}, {"role": "user", "content": task}])
+    if p == "pc":  # small model on a 4 GB GPU: skip its "thinking" (1s instead of 12s per answer, same JSON)
+        kw["reasoning_effort"] = "none"
+    client = _client(p)
     try:
         r = client.chat.completions.create(response_format={"type": "json_object"}, **kw)  # forces valid JSON
     except BadRequestError:  # provider/model without JSON mode: ask plainly, the prompts already demand JSON
@@ -329,10 +407,47 @@ def _ask(task, system=SYSTEM, key="clips", full=False):
     text = re.sub(r"<think>.*?</think>", "", r.choices[0].message.content or "", flags=re.S)  # reasoning models
     if "{" in text:
         text = text[text.index("{"):text.rindex("}") + 1]  # drop ```json fences or chatter around the object
-    answer = json.loads(text)
-    if full:
-        return answer if isinstance(answer, dict) else {}
-    return answer.get(key, [])
+    return json.loads(text)
+
+
+def test(p):
+    """Ask one AI (no fallback) "What model are you?" -> {reply, model, seconds}. ValueError when it isn't set up."""
+    if p not in PROVIDERS:
+        raise ValueError("unknown AI")
+    if _missing(p):
+        raise ValueError(_missing(p))
+    t = time.time()
+    a = _ask_one(p, 'What model are you? One short sentence. Answer in JSON: {"reply": "your answer"}', "You are a helpful assistant.")
+    reply = a.get("reply", a) if isinstance(a, dict) else a
+    db.syslog(f"🤖 AI test: {_model(p)} ({PROVIDERS[p]}) answered in {time.time() - t:.1f}s")
+    return {"reply": str(reply)[:500], "model": _model(p), "seconds": round(time.time() - t, 1)}
+
+
+def _ask(task, system=SYSTEM, key="clips", full=False):
+    """Send one request in JSON mode; return the raw `key` list (full=True: the whole answer as a dict).
+    Every AI call in the app goes through here. Tries the AIs in the saved order (Settings → AI models): when one
+    down, errors or returns broken JSON, the next one gets the same request."""
+    errors, failed = [], 0
+    for p in ai_order():
+        why = _missing(p)
+        if why:
+            errors.append(f"{PROVIDERS[p]}: {why}")
+            continue
+        t = time.time()
+        try:
+            answer = _ask_one(p, task, system)
+        except Exception as e:
+            errors.append(f"{PROVIDERS[p]}: {e}"[:300])
+            failed += 1
+            db.here(f"🤖 AI {_model(p)} ({PROVIDERS[p]}) failed after {time.time() - t:.1f}s, trying the next one: {e}"[:400])
+            continue
+        last_used.update(provider=p, model=_model(p))
+        db.here(f"🤖 AI: {_model(p)} ({PROVIDERS[p]}) answered in {time.time() - t:.1f}s"
+                + (" (fallback)" if failed else ""))
+        if full:
+            return answer if isinstance(answer, dict) else {}
+        return answer.get(key, []) if isinstance(answer, dict) else []
+    raise RuntimeError("Every AI failed: " + " | ".join(errors))
 
 
 def validate(clips, candidates, counts):
