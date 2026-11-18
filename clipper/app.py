@@ -47,6 +47,7 @@ class NewJob(BaseModel):
     mode: Mode = "hype"
     subtitles: bool = True
     follow: bool = True  # the follow message at the top (with or without a headline)
+    notes: str = Field("", max_length=1000)  # your own instructions for the AI (go into its prompts)
     voiceover: bool = False
     chunk_minutes: int | None = Field(None, ge=1, le=120)  # live streams: length of each recorded piece
     max_chunks: int = Field(0, ge=0, le=500)  # live streams: pieces to record and clip; 0 = until the stream ends
@@ -72,6 +73,7 @@ class NewTopic(BaseModel):
     mode: Literal["hype", "ai+hype", "ai"] = "hype"  # no "manual": nobody is there to type the cuts
     subtitles: bool = True
     follow: bool = True  # the follow message at the top (with or without a headline)
+    notes: str = Field("", max_length=1000)  # your own instructions for the AI (go into its prompts)
     voiceover: bool = False
     face_check: bool = True  # skip videos that are mostly a person on screen (vision.py)
 
@@ -120,7 +122,7 @@ def create_job(j: NewJob):
     if j.shorts + j.longs == 0:
         raise HTTPException(400, "ask for at least one clip")
     jid = db.insert("jobs", url=j.url, shorts=j.shorts, longs=j.longs, auto_upload=int(bool(j.platforms)),
-                    platforms=json.dumps(j.platforms), aspect=j.aspect, hq=int(j.hq), mode=j.mode, subtitles=int(j.subtitles), follow=int(j.follow), voiceover=int(j.voiceover),
+                    platforms=json.dumps(j.platforms), aspect=j.aspect, hq=int(j.hq), mode=j.mode, subtitles=int(j.subtitles), follow=int(j.follow), notes=j.notes.strip(), voiceover=int(j.voiceover),
                     chunk_minutes=j.chunk_minutes, max_chunks=j.max_chunks, layout=j.layout, created=time.time())
     worker.start(jid)
     return {"id": jid}
@@ -143,14 +145,15 @@ def live_controls(jid: int, c: LiveControls):
 @app.post("/api/jobs/file")
 async def create_file_job(request: Request, filename: str, shorts: int = 3, longs: int = 1,
                           platforms: str = "youtube", mode: Mode = "hype", aspect: float = CROP_ASPECT,
-                          subtitles: bool = True, voiceover: bool = False, layout: str = "", follow: bool = True):
+                          subtitles: bool = True, voiceover: bool = False, layout: str = "", follow: bool = True,
+                          notes: str = ""):
     """Raw file bytes in the body (no multipart, so no python-multipart dependency)."""
     plats = [p for p in platforms.split(",") if p in social.PLATFORMS]  # comma-separated in the query string
     ext = Path(filename).suffix.lower()
     if ext not in (".mp4", ".mkv", ".mov", ".webm", ".ts", ".avi"):
         raise HTTPException(400, f"unsupported file type {ext or '(none)'}")
     jid = db.insert("jobs", url=f"file:{Path(filename).name}", title=Path(filename).stem, shorts=shorts,
-                    longs=longs, auto_upload=int(bool(plats)), platforms=json.dumps(plats), aspect=min(max(aspect, 0.5625), 16 / 9), layout=layout if layout.startswith("split:") or render.cam_layout(layout) else "", mode=mode, subtitles=int(subtitles), follow=int(follow), voiceover=int(voiceover), status="uploading", created=time.time())
+                    longs=longs, auto_upload=int(bool(plats)), platforms=json.dumps(plats), aspect=min(max(aspect, 0.5625), 16 / 9), layout=layout if layout.startswith("split:") or render.cam_layout(layout) else "", mode=mode, subtitles=int(subtitles), follow=int(follow), notes=notes.strip()[:1000], voiceover=int(voiceover), status="uploading", created=time.time())
     d = DATA / "jobs" / str(jid)
     d.mkdir(parents=True, exist_ok=True)
     with open(d / f"source{ext}", "wb") as f:
@@ -165,7 +168,7 @@ def create_topic(t: NewTopic):
     if t.shorts + t.longs == 0:
         raise HTTPException(400, "ask for at least one clip per video")
     tid = topics.enqueue(topic=t.topic.strip(), videos=t.videos, shorts=t.shorts, longs=t.longs, mode=t.mode,
-                         subtitles=int(t.subtitles), follow=int(t.follow), voiceover=int(t.voiceover), platforms=json.dumps(t.platforms),
+                         subtitles=int(t.subtitles), follow=int(t.follow), notes=t.notes.strip(), voiceover=int(t.voiceover), platforms=json.dumps(t.platforms),
                          face_check=int(t.face_check), aspect=t.aspect, hq=int(t.hq), layout=t.layout)
     return {"id": tid}
 
@@ -651,6 +654,7 @@ class AutoSettings(BaseModel):
     face_check: bool | None = None
     subtitles: bool | None = None
     follow: bool | None = None
+    notes: str | None = Field(None, max_length=1000)  # your instructions for the AI
     voiceover: bool | None = None
     platforms: list[Platform] | None = None
     news_per_day: int | None = Field(None, ge=0, le=24)  # news/fact posts a day, on top of the clips

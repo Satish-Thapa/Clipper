@@ -35,6 +35,7 @@ DEFAULTS = {"enabled": False, "niche": "", "posts_per_day": 6, "post_from": 10, 
             "mix": [],  # framings to rotate, one per topic: [{"aspect", "layout"}]; empty = always aspect/layout above
             # Streamers to watch: when one goes live, the autopilot pauses (rounds, topics, scheduled posts) and the
             # stream is clipped as streamer + gameplay; when it ends, the autopilot carries on.
+            "notes": "",  # your own instructions for the AI: trend research, topics, clip picking
             "streamers": [], "watch": False, "live_layout": "cam:top:auto", "live_chunk": 10, "live_shorts": 2}
 NEWS_KINDS = ("news", "fact")
 # No niche set = it's up to the autopilot: search broadly for what clips well and is big this week.
@@ -92,13 +93,14 @@ def _active_topics():
 def _apply_live(s):
     plats = json.dumps(s["platforms"])
     for t in _active_topics():  # a running topic reads its row again before each video (topics._run)
-        db.update("topics", t["id"], shorts=s["shorts"], longs=s["longs"], mode=s["mode"],
+        db.update("topics", t["id"], shorts=s["shorts"], longs=s["longs"], mode=s["mode"], notes=s.get("notes", ""),
                   **({} if s["mix"] else {"aspect": s["aspect"], "layout": s["layout"]}),  # mixed: each topic keeps its own
                   hq=int(s["hq"]), subtitles=int(s["subtitles"]), follow=int(s["follow"]), voiceover=int(s["voiceover"]),
                   face_check=int(s["face_check"]), platforms=plats)
         for j in db.all("jobs", f"topic_id={int(t['id'])}"):
             if j["status"] not in FINISHED:  # its clips aren't posted yet: they go where the settings say now
                 db.update("jobs", j["id"], platforms=plats, auto_upload=int(bool(s["platforms"])), follow=int(s["follow"]),
+                          notes=s.get("notes", ""),
                           **({} if s["mix"] else {"layout": s["layout"]}))
 
 
@@ -298,13 +300,13 @@ def _step(text):
     STAGE[0] = text
 
 
-def trending_topics(niche, k, research=None, history=""):
+def trending_topics(niche, k, research=None, history="", notes=""):
     """-> [{"topic", "why"}] from this week's most-viewed YouTube videos for the niche (empty niche = anything).
     `research` (a dict) is filled with what was searched and seen, for the activity view."""
     research = research if research is not None else {}
     niche = niche.strip() or ANY_NICHE
     _step(f"asking {pick.ai_name()} for search queries")
-    queries = pick.search_queries(niche)
+    queries = pick.search_queries(niche, notes)
     research["queries"] = []
     seen, fresh = {}, set()
     for q in queries:
@@ -359,7 +361,7 @@ def trending_topics(niche, k, research=None, history=""):
                        + (f"\nAlready covered in the last 3 days: {json.dumps(recent)}" if recent else "")
                        + (f"\n\nHow this channel's past clips did. Lean toward topics like the ones that got views, away "
                           f"from what flopped; one topic may still be something new that's clearly trending:\n{history}"
-                          if history else ""), TREND_SYSTEM, "topics"):
+                          if history else "") + pick.user_note(notes), TREND_SYSTEM, "topics"):
         if not (isinstance(t, dict) and str(t.get("topic", "")).strip()):
             continue
         try:
@@ -442,7 +444,7 @@ def run_round(reason="scheduled"):
             raise
         except Exception as e:
             db.syslog(f"autopilot: couldn't use the view history ({e!r}), going on without it", exc=True)
-        found = trending_topics(niche, min(3, n), research, history) if clips_too else []
+        found = trending_topics(niche, min(3, n), research, history, s.get("notes", "")) if clips_too else []
         _step("queueing topics")
         split = lambda total: [total // len(found) + (1 if i < total % len(found) else 0) for i in range(len(found))]
         queued = []
@@ -453,6 +455,7 @@ def run_round(reason="scheduled"):
             tid = topics.enqueue(topic=t["topic"], videos=k, shorts=s["shorts"], longs=s["longs"], mode=s["mode"],
                                  subtitles=int(s["subtitles"]), follow=int(s["follow"]), voiceover=int(s["voiceover"]), face_check=int(s["face_check"]),
                                  aspect=aspect, layout=layout, hq=int(s["hq"]), platforms=json.dumps(s["platforms"]), source="auto",
+                                 notes=s.get("notes", ""),
                                  pool=max(kp, k))
             db.log(tid, f"queued by autopilot ({reason}): {t['why']}", "topics")
             queued.append({**t, "videos": k, "research": max(kp, k), "topic_id": tid, "framing": framing_name(aspect, layout)})
@@ -610,7 +613,7 @@ def watch_tick():
                             auto_upload=int(bool(s["platforms"])), platforms=json.dumps(s["platforms"]), aspect=0.5625,
                             hq=int(s["hq"]), mode=s["mode"], subtitles=int(s["subtitles"]), follow=int(s["follow"]),
                             voiceover=int(s["voiceover"]), chunk_minutes=int(s["live_chunk"]), max_chunks=0,
-                            layout=s["live_layout"] or "", created=now)
+                            layout=s["live_layout"] or "", notes=s.get("notes", ""), created=now)
             db.log(jid, f"started by the streamer watch: {ch} is live")
             worker.start(jid)
             st.update(job_id=jid, last_video=vid, started=now)

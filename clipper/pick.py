@@ -89,9 +89,11 @@ action from what people say and how they react: "WHAT", screaming, laughing, sud
 Titles: punchy, curiosity-driven, under 60 chars, in the style of that niche on YouTube
 (gaming: "This Heist Went SO Wrong"; podcast: "He Didn't Expect This Question"), never lying about
 what happens. Put the searchable keyword (game or topic name, e.g. "GTA 5") in the title naturally: on Shorts
-the title and description work as search signals more than hashtags do. Headline: 3-4 words burned onto the top
-of the video for the whole clip, so a viewer instantly gets the topic (e.g. "HITLER'S SKULL TEST",
-"COPS REMEMBER YOU", "HEIST GONE WRONG"). Not the same as the title.
+the title and description work as search signals more than hashtags do. Headline: the yellow box burned onto the
+top of the video for the whole clip. It MUST match the title: the title's own hook in 3-6 words, same subject and
+same promise, reusing its key words, so the video and its title read as one (title "This GTA Heist Went SO Wrong"
+-> headline "HEIST WENT SO WRONG"; title "Cops Remember You In GTA 5" -> "COPS REMEMBER YOU"). Never a different
+idea from the title.
 Description: 1-2 lines. First line keyword-rich (game/topic + what happens); end with a short question that makes
 people comment (e.g. "Would you have bailed?"). Hashtags: exactly 4-5, specific beats broad: the game or topic
 (#gta5, #gtaonline, #gtarp only for roleplay, #podcast), the moment type (#gtafails, #funnymoments, #clutch),
@@ -235,9 +237,16 @@ or events in that topic if you know them). Short queries, the way people actuall
 no quotes, no years unless the topic is about one. Reply as JSON: {"queries": ["...", "..."]} with 4-6 queries."""
 
 
-def search_queries(topic):
+def user_note(notes):
+    """Your own instructions for the AI (Create / Topics / Auto "Tell the AI"), as a prompt block ('' when none)."""
+    notes = str(notes or "").strip()[:1000]
+    return ("\n\nEXTRA INSTRUCTIONS FROM THE CHANNEL OWNER. Follow them; where they conflict with the general guidance "
+            "above, they win (but keep the JSON format and the length limits):\n" + notes + "\n") if notes else ""
+
+
+def search_queries(topic, notes=""):
     """DeepSeek: topic -> 4-6 YouTube search queries (just the topic itself if the answer is unusable)."""
-    qs = [str(q).strip()[:100] for q in _ask(f"Topic: {topic}", QUERIES_SYSTEM, "queries") if str(q).strip()]
+    qs = [str(q).strip()[:100] for q in _ask(f"Topic: {topic}" + user_note(notes), QUERIES_SYSTEM, "queries") if str(q).strip()]
     return list(dict.fromkeys(qs))[:6] or [topic]
 
 
@@ -263,13 +272,13 @@ Score every video 0-10 for how well it would clip (7+ = clearly good, 4 or less 
 Reply as JSON: {"videos": [{"id": "...", "score": 0-10, "reason": "short why"}]} with every id you were given."""
 
 
-def clippable(topic, videos):
+def clippable(topic, videos, notes=""):
     """DeepSeek judges flat search results -> {id: (score 0-10, reason)}. Unscored ids are left out."""
     rows = [{"id": v["id"], "title": v.get("title"), "channel": v.get("channel"),
              "minutes": round((v.get("duration") or 0) / 60), "views": v.get("view_count"),
              "description": (v.get("description") or "")[:200]} for v in videos]
     out = {}
-    for r in _ask(f"Topic: {topic}\nVideos:\n{json.dumps(rows, indent=1)}", CLIPPABLE_SYSTEM, "videos"):
+    for r in _ask(f"Topic: {topic}\nVideos:\n{json.dumps(rows, indent=1)}" + user_note(notes), CLIPPABLE_SYSTEM, "videos"):
         try:
             out[str(r["id"])] = (min(max(float(r.get("score", 0)), 0), 10), str(r.get("reason", ""))[:150])
         except (KeyError, TypeError, ValueError):
@@ -467,6 +476,12 @@ def _ask(task, system=SYSTEM, key="clips", full=False):
     raise RuntimeError("Every AI failed: " + " | ".join(errors))
 
 
+def headline_for(headline, title):
+    """The yellow headline: the AI's (3-6 words asked, hard cap 6), or, when it gave none, the title's first words."""
+    words = str(headline or "").split() or re.sub(r"[^\w\s'!?&-]", " ", str(title or "")).split()
+    return " ".join(words[:6])
+
+
 def validate(clips, candidates, counts):
     """Never trust LLM numbers: clamp to window and duration limits, drop junk, cap counts."""
     by_id = {c["id"]: c for c in candidates}
@@ -497,7 +512,7 @@ def validate(clips, candidates, counts):
         want[kind] -= 1
         out.append({"kind": kind, "start": s, "end": e, "score": num(c.get("virality"), 0),
                     "title": str(c.get("title", ""))[:100],
-                    "headline": " ".join(str(c.get("headline", "")).split()[:5]),  # 3-4 words asked; hard cap 5
+                    "headline": headline_for(c.get("headline"), c.get("title")),
                     "description": str(c.get("description", "")),
                     "tags": [str(t).lstrip("#") for t in c.get("hashtags", [])][:15],
                     "reason": str(c.get("reason", ""))})
@@ -511,7 +526,7 @@ def fallback(candidates, counts, title):
         if want[c["kind"]] > 0:
             want[c["kind"]] -= 1
             out.append({"kind": c["kind"], "start": c["start"], "end": min(c["end"], c["start"] + LIMITS[c["kind"]][1]),
-                        "score": round(c["signal"] * 10, 1), "title": f"{title} highlight"[:100], "headline": "",
+                        "score": round(c["signal"] * 10, 1), "title": f"{title} highlight"[:100], "headline": headline_for("", title),
                         "description": "", "tags": [], "reason": "hype signal only (LLM unavailable)"})
     return out
 
@@ -527,12 +542,13 @@ if __name__ == "__main__":
                     {"candidate": 1, "kind": "long", "start": 10, "end": 900, "virality": 70},
                     {"candidate": 9, "kind": "short", "virality": 99}], cands, C(1, 1))
     assert [(g["kind"], g["start"], g["end"]) for g in got] == [("short", 100, 150), ("long", 10, 400)], got
-    got = validate([{"candidate": 0, "kind": "short", "start": 0, "end": 70, "headline": "one two three four five six"},     # small stretch: kept
+    got = validate([{"candidate": 0, "kind": "short", "start": 0, "end": 70, "headline": "one two three four five six seven"},     # small stretch: kept
                     {"candidate": 1, "kind": "short", "start": 100, "end": 300},  # way over: cut to 59+15
                     {"candidate": 0, "kind": "long", "start": 0, "end": 900}],    # long cut to 600+60
                    [{"id": 0, "start": 0, "end": 1000}, {"id": 1, "start": 0, "end": 1000}], C(2, 1))
     assert [(g["start"], g["end"]) for g in got] == [(0, 70), (100, 174), (0, 660)], got
-    assert got[0]["headline"] == "one two three four five", got[0]
+    assert got[0]["headline"] == "one two three four five six", got[0]
+    assert headline_for("", "This GTA Heist Went SO Wrong! (part 2)") == "This GTA Heist Went SO Wrong!", headline_for("", "This GTA Heist Went SO Wrong! (part 2)")
     import numpy as np
     assert curve_table({"audio": np.array([0, 1, 0.5, 0])}, 4, step=2) == "t audio\n0 9\n2 4", curve_table(
         {"audio": np.array([0, 1, 0.5, 0])}, 4, step=2)

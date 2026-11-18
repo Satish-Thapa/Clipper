@@ -173,6 +173,18 @@ Open **http://127.0.0.1:8000**.
     the bottom, or just above the facecam when the streamer is below. How the face is found:
     [Technical deep dive](#finding-the-streamers-face-facecam-layouts).
 
+**Tell the AI** (Create, Topics, Auto; optional, up to 1000 characters): your own instructions, added to the AI's
+prompts as "extra instructions from the channel owner". They win over the general guidance when they conflict, but
+never break the JSON format or the clip length limits. Examples: *"only the funny fails and police chases"*, *"no
+swearing in titles"*, *"skip the intro and the sponsor read"*, *"only GTA RP servers, no reaction channels"*.
+- **Create:** used when picking the moments and writing titles, headlines and descriptions.
+- **Topics:** also used for the YouTube searches and for judging which videos are worth clipping; every job the topic
+  starts carries them.
+- **Auto:** also used for finding the day's trends; every topic and job the autopilot starts carries them (watched
+  streamers' live jobs too), and changing them applies to work already queued.
+- The job/topic log starts with `📝 your instructions for the AI: ...`, the card shows **📝 your AI instructions**
+  (hover to read them), and **Retry** keeps them.
+
 **Follow message** (Create, Topics, Auto and News, on by default): the red "please follow" line at the top (the 5
 messages in `FOLLOW_LINES` in `config.py` take turns, or `FOLLOW_LINE` in `.env` for always the same one). It has its
 own checkbox, separate from **Headline + subtitles**: untick it to leave it off a job, or keep it on a clip that has
@@ -781,7 +793,7 @@ Notes:
    headline, description, hashtags and why. `validate()` clamps everything to the windows and length limits; if
    DeepSeek fails, the raw windows are used.
 6. **Render** (2 at a time).
-   - Framing crop → 1080x1920, then the follow message (red box, wrapped over 2-3 lines; the 5 messages take turns) above the headline (yellow box), captions (3 words at
+   - Framing crop → 1080x1920, then the follow message (red box, wrapped over 2-3 lines; the 5 messages take turns) above the headline (yellow box: the clip title's own hook in 3-6 words, so the video and its title match; if the AI gives none, the title's first words; long ones get a smaller font to fit), captions (3 words at
      a time), the logo and the voice-over (ducked under the original audio).
    - The animated end card, encoded with NVENC (18 Mbps max) or x264.
    - Output: `data/jobs/<job>/clips/<clip>.mp4`.

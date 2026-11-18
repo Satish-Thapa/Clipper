@@ -63,7 +63,7 @@ def _judge(tid, topic, videos, face_check=True):
         return {}
     try:
         with db.step(tid, f"{pick.ai_name()} judging {len(videos)} videos", "topics"):
-            verdicts = pick.clippable(topic, videos)
+            verdicts = pick.clippable(topic, videos, (db.get("topics", tid) or {}).get("notes", ""))
     except Exception as e:
         db.log(tid, f"clippability check failed ({e!r}), using views only", "topics", exc=True)
         verdicts = {}
@@ -100,12 +100,13 @@ def _run(t):
     tid = t["id"]
     db.log(tid, f"topic started: '{t['topic']}' | {t['videos']} videos x ({t['shorts']} shorts + {t['longs']} long), "
                 f"mode {t['mode']}, face check {'on' if t.get('face_check', 1) else 'off'}, "
-                f"{'4K' if t.get('hq') else '1080p'}, upload to {t['platforms']}", "topics")
+                f"{'4K' if t.get('hq') else '1080p'}, upload to {t['platforms']}"
+                + (f" | 📝 your instructions for the AI: {t['notes'].strip()}" if (t.get("notes") or "").strip() else ""), "topics")
     STOPS[tid] = threading.Event()
     try:
         db.update("topics", tid, status="searching")
         try:
-            queries = pick.search_queries(t["topic"])
+            queries = pick.search_queries(t["topic"], t.get("notes", ""))
         except Exception as e:
             db.log(tid, f"AI failed ({e!r}), searching the topic itself", "topics")
             queries = [t["topic"]]
@@ -149,7 +150,7 @@ def _run(t):
             t = db.get("topics", tid)  # read again: autopilot settings saved meanwhile apply to the next video
             platforms = json.loads(t["platforms"] or "[]")
             db.update("topics", tid, status=f"clipping {k}/{len(videos)}")
-            jid = db.insert("jobs", url=f"https://www.youtube.com/watch?v={v['id']}", title=v.get("title"),
+            jid = db.insert("jobs", url=f"https://www.youtube.com/watch?v={v['id']}", title=v.get("title"), notes=t.get("notes") or "",
                             shorts=t["shorts"], longs=t["longs"], auto_upload=int(bool(platforms)),
                             platforms=json.dumps(platforms), mode=t["mode"], subtitles=t["subtitles"], follow=t.get("follow", 1),
                             voiceover=t["voiceover"], aspect=t.get("aspect"), hq=t.get("hq", 0), layout=t.get("layout") or "",

@@ -168,7 +168,9 @@ def ass(words, start, end, vertical=True, headline="", per_line=3, aspect=CROP_A
             if hook:
                 lines.insert(0, f"Dialogue: 1,{_t(0)},{_t(end - start)},Hook,"
                                 + rf"{{\an8\pos(540,{hy})\fad(200,0)\fscx40\fscy40\t(0,220,\fscx108\fscy108)\t(220,360,\fscx100\fscy100){pulse}}}{hook}")
-            lines.insert(0, f"Dialogue: 0,{_t(0)},{_t(end - start)},Top,{{\\an8\\pos(540,{ty if hook else hy})}}{text}")
+            # a long headline (it now matches the title, up to 6 words) gets a smaller font so it stays inside 1080px
+            fit = rf"\fs{max(50, round(78 * 24 / len(text)))}" if len(text) > 24 else ""
+            lines.insert(0, f"Dialogue: 0,{_t(0)},{_t(end - start)},Top,{{\\an8\\pos(540,{ty if hook else hy}){fit}}}{text}")
         else:
             lines.insert(0, f"Dialogue: 0,{_t(0)},{_t(end - start)},Top,{text}")
     elif hook and vertical:  # follow message without a headline: same spot, on its own

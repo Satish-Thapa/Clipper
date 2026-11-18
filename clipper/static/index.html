@@ -229,6 +229,7 @@
       <label class="check" title="The message at the top asking viewers to follow (FOLLOW_LINES in config.py)"><input type="checkbox" name="follow" checked> Follow message</label>
       <label class="check" title="Downloads up to 4K instead of 1080p. Sharper, mostly for full-screen 9:16 framing, but about 10x the data, so slower."><input type="checkbox" name="hq"> 4K quality (slower download)</label>
       <label class="check"><input type="checkbox" name="voiceover"> AI voice-over</label>
+      <label style="flex-basis:100%">Tell the AI (optional)<textarea name="notes" rows="2" maxlength="1000" style="width:min(640px,100%)" placeholder="e.g. only the funny fails and police chases; no swearing in titles; skip the intro"></textarea><span class="dim" style="font-size:12px;display:block">Goes into the AI's prompt as your own instructions: which moments to pick, titles and headlines.</span></label>
       <fieldset class="pf" data-default="youtube"><legend>Upload to (none = don't upload)</legend></fieldset>
       <fieldset class="livef"><legend>If it's a live stream</legend>
         <label>Record it in pieces of<select name="chunk_minutes"><option value="2">2 min</option><option value="5">5 min</option><option value="10">10 min</option><option value="15">15 min</option><option value="20">20 min</option><option value="30">30 min</option><option value="60">60 min</option></select></label>
@@ -258,6 +259,7 @@
     <form id="af" class="apf">
       <div class="grp"><h4>1 · What to post</h4>
         <label>Niche (optional)<input name="niche" style="width:min(420px,100%)" placeholder="empty = anything trending, autopilot decides"></label>
+        <label style="flex-basis:100%">Tell the AI (optional)<textarea name="notes" rows="2" maxlength="1000" style="width:min(640px,100%)" placeholder="e.g. focus on GTA 6 and GTA RP; avoid kids' content; prefer clips with a clear punchline"></textarea><span class="dim" style="font-size:12px;display:block">Goes into the AI's prompt as your own instructions: finding trends, the searches, which videos are worth clipping, the moments and titles (also for watched streamers).</span></label>
         <fieldset class="pf" data-default=""><legend>Post to (none = make clips, don't post)</legend></fieldset>
       </div>
       <div class="grp"><h4>2 · How much and when</h4>
@@ -371,6 +373,7 @@
       <label class="check" title="The message at the top asking viewers to follow (FOLLOW_LINES in config.py)"><input type="checkbox" name="follow" checked> Follow message</label>
       <label class="check" title="Downloads up to 4K instead of 1080p. Sharper, mostly for full-screen 9:16 framing, but about 10x the data, so slower."><input type="checkbox" name="hq"> 4K quality (slower download)</label>
       <label class="check"><input type="checkbox" name="voiceover"> AI voice-over</label>
+      <label style="flex-basis:100%">Tell the AI (optional)<textarea name="notes" rows="2" maxlength="1000" style="width:min(640px,100%)" placeholder="e.g. only GTA RP servers, no reaction channels; clips with lots of chaos"></textarea><span class="dim" style="font-size:12px;display:block">Goes into the AI's prompt as your own instructions: the search, which videos are worth clipping, and the moments picked from them.</span></label>
       <label class="check" title="Checks ~30 preview frames per video. Skips videos where a face fills the screen for over 40% of the video (talking heads, close-up podcasts) or the picture is a still image. Small facecams, creators in a box and groups of people are fine."><input type="checkbox" name="face_check" checked> Skip videos that are mostly a person (face check)</label>
       <fieldset class="pf" data-default=""><legend>Upload to (none = don't upload)</legend></fieldset>
       <button>Add to queue</button>
@@ -557,7 +560,7 @@ const notOn = (s, c, t) => live(s, t).filter(p => !(JSON.parse(c.uploads || "{}"
 $("#f").onsubmit = async e => {
   e.preventDefault();
   const f = new FormData(e.target), file = f.get("file");
-  const opts = {shorts: +f.get("shorts"), longs: +f.get("longs"), ...framing(e.target), hq: f.has("hq"), mode: f.get("mode"), subtitles: f.has("subtitles"), follow: f.has("follow"), voiceover: f.has("voiceover")};
+  const opts = {shorts: +f.get("shorts"), longs: +f.get("longs"), ...framing(e.target), hq: f.has("hq"), mode: f.get("mode"), subtitles: f.has("subtitles"), follow: f.has("follow"), voiceover: f.has("voiceover"), notes: f.get("notes") || ""};
   const live = {chunk_minutes: +f.get("chunk_minutes"), max_chunks: +f.get("max_chunks")};
   const btn = e.target.querySelector("button");
   let r;
@@ -575,7 +578,7 @@ $("#tf").onsubmit = async e => {
   e.preventDefault();
   const f = new FormData(e.target);
   const r = await post("/api/topics", {topic: f.get("topic"), ...framing(e.target), hq: f.has("hq"), videos: +f.get("videos"), shorts: +f.get("shorts"), longs: +f.get("longs"),
-    mode: f.get("mode"), subtitles: f.has("subtitles"), follow: f.has("follow"), voiceover: f.has("voiceover"), face_check: f.has("face_check"), platforms: picked(e.target)});
+    mode: f.get("mode"), subtitles: f.has("subtitles"), follow: f.has("follow"), voiceover: f.has("voiceover"), face_check: f.has("face_check"), platforms: picked(e.target), notes: f.get("notes") || ""});
   if (!r.ok) return alertBox(await r.text());
   e.target.topic.value = ""; refresh();
 };
@@ -847,6 +850,7 @@ function fillAuto(st) {
   if (camL) f.cam.value = camL[2];
   const mixKeys = (a.mix || []).map(m => `${+m.aspect}|${(m.layout || "").startsWith("split:") ? "split" : m.layout || ""}`);
   f.querySelectorAll("input[name=mix]").forEach(i => i.checked = mixKeys.includes(`${+i.value.split("|")[0]}|${i.value.split("|")[1]}`));
+  f.notes.value = a.notes || "";
   f.watch.checked = !!a.watch; f.streamers.value = (a.streamers || []).join("\n");
   f.live_layout.value = a.live_layout || ""; f.live_chunk.value = a.live_chunk; f.live_shorts.value = a.live_shorts;
   if (f.filler && a.layout) { fillerWanted = a.layout.slice(6); }
@@ -862,6 +866,7 @@ function formAuto() {
   const split = o.layout.startsWith("split:") ? o.layout : f.filler && f.filler.value ? "split:" + f.filler.value : "";
   if (d.getAll("mix").includes("0.5625|split") && !split) { alertBox("Mix: pick a background video for Split first (Framing → Split)."); throw new Error("no filler"); }
   o.mix = d.getAll("mix").map(v => { const [asp, lay] = v.split("|"); return {aspect: +asp, layout: lay === "split" ? split : lay}; });
+  o.notes = d.get("notes") || "";
   o.watch = d.has("watch"); o.streamers = d.get("streamers").split("\n").map(x => x.trim()).filter(Boolean);
   o.live_layout = d.get("live_layout"); o.live_chunk = +d.get("live_chunk"); o.live_shorts = +d.get("live_shorts");
   return o;
@@ -1530,7 +1535,7 @@ async function refresh() {
     const jobs = s.jobs.filter(j => j.topic_id === t.id).map(j => `#${j.id}`).reverse().join(" ");
     return `<div class="job"><div class="row">
       <b>T${t.id}</b> <span>${esc(t.topic)}</span> <span class="badge ${cls}">${esc(t.status)}</span>
-      <span class="dim">${t.videos} videos × (${t.shorts} shorts + ${t.longs} long) · ${esc(t.mode)} · ${esc(plats)}${t.voiceover ? " · voice-over" : ""}${t.face_check ? " · face check" : " · no face check"}${layoutName(t)}${t.hq ? " · 4K" : ""}</span>
+      <span class="dim">${t.videos} videos × (${t.shorts} shorts + ${t.longs} long) · ${esc(t.mode)} · ${esc(plats)}${t.voiceover ? " · voice-over" : ""}${t.face_check ? " · face check" : " · no face check"}${layoutName(t)}${t.hq ? " · 4K" : ""}${(t.notes || "").trim() ? ` · <span title="${esc(t.notes)}">📝 your AI instructions</span>` : ""}</span>
       ${jobs ? `<span class="dim">jobs ${jobs}</span>` : ""}
       ${running || t.status === "queued" ? `<button class="ghost" onclick="stopTopic(${t.id})">${running ? "Stop" : "Cancel"}</button>`
         : `<button class="ghost danger" onclick="removeTopic(${t.id})">Remove</button>`}
@@ -1549,7 +1554,7 @@ async function refresh() {
       <span>${esc(j.title || j.url)}</span>
       <span class="badge ${cls}">${esc(j.status)}</span>
       <span class="dim">${j.mode === "manual" ? "manual cuts" : `${j.shorts} shorts · ${j.longs} long · ${esc(j.mode || "hype")}`}${j.voiceover ? " · voice-over" : ""}${layoutName(j)}${j.hq ? " · 4K" : ""}
-        · ${esc(j.auto_upload ? JSON.parse(j.platforms || '["youtube"]').map(p => PLATFORMS[p]).join(", ") : "no auto-upload")}${j.topic_id ? ` · topic T${j.topic_id}` : ""}</span>
+        · ${esc(j.auto_upload ? JSON.parse(j.platforms || '["youtube"]').map(p => PLATFORMS[p]).join(", ") : "no auto-upload")}${j.topic_id ? ` · topic T${j.topic_id}` : ""}${(j.notes || "").trim() ? ` · <span title="${esc(j.notes)}">📝 your AI instructions</span>` : ""}</span>
       ${running ? `<button class="ghost danger" onclick="stopJob(${j.id}, this)" title="Stops at the next step; clips already made stay">■ Stop</button>` : ""}
       ${["failed", "interrupted", "stopped"].includes(j.status) && !/retried as job #/.test(j.log || "")
         ? `<button class="ghost" onclick="retryJob(${j.id}, this)" title="Run it again as a new job with the same settings">↻ Retry</button>` : ""}

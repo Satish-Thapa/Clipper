@@ -81,7 +81,8 @@ def init():
                            ("jobs", "kind TEXT DEFAULT 'video'"), ("clips", "post_at REAL"), ("news", "run_id INTEGER"),
                            ("jobs", "layout TEXT DEFAULT ''"), ("topics", "layout TEXT DEFAULT ''"),
                            ("jobs", "follow INTEGER DEFAULT 1"), ("topics", "follow INTEGER DEFAULT 1"),
-                           ("clips", "post_to TEXT")):  # post_to: platforms for a clip scheduled by hand  # columns added after v0.1
+                           ("clips", "post_to TEXT"),
+                           ("jobs", "notes TEXT DEFAULT ''"), ("topics", "notes TEXT DEFAULT ''")):  # post_to: platforms for a clip scheduled by hand  # columns added after v0.1
             try:
                 c.execute(f"ALTER TABLE {table} ADD COLUMN {col}")
             except sqlite3.OperationalError:

@@ -93,6 +93,8 @@ def _run(job_id):
                    f"subtitles {'on' if job.get('subtitles') else 'off'}, follow message {'on' if job.get('follow', 1) else 'off'}, voice-over {'on' if job.get('voiceover') else 'off'}, "
                    f"upload to {job.get('platforms') if job.get('auto_upload') else 'nowhere'}"
                    + (f", topic T{job['topic_id']}" if job.get("topic_id") else ""))
+    if (job.get("notes") or "").strip():
+        db.log(job_id, f"📝 your instructions for the AI: {job['notes'].strip()}")
     try:
         if job["url"].startswith("file:"):  # uploaded from the UI: already at data/jobs/<id>/source.*
             src = next(d.glob("source.*"))
@@ -456,7 +458,7 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None, live=No
         _check(jid)
         try:
             with db.step(jid, tag + f"STEP 5 asking {pick.ai_name()} to pick {counts['short']} short / {counts['long']} long"):
-                note, verdict = pick.live_note(B) if live else "", {}
+                note, verdict = (pick.live_note(B) if live else "") + pick.user_note(job.get("notes")), {}
                 if mode == "hype":
                     chosen = pick.choose(title, cands, counts, note, verdict)
                 else:
