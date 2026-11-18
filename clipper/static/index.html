@@ -524,6 +524,8 @@
 <script>
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+// log text, escaped, with each saved AI prompt (/media/logs/prompts/...txt) as a link
+const logHtml = s => esc(s).replace(/\/media\/logs\/prompts\/[\w\-]+\/[\w\-]+\.txt/g, u => `<a href="${u}" target="_blank">open the full prompt + reply</a>`);
 const openLogs = new Set();
 const post = (u, body) => fetch(u, {method:"POST", headers:{"Content-Type":"application/json"}, body: body && JSON.stringify(body)});
 // Pages: #create #topics #jobs #clips #socials (the hash keeps the page on reload).
@@ -812,7 +814,7 @@ async function loadLogs() {
   const f = $("#logfilter").value.trim().toLowerCase(), box = $("#logbox");
   const saved = saveLogs();
   box.innerHTML = j.text.split("\n").filter(l => !f || l.toLowerCase().includes(f)).map(l =>
-    `<span class="${/ ERROR |Traceback|^\s+File |Error:/.test(l) ? "err" : l.includes("[system]") ? "sys" : ""}">${esc(l)}</span>`).join("\n");
+    `<span class="${/ ERROR |Traceback|^\s+File |Error:/.test(l) ? "err" : l.includes("[system]") ? "sys" : ""}">${logHtml(l)}</span>`).join("\n");
   restoreLogs(saved);
 }
 $("#logfilter").oninput = () => { $("#logbox").scrollTop = 1e9; loadLogs(); };
@@ -1166,7 +1168,7 @@ async function loadNewsRuns() {
         ${d.stories ? ` · ${d.stories.length} stories, ${d.stories.filter(x => x.pick).length} picked` : ""}
         ${d.stories && d.stories.length && r.source !== "auto" ? ` <button class="ghost" style="padding:3px 10px;font-size:12px"
           onclick="event.preventDefault(); showRun(${r.id})">Show these stories ↑</button>` : ""}</summary>
-      <pre data-run="${r.id}">${esc(r.log || "starting…")}</pre></details>`;
+      <pre data-run="${r.id}">${logHtml(r.log || "starting…")}</pre></details>`;
   }).join("") : `<p class="empty">No searches yet.</p>`;
   document.querySelectorAll("#nruns pre[data-run]").forEach(p => { if (scroll[p.dataset.run] !== false) p.scrollTop = p.scrollHeight; });
 }
@@ -1541,7 +1543,7 @@ async function refresh() {
         : `<button class="ghost danger" onclick="removeTopic(${t.id})">Remove</button>`}
     </div>
     <details ${openLogs.has("t" + t.id) ? "open" : ""} ontoggle="this.open ? (openLogs.add('t${t.id}'), toBottom(this)) : openLogs.delete('t${t.id}')">
-      <summary>queries + log</summary><pre class="log" data-log="t${t.id}">${esc(JSON.parse(t.queries || "[]").join("\n"))}\n\n${esc(t.log)}</pre></details></div>`;
+      <summary>queries + log</summary><pre class="log" data-log="t${t.id}">${esc(JSON.parse(t.queries || "[]").join("\n"))}\n\n${logHtml(t.log)}</pre></details></div>`;
   }).join("") : `<p class="empty">No topics queued.</p>`;
 
   // Don't wipe the jobs list while you're typing cuts into it or hovering a graph.
@@ -1562,7 +1564,7 @@ async function refresh() {
     </div>
     ${j.is_live && running ? liveCtl(j) : ""}
     <details ${openLogs.has(j.id) ? "open" : ""} ontoggle="this.open ? (openLogs.add(${j.id}), toBottom(this)) : openLogs.delete(${j.id})">
-      <summary>log</summary><pre class="log" data-log="j${j.id}">${esc(j.log)}</pre></details>
+      <summary>log</summary><pre class="log" data-log="j${j.id}">${logHtml(j.log)}</pre></details>
     <details class="curves" ${openCurves.has(j.id) ? "open" : ""} ontoggle="toggleCurves(${j.id}, this.open)">
       <summary>loudness / hype curves</summary><div id="curves-${j.id}">${curvesHtml(j.id)}</div></details>
     ${!j.is_live && !running ? `<details ${j.mode === "manual" ? "open" : ""}><summary>cut it yourself</summary>

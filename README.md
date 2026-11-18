@@ -793,7 +793,7 @@ Notes:
    headline, description, hashtags and why. `validate()` clamps everything to the windows and length limits; if
    DeepSeek fails, the raw windows are used.
 6. **Render** (2 at a time).
-   - Framing crop → 1080x1920, then the follow message (red box, wrapped over 2-3 lines; the 5 messages take turns) above the headline (yellow box: the clip title's own hook in 3-6 words, so the video and its title match; if the AI gives none, the title's first words; long ones get a smaller font to fit), captions (3 words at
+   - Framing crop → 1080x1920, then the follow message (red box, wrapped over 2-3 lines; the 5 messages take turns) above the headline (white text with a black outline, no box, so the video shows through: the clip title's own hook in 3-6 words, so the video and its title match; if the AI gives none, the title's first words; long ones get a smaller font to fit), captions (3 words at
      a time), the logo and the voice-over (ducked under the original audio).
    - The animated end card, encoded with NVENC (18 Mbps max) or x264.
    - Output: `data/jobs/<job>/clips/<clip>.mp4`.
@@ -921,6 +921,11 @@ measures how many neighbouring frames are identical (still image / slideshow / a
   Connection errors, API errors or broken JSON → the next provider gets the same request.
 - **Local** (other machine) has a 30-min read timeout for long transcripts but a 10s connect timeout, so a machine
   that's off fails fast. **This PC** sends `reasoning_effort: none` (qwen3.5:2b answers in 1-4s instead of ~12s).
+- **Every prompt is logged.** Each AI call writes a line like `🧠 prompt for picking the clips → gpt-oss:20b (Local
+  (Ollama)): "Video title: ..." (12,345 chars, with your instructions) full prompt + reply: /media/logs/prompts/...txt`
+  into the job/topic/News run log. In the UI that path is a link, **open the full prompt + reply**: a text file with
+  the exact system prompt, the task (transcript, candidates, your instructions) and the AI's JSON reply (which model,
+  how long, any fallbacks). Saved in `data/logs/prompts/<day>/`, kept 7 days, deleted by Reset everything.
 - Logs name the AI before and after: `STEP 5 asking gpt-oss:20b (Local (Ollama)) to pick...`, then
   `🤖 AI: gpt-oss:20b answered in 4.2s` (or `failed ..., trying the next one` and `(fallback)`). The 🤖 line goes
   into the log of the job/topic/News run it belongs to (a thread-local "where to log" set by `db.step` and

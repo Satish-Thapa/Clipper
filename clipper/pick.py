@@ -449,11 +449,42 @@ def test(p):
     return {"reply": str(reply)[:500], "model": _model(p), "seconds": round(time.time() - t, 1)}
 
 
+PROMPT_KEEP_DAYS = 7  # saved prompts (data/logs/prompts/<day>/) older than this are deleted
+PURPOSE = {"clips": "picking the clips", "queries": "writing search queries", "videos": "judging which videos clip well",
+           "topics": "finding today's trends", "lines": "writing the voice-over", "reply": "a test"}
+
+
+def _save_prompt(system, task, key):
+    """Every prompt goes to its own text file (system prompt + task, the reply is added after), linked from the log
+    line, so you can read exactly what the AI was told. -> (file, its /media/ link)."""
+    from .config import DATA
+    root, now = DATA / "logs" / "prompts", time.localtime()
+    day = time.strftime("%Y-%m-%d", now)
+    d = root / day
+    d.mkdir(parents=True, exist_ok=True)
+    f = d / f"{time.strftime('%H%M%S', now)}_{key}_{int(time.time() * 1000) % 100000:05d}.txt"
+    f.write_text(f"=== SYSTEM PROMPT ===\n{system}\n\n=== TASK ===\n{task}\n", encoding="utf-8")
+    cutoff = time.strftime("%Y-%m-%d", time.localtime(time.time() - PROMPT_KEEP_DAYS * 86400))
+    for old in root.iterdir():
+        if old.is_dir() and old.name < cutoff:
+            import shutil
+            shutil.rmtree(old, ignore_errors=True)
+    return f, f"/media/logs/prompts/{day}/{f.name}"
+
+
 def _ask(task, system=SYSTEM, key="clips", full=False):
     """Send one request in JSON mode; return the raw `key` list (full=True: the whole answer as a dict).
     Every AI call in the app goes through here. Tries the AIs in the saved order (Settings → AI models): when one
-    down, errors or returns broken JSON, the next one gets the same request."""
+    down, errors or returns broken JSON, the next one gets the same request.
+    The prompt is saved to data/logs/prompts/ and the log line links to it (see _save_prompt)."""
     errors, failed = [], 0
+    try:
+        pf, link = _save_prompt(system, task, key)
+        db.here(f"🧠 prompt for {PURPOSE.get(key, key)} → {ai_name()}: \"{' '.join(task.split())[:220]}…\" "
+                f"({len(system) + len(task):,} chars{', with your instructions' if 'FROM THE CHANNEL OWNER' in task else ''}) "
+                f"full prompt + reply: {link}")
+    except OSError:
+        pf = None
     for p in ai_order():
         why = _missing(p)
         if why:
@@ -470,6 +501,14 @@ def _ask(task, system=SYSTEM, key="clips", full=False):
         last_used.update(provider=p, model=_model(p))
         db.here(f"🤖 AI: {_model(p)} ({PROVIDERS[p]}) answered in {time.time() - t:.1f}s"
                 + (" (fallback)" if failed else ""))
+        if pf:
+            try:
+                with open(pf, "a", encoding="utf-8") as fh:
+                    fh.write(f"\n=== REPLY from {_model(p)} ({PROVIDERS[p]}), {time.time() - t:.1f}s"
+                             + (f", after: {' | '.join(errors)}" if errors else "") + " ===\n"
+                             + json.dumps(answer, indent=1, ensure_ascii=False) + "\n")
+            except OSError:
+                pass
         if full:
             return answer if isinstance(answer, dict) else {}
         return answer.get(key, []) if isinstance(answer, dict) else []

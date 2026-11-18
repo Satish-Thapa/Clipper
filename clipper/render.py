@@ -16,7 +16,7 @@ PlayResY: {h}
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, BorderStyle, Outline, Shadow, Alignment, MarginV
 Style: Cap,Arial Black,{size},&H00FFFFFF,&H00000000,&H80000000,1,1,6,2,2,{margin}
-Style: Top,Arial Black,{top_size},&H00000000,&H0000E5FF,&H0000E5FF,1,3,14,0,8,{top_margin}
+Style: Top,Arial Black,{top_size},&H00FFFFFF,&H00000000,&H64000000,1,1,7,3,8,{top_margin}
 Style: EndBox,Arial Black,{end_size},&H00FFFFFF,&H002E2EFF,&H002E2EFF,1,3,22,0,5,0
 Style: End,Arial Black,{end_sub},&H00FFFFFF,&H00000000,&H80000000,1,1,7,3,5,0
 Style: EndSmall,Arial Black,{end_small},&H00FFFFFF,&H00000000,&H80000000,1,1,6,3,5,0
@@ -148,7 +148,7 @@ def top_block(aspect=CROP_ASPECT, lines=1):
 
 def ass(words, start, end, vertical=True, headline="", per_line=3, aspect=CROP_ASPECT, hook=None, split=False,
         cap_margin=None, head_y=None):
-    """Headline in a yellow box in the top black bar for the whole clip + big captions in the bottom black bar,
+    """Headline (white, black outline, no box: the video shows through) in the top black bar for the whole clip + big captions in the bottom black bar,
     a few words at a time. With no bars (aspect 9/16) they sit on the video instead."""
     ws = [w for w in words if start <= w["s"] < end]
     lines = []

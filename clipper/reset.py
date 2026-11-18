@@ -72,6 +72,7 @@ def reset_all(keep_settings=True, keep_logins=True):
     (DATA / "jobs").mkdir(exist_ok=True)
     for f in (DATA / "logs").glob("clipper.log.*"):  # rotated old logs
         f.unlink(missing_ok=True)
+    shutil.rmtree(DATA / "logs" / "prompts", ignore_errors=True)  # saved AI prompts
     for h in logging.getLogger("clipper").handlers:  # the current log is held open: empty it instead
         if getattr(h, "stream", None):
             h.acquire()
