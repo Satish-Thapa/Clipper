@@ -1605,6 +1605,7 @@ async function refresh() {
         <div class="title">${esc(c.title)}</div>
         ${c.headline ? `<div><span class="badge">${esc(c.headline)}</span></div>` : ""}
         <div class="dim">${esc(c.reason)}</div>
+        ${whyHtml(c)}
         <div class="dim">${esc(tags)}</div>
         ${Object.entries(JSON.parse(c.uploads || "{}")).filter(([, u]) => u.error).map(([p, u]) =>
           `<div style="color:#f88;font-size:12px"><b>${PLATFORMS[p] || p} error:</b> ${esc(u.error)}</div>`).join("")}
@@ -1633,6 +1634,25 @@ async function refresh() {
   }).join("") : `<p class="empty">Clips will appear here as they render.</p>`;
 }
 const fmt = s => `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;
+// Clips page: "Why this clip?" (worker._why): the AI's reasoning, who picked it + its prompt, signals, first/last line
+const SIG_NAMES = {heatmap: "YouTube most-replayed", chat: "chat speed", comments: "timestamped comments", audio: "loudness"};
+const whyOpen = new Set();
+function whyHtml(c) {
+  let w = {}; try { w = JSON.parse(c.why || "{}"); } catch (e) {}
+  if (!Object.keys(w).length) return "";
+  const bar = v => `<span class="meter" style="width:90px;display:inline-block;vertical-align:middle"><span style="width:${Math.round(Math.min(v, 1) * 100)}%"></span></span>`;
+  const sig = Object.entries(w.signals || {}).sort((a, b) => b[1] - a[1]).map(([k, v]) =>
+    `<div>${bar(v)} ${SIG_NAMES[k] || esc(k)} <span class="dim">${v >= 0.95 ? "· top 5% of the video" : v >= 0.6 ? "· well above normal" : v >= 0.3 ? "· a bit above normal" : "· normal"}</span></div>`).join("");
+  return `<details class="why" ${whyOpen.has(c.id) ? "open" : ""} ontoggle="this.open ? whyOpen.add(${c.id}) : whyOpen.delete(${c.id})" style="font-size:13px;margin:4px 0">
+    <summary>Why this clip?</summary>
+    <div style="margin:6px 0">${esc(c.reason)}${w.stretched ? ` <span class="badge">stretched for context</span>` : ""}</div>
+    <div>Virality score <b>${Math.round(w.score ?? c.score)}</b>/100${w.piece ? ` · from live/long-video piece ${w.piece}` : ""}${w.joined ? " · joined across two pieces" : ""}</div>
+    ${w.by ? `<div>Picked by <b>${esc(w.by)}</b>${w.mode ? ` <span class="dim">(${esc(w.mode)})</span>` : ""}${w.prompt ? ` · <a href="${esc(w.prompt)}" target="_blank">open the prompt + reply</a>` : ""}</div>` : ""}
+    ${sig ? `<div style="margin-top:6px"><b>Audience signals in this stretch</b>${sig}</div>` : ""}
+    ${w.opening ? `<div style="margin-top:6px"><b>Opens with:</b> “${esc(w.opening)}”</div>` : ""}
+    ${w.closing ? `<div><b>Ends with:</b> “${esc(w.closing)}”</div>` : ""}
+  </details>`;
+}
 refresh(); setInterval(refresh, 2000);
 </script>
 </body>

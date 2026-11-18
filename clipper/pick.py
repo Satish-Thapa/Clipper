@@ -472,6 +472,10 @@ def _save_prompt(system, task, key):
     return f, f"/media/logs/prompts/{day}/{f.name}"
 
 
+import threading
+LAST = threading.local()  # .model / .link of the last answered call in THIS thread (a clip's "picked by" + prompt link)
+
+
 def _ask(task, system=SYSTEM, key="clips", full=False):
     """Send one request in JSON mode; return the raw `key` list (full=True: the whole answer as a dict).
     Every AI call in the app goes through here. Tries the AIs in the saved order (Settings → AI models): when one
@@ -484,7 +488,7 @@ def _ask(task, system=SYSTEM, key="clips", full=False):
                 f"({len(system) + len(task):,} chars{', with your instructions' if 'FROM THE CHANNEL OWNER' in task else ''}) "
                 f"full prompt + reply: {link}")
     except OSError:
-        pf = None
+        pf, link = None, ""
     for p in ai_order():
         why = _missing(p)
         if why:
@@ -499,6 +503,7 @@ def _ask(task, system=SYSTEM, key="clips", full=False):
             db.here(f"🤖 AI {_model(p)} ({PROVIDERS[p]}) failed after {time.time() - t:.1f}s, trying the next one: {e}"[:400])
             continue
         last_used.update(provider=p, model=_model(p))
+        LAST.model, LAST.link = f"{_model(p)} ({PROVIDERS[p]})" + (" as a fallback" if failed else ""), link
         db.here(f"🤖 AI: {_model(p)} ({PROVIDERS[p]}) answered in {time.time() - t:.1f}s"
                 + (" (fallback)" if failed else ""))
         if pf:

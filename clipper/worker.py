@@ -456,6 +456,7 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None, live=No
         # title/description/hashtags. Its numbers are clamped by pick.validate(). If the API fails,
         # fall back to the strongest raw hype windows so the job still produces something.
         _check(jid)
+        pick.LAST.model, pick.LAST.link = "", ""
         try:
             with db.step(jid, tag + f"STEP 5 asking {pick.ai_name()} to pick {counts['short']} short / {counts['long']} long"):
                 note, verdict = (pick.live_note(B) if live else "") + pick.user_note(job.get("notes")), {}
@@ -501,6 +502,9 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None, live=No
                             f"({e - s:.0f}s) \"{c['title']}\"")
             c["start"], c["end"] = s, e
         _save_curves(d, src, curve, parts, chosen)  # now with the picked clips marked on the graph
+        by = pick.LAST.model or "", pick.LAST.link or ""
+        for c in chosen:
+            c["why"] = _why(c, parts, words, mode, by, live, B, title)
 
         # STEP 6: Save each clip to the DB, render it with ffmpeg (every kind vertical 9:16), burn in the
         # headline (top) + captions (bottom) if the job asked for subtitles, then upload if auto-upload is on.
@@ -519,12 +523,38 @@ def _render_clips(job, src, d, chosen, words, subtitles):
             f.result()  # re-raise the first failure so _process logs it
 
 
+def _sentences(ws):
+    """Words -> sentences (Whisper's punctuation)."""
+    out, cur = [], []
+    for w in ws:
+        cur.append(w["w"])
+        if w["w"].endswith((".", "?", "!")):
+            out.append(" ".join(cur))
+            cur = []
+    return out + ([" ".join(cur)] if cur else [])
+
+
+def _why(c, parts, words, mode, by, live, boundary, title):
+    """Why this clip was chosen, for the Clips page: the AI's reasoning + score, who picked it (and its prompt), how
+    the audience signals peaked inside it (1.0 = the top 5% of this video), and its opening and closing lines."""
+    s, e = int(c["start"]), max(int(c["start"]) + 1, int(c["end"]))
+    sig = {k: round(float(v[s:e].max()), 2) for k, v in (parts or {}).items() if len(v) > s}
+    lines = _sentences([w for w in words if c["start"] <= w["s"] < c["end"]])
+    model, link = by
+    return {"by": model or ("hype signals only (the AI was unavailable)" if "LLM unavailable" in c.get("reason", "") else ""),
+            "prompt": link, "mode": {"hype": "AI picked from the hype-curve candidates", "ai+hype": "AI read the full transcript, curves as hints",
+                                     "ai": "AI read the full transcript"}.get(mode, mode),
+            "score": c.get("score"), "signals": sig, "stretched": str(c.get("reason", "")).startswith("STRETCHED"),
+            "opening": " ".join(lines[0].split()[:40]) if lines else "", "closing": " ".join(lines[-1].split()[:40]) if len(lines) > 1 else "",
+            "piece": live["piece"] if live else None, "joined": bool(live and c["start"] < boundary), "source": title}
+
+
 def _render_one(job, src, d, c, words, subtitles):
     jid = job["id"]
     _check(jid)  # Stop pressed: don't start the next render
     cid = db.insert("clips", job_id=jid, kind=c["kind"], start=c["start"], end=c["end"], score=c["score"],
                     title=c["title"], description=c["description"], tags=json.dumps(c["tags"]),
-                    reason=c["reason"], headline=c.get("headline", ""), status="rendering")
+                    reason=c["reason"], headline=c.get("headline", ""), why=json.dumps(c.get("why") or {}), status="rendering")
     out = d / "clips" / f"{cid}.mp4"
     voice = _voiceover(job, c, words, out) if job.get("voiceover") else []
     try:
@@ -593,7 +623,7 @@ def manual_cuts(job_id, cuts, subtitles=True):
             if subtitles or job.get("voiceover"):  # transcribe only if captions/voice-over need it (slow part)
                 for s, e in transcribe.merge([(c["start"], c["end"]) for c in cuts]):
                     words += transcribe.words(src, s, e)
-            _render_clips(job, src, d, [{"score": 0, "reason": "manual cut", **c} for c in cuts], words, subtitles)
+            _render_clips(job, src, d, [{"score": 0, "reason": "manual cut", "why": {"by": "you (a manual cut on the Jobs page)"}, **c} for c in cuts], words, subtitles)
         except Exception as e:
             db.log(job_id, f"ERROR in manual cuts: {e!r}", exc=True)
     threading.Thread(target=run, daemon=True).start()
