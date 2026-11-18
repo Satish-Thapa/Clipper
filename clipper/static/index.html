@@ -176,6 +176,34 @@
   ::selection { background: rgba(255,61,139,.45); }
   html { background:#0b0716; } body { min-height:100vh; background-repeat:no-repeat; background-attachment:fixed; }
   label.fillwrap[hidden], label.camwrap[hidden] { display:none; }
+  /* Reels viewer (Clips page): full screen, one clip per screen, swipe/scroll to the next */
+  #reels { position:fixed; inset:0; background:#000; z-index:60; color:#fff; }
+  #reels[hidden], #rsheet[hidden] { display:none; }
+  #reelList { height:100%; overflow-y:scroll; scroll-snap-type:y mandatory; overscroll-behavior:contain; scrollbar-width:none; }
+  #reelList::-webkit-scrollbar { display:none; }
+  .reel { height:100vh; height:100dvh; scroll-snap-align:start; scroll-snap-stop:always; position:relative;
+    display:flex; align-items:center; justify-content:center; }
+  .reel video, .reel img { height:100%; max-width:100%; aspect-ratio:9/16; object-fit:contain; background:#000; }
+  .reel .ri { position:absolute; bottom:22px; left:max(14px, calc(50% - 28dvh + 14px)); width:min(calc(56dvh - 100px), calc(100% - 100px));
+    text-shadow:0 1px 4px #000; font-size:14px; pointer-events:none; }
+  .reel .ri a, .reel .ri button { pointer-events:auto; }
+  .reel .ri .t { font-weight:800; font-size:16px; margin:4px 0; }
+  .reel .ri .d { opacity:.85; max-height:3.6em; overflow:hidden; }
+  .reel .ra { position:absolute; bottom:28px; left:min(calc(50% + 28dvh + 12px), calc(100% - 70px));
+    display:flex; flex-direction:column; gap:14px; align-items:center; }
+  .reel .ra button, .reel .ra a { width:52px; height:52px; border-radius:50%; border:0; background:rgba(255,255,255,.16);
+    color:#fff; font-size:20px; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    cursor:pointer; text-decoration:none; backdrop-filter:blur(6px); }
+  .reel .ra small { font-size:9px; margin-top:1px; }
+  .reel .ra button:hover, .reel .ra a:hover { background:rgba(255,255,255,.3); }
+  .reel .paused::after { content:"▶"; position:absolute; font-size:64px; opacity:.8; pointer-events:none; }
+  #reelTop { position:absolute; top:0; left:0; right:0; z-index:2; display:flex; gap:10px; align-items:center;
+    padding:12px 16px; background:linear-gradient(#000a, transparent); }
+  #reelTop button, #reelTop select { background:rgba(255,255,255,.16); color:#fff; border:0; border-radius:20px; padding:7px 12px; }
+  #reelTop select option { color:#000; }
+  #rsheet { position:absolute; left:50%; transform:translateX(-50%); bottom:0; z-index:3; width:min(560px, 100%);
+    max-height:70vh; overflow:auto; background:var(--panel); color:var(--text); border-radius:16px 16px 0 0;
+    padding:16px; box-shadow:0 -8px 30px #000a; }
   #camdlg { position:fixed; inset:0; background:rgba(0,0,0,.75); display:flex; align-items:center; justify-content:center; z-index:50; padding:16px; }
   #camdlg[hidden] { display:none; }
   #camdlg .box { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px; max-width:960px; width:100%; }
@@ -390,7 +418,8 @@
  <div class="page" id="page-clips">
   <div class="page-head"><h2>Clips</h2><p>Rendered clips, newest first. Upload a clip to any connected platform from its card,
     or every clip at once below.</p></div>
-  <section class="panel"><div class="row" id="bulk" style="margin-bottom:14px"></div><div class="clips" id="clips"></div></section>
+  <section class="panel"><div class="row" style="margin-bottom:10px"><button type="button" onclick="openReels()">▶ Watch as reels (full screen)</button></div>
+    <div class="row" id="bulk" style="margin-bottom:14px"></div><div class="clips" id="clips"></div></section>
  </div>
 
  <div class="page" id="page-news">
@@ -512,6 +541,15 @@
   <div class="socials" id="socials"></div>
  </div>
 </main>
+<div id="reels" hidden>
+  <div id="reelTop"><button type="button" onclick="closeReels()" title="Close (Esc)">✕</button>
+    <b id="reelCount"></b>
+    <select id="reelFilter" onchange="openReels()"><option value="all">All clips</option><option value="unposted">Not posted yet</option>
+      <option value="scheduled">Scheduled</option><option value="posted">Posted</option></select>
+    <span class="dim" style="margin-left:auto;font-size:12px">scroll / ↑ ↓ · space pause · M sound · Esc close</span></div>
+  <div id="reelList"></div>
+  <div id="rsheet" hidden></div>
+</div>
 <div id="camdlg" hidden><div class="box">
   <h3 style="margin-top:0">Where's the streamer?</h3>
   <p class="dim" style="margin-top:0;font-size:13px">Drag a box around the streamer's facecam. It becomes the streamer's panel; the rest of the
@@ -1447,6 +1485,7 @@ window.addEventListener("hashchange", loadReports);
 let clipKey = "";
 async function refresh() {
   const s = await (await fetch("/api/state")).json();
+  lastState = s; reelSync(s);
   const ds = s.deepseek || {}, b = (ds.balances || [])[0];
   $("#ds").innerHTML = ds.model ? `<span style="color:var(--ok)" title="${esc(ds.url)}">AI: ${esc(ds.model)}</span>`
     : ds.error ? `<span style="color:#f66" title="${esc(ds.error)}">DeepSeek balance: error</span>`
@@ -1616,6 +1655,7 @@ async function refresh() {
           ${ups ? `<span class="ups">${ups}</span>` : c.youtube_id ? `<a href="https://youtu.be/${esc(c.youtube_id)}" target="_blank">▶ on YouTube</a>` : `<span class="dim">${esc(c.status)}</span>`}
           ${canUpload ? `<button class="ghost" onclick="uploadClip(${c.id}, this)" title="to the job's platforms; only retries the ones not done yet">${ups ? "Retry upload" : "Upload"}</button>` : ""}
           ${c.path ? `<a href="/media/${esc(c.path)}" target="_blank">Open</a>` : ""}
+          ${c.path ? `<button class="ghost" onclick="openReels(${c.id})" title="Watch full screen, swipe to the next">⛶ Reels</button>` : ""}
         </div>
         <div class="row">
           ${ready(c) ? Object.keys(TARGETS).filter(t => notOn(s, c, t).length).map(t =>
@@ -1634,6 +1674,130 @@ async function refresh() {
   }).join("") : `<p class="empty">Clips will appear here as they render.</p>`;
 }
 const fmt = s => `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;
+
+// ---- Reels viewer: every clip full screen, one per screen; the visible one plays, actions on the right ----
+let lastState = null, reelMuted = true, reelObs = null, reelKeys = {};
+const reelFilters = {
+  all: c => c.path,
+  unposted: c => c.path && !Object.values(JSON.parse(c.uploads || "{}")).some(u => u.id),
+  scheduled: c => c.path && ["scheduled", "timed", "paused (streamer live)"].includes(c.status),
+  posted: c => c.path && Object.values(JSON.parse(c.uploads || "{}")).some(u => u.id),
+};
+function reelStatus(c) {
+  const ups = Object.entries(JSON.parse(c.uploads || "{}")).map(([p, u]) => u.id
+    ? `<a href="${esc(u.url)}" target="_blank" style="color:#7fffc4">✓ ${PLATFORMS[p] || p}</a>` : `<span style="color:#ff8a8a">✕ ${PLATFORMS[p] || p}</span>`).join(" ");
+  const when = c.status === "timed" ? `⏰ posts ${new Date(c.post_at * 1000).toLocaleString([], {dateStyle: "short", timeStyle: "short"})}${
+      c.post_to ? " to " + JSON.parse(c.post_to).map(p => PLATFORMS[p] || p).join(", ") : ""}`
+    : c.status === "scheduled" ? "⏰ waiting for an autopilot slot" : c.status === "paused (streamer live)" ? "⏸ held while a streamer is live" : "";
+  return [when, ups, !ups && !when ? esc(c.status) : ""].filter(Boolean).join(" · ");
+}
+function reelInfo(c) {
+  return `<div class="ri"><span class="badge">${esc(c.kind)}</span> <span class="badge">${Math.round(c.score)}</span>
+    <div class="t">${esc(c.title)}</div>${c.headline ? `<div>${esc(c.headline)}</div>` : ""}
+    <div class="d">${esc(c.reason)}</div><div style="margin-top:6px">${reelStatus(c)}</div></div>`;
+}
+function reelActions(s, c) {
+  const can = canSched(c), sched = ["scheduled", "timed", "paused (streamer live)"].includes(c.status);
+  return `<div class="ra">
+    <button onclick="reelMute()" title="Sound on/off (M)">${reelMuted ? "🔇" : "🔊"}<small>${reelMuted ? "muted" : "sound"}</small></button>
+    ${reelReady(c) ? `<button onclick="reelSheet(${c.id}, 'post')" title="Post now to a platform">⬆<small>post</small></button>` : ""}
+    ${can ? `<button onclick="reelSheet(${c.id}, 'sched')" title="Schedule: when and where">⏰<small>${c.status === "timed" ? "change" : "schedule"}</small></button>` : ""}
+    ${sched ? `<button onclick="unschedPost(${c.id})" title="Take it off the schedule (it stays here)">⊘<small>don't post</small></button>` : ""}
+    <button onclick="reelSheet(${c.id}, 'why')" title="Why this clip?">ℹ<small>why</small></button>
+    <a href="/media/${esc(c.path)}" target="_blank" title="Open the file">⬇<small>open</small></a>
+    ${!["rendering", "uploading"].includes(c.status) ? `<button onclick="reelDelete(${c.id})" title="Delete this clip">🗑<small>delete</small></button>` : ""}
+  </div>`;
+}
+const reelReady = c => c.path && !["rendering", "uploading"].includes(c.status);
+const reelKey = c => JSON.stringify([c.status, c.uploads, c.post_at, c.post_to, c.title]);
+function reelHtml(s, c) {
+  const media = isPhoto(c) ? `<img src="/media/${esc(c.path)}" alt="">`
+    : `<video src="/media/${esc(c.path)}" loop playsinline preload="metadata" ${reelMuted ? "muted" : ""} onclick="reelToggle(this)"></video>`;
+  return `<section class="reel" data-id="${c.id}">${media}<div class="rx">${reelInfo(c)}${reelActions(s, c)}</div></section>`;
+}
+function openReels(startId) {
+  const s = lastState; if (!s) return;
+  const f = reelFilters[$("#reelFilter").value] || reelFilters.all;
+  const list = s.clips.filter(f);
+  $("#reels").hidden = false; document.body.style.overflow = "hidden"; $("#rsheet").hidden = true;
+  $("#reelList").innerHTML = list.length ? list.map(c => reelHtml(s, c)).join("")
+    : `<section class="reel"><p>No clips here yet.</p></section>`;
+  reelKeys = Object.fromEntries(list.map(c => [c.id, reelKey(c)]));
+  reelObs && reelObs.disconnect();
+  reelObs = new IntersectionObserver(es => es.forEach(e => {
+    const v = e.target.querySelector("video");
+    if (e.isIntersecting) {
+      const all = [...$("#reelList").children];
+      $("#reelCount").textContent = `${all.indexOf(e.target) + 1} / ${all.length}`;
+      if (v) { v.muted = reelMuted; v.currentTime = 0; v.play().catch(() => {}); v.parentElement.classList.remove("paused"); }
+    } else if (v) v.pause();
+  }), {threshold: 0.6});
+  $("#reelList").querySelectorAll(".reel").forEach(r => reelObs.observe(r));
+  const at = startId && $(`#reelList .reel[data-id="${startId}"]`);
+  (at || $("#reelList").firstElementChild)?.scrollIntoView({behavior: "instant", block: "start"});
+}
+function closeReels() {
+  $("#reels").hidden = true; document.body.style.overflow = "";
+  reelObs && reelObs.disconnect();
+  $("#reelList").querySelectorAll("video").forEach(v => v.pause());
+  $("#reelList").innerHTML = "";
+}
+function reelToggle(v) { v.paused ? v.play() : v.pause(); v.parentElement.classList.toggle("paused", v.paused); }
+function reelMute() {
+  reelMuted = !reelMuted;
+  $("#reelList").querySelectorAll("video").forEach(v => v.muted = reelMuted);
+  if (lastState) reelSync(lastState, true);
+}
+function reelCurrent() {
+  const h = $("#reelList").clientHeight;
+  return [...$("#reelList").children][Math.round($("#reelList").scrollTop / h)];
+}
+// status/actions of the open reels follow the state (posted, scheduled...), without restarting the videos
+function reelSync(s, force) {
+  if ($("#reels").hidden) return;
+  const byId = Object.fromEntries(s.clips.map(c => [c.id, c]));
+  $("#reelList").querySelectorAll(".reel[data-id]").forEach(r => {
+    const c = byId[r.dataset.id];
+    if (!c || !c.path) { reelObs.unobserve(r); r.remove(); return; }
+    if (force || reelKeys[c.id] !== reelKey(c)) { r.querySelector(".rx").innerHTML = reelInfo(c) + reelActions(s, c); reelKeys[c.id] = reelKey(c); }
+  });
+  const sh = $("#rsheet");
+  if (!sh.hidden && sh.dataset.id && !byId[sh.dataset.id]) sh.hidden = true;
+}
+function reelSheet(id, what) {
+  const s = lastState, c = s.clips.find(x => x.id === id), sh = $("#rsheet");
+  if (!c) return;
+  const close = `<button type="button" class="ghost" style="float:right" onclick="$('#rsheet').hidden = true">✕</button>`;
+  let body = "";
+  if (what === "post") {
+    const btns = Object.keys(TARGETS).filter(t => notOn(s, c, t).length).map(t =>
+      `<button class="ghost" onclick="uploadTo(${c.id}, '${notOn(s, c, t).join(",")}', this)">↑ ${TARGET_NAMES[t]}</button>`).join(" ");
+    body = `<h3 style="margin-top:0">Post now</h3>${btns || `<p class="dim">Already on every connected platform${igRisky(s, c) ? "" : ""}.</p>`}
+      ${igRisky(s, c) ? `<div style="margin-top:8px"><button class="ig-risk" onclick="uploadTo(${c.id}, 'instagram', this, true)">↑ Instagram (${Math.round(c.end - c.start)}s, may fail)</button></div>` : ""}
+      <p class="dim" style="font-size:12px">${reelStatus(c)}</p>`;
+  } else if (what === "sched") {
+    body = `<h3 style="margin-top:0">Schedule</h3>${schedForm(s, c)}`;
+  } else {
+    whyOpen.add(c.id);
+    body = `<h3 style="margin-top:0">${esc(c.title)}</h3>${whyHtml(c) || `<p>${esc(c.reason)}</p>`}`;
+  }
+  sh.dataset.id = id; sh.innerHTML = close + body; sh.hidden = false;
+}
+async function reelDelete(id) {
+  if (!confirm("Delete this clip file? (Copies already posted stay online.)")) return;
+  const r = await fetch(`/api/clips/${id}`, {method: "DELETE"});
+  if (!r.ok) return alertBox((await r.json()).detail);
+  refresh();
+}
+document.addEventListener("keydown", e => {
+  if ($("#reels").hidden || /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;
+  const cur = reelCurrent();
+  if (e.key === "Escape") { $("#rsheet").hidden ? closeReels() : $("#rsheet").hidden = true; }
+  else if (["ArrowDown", "j", "PageDown"].includes(e.key)) { e.preventDefault(); cur?.nextElementSibling?.scrollIntoView({behavior: "smooth"}); }
+  else if (["ArrowUp", "k", "PageUp"].includes(e.key)) { e.preventDefault(); cur?.previousElementSibling?.scrollIntoView({behavior: "smooth"}); }
+  else if (e.key === " ") { e.preventDefault(); const v = cur?.querySelector("video"); v && reelToggle(v); }
+  else if (e.key.toLowerCase() === "m") reelMute();
+});
 // Clips page: "Why this clip?" (worker._why): the AI's reasoning, who picked it + its prompt, signals, first/last line
 const SIG_NAMES = {heatmap: "YouTube most-replayed", chat: "chat speed", comments: "timestamped comments", audio: "loudness"};
 const whyOpen = new Set();
