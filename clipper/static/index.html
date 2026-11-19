@@ -256,21 +256,40 @@
         <option value="1">Square 1:1 (more of the scene)</option>
         <option value="1.7778">Whole frame 16:9 (nothing cut off)</option><option value="split">Split: clip on top + your video below</option>
       </select></label>
-      <label class="check"><input type="checkbox" name="subtitles" checked> Headline + subtitles</label>
-      <label class="check" title="The message at the top asking viewers to follow (FOLLOW_LINES in config.py)"><input type="checkbox" name="follow" checked> Follow message</label>
+      <label title="Live streams are always clipped clean. For videos: clean = the original sound and a short title on top matching the scene, nothing else (like live clips). Full = headline, subtitles, follow message and the options next to it.">Clip style<select name="style">
+        <option value="clean">Clean, like live: original sound + short title on top</option>
+        <option value="full">Full: headline + subtitles + follow message</option>
+      </select></label>
+      <label class="check full-only"><input type="checkbox" name="subtitles" checked> Headline + subtitles</label>
+      <label class="check full-only" title="The message at the top asking viewers to follow (FOLLOW_LINES in config.py)"><input type="checkbox" name="follow" checked> Follow message</label>
       <label class="check" title="Downloads up to 4K instead of 1440p (the default). Sharper, mostly for full-screen 9:16 framing and facecam crops, but about 4x the data, so slower."><input type="checkbox" name="hq"> 4K quality (slower download)</label>
-      <label class="check"><input type="checkbox" name="voiceover"> AI voice-over</label>
+      <label class="check full-only"><input type="checkbox" name="voiceover"> AI voice-over</label>
+      <label title="Upload only the best N clips (by the AI's score); the rest are just clipped and wait in Clips, where you can upload them by hand. Live streams and long videos (cut in pieces): the best of EACH piece, right after it's clipped. Empty = upload every clip as soon as it's made. 0 = upload none of that kind.">Upload only the best<input type="number" name="upload_best" min="0" max="100" placeholder="all" style="width:60px"> shorts<input type="number" name="upload_best_long" min="0" max="100" placeholder="all" style="width:60px" title="Upload only the best N long clips. Empty = all of them, 0 = none."> long</label>
       <label style="flex-basis:100%">Tell the AI (optional)<textarea name="notes" rows="2" maxlength="1000" style="width:min(640px,100%)" placeholder="e.g. only the funny fails and police chases; no swearing in titles; skip the intro"></textarea><span class="dim" style="font-size:12px;display:block">Goes into the AI's prompt as your own instructions: which moments to pick, titles and headlines.</span></label>
       <fieldset class="pf" data-default="youtube"><legend>Upload to (none = don't upload)</legend></fieldset>
       <fieldset class="livef"><legend>If it's a live stream</legend>
         <label>Record it in pieces of<select name="chunk_minutes"><option value="2">2 min</option><option value="5">5 min</option><option value="10">10 min</option><option value="15">15 min</option><option value="20">20 min</option><option value="30">30 min</option><option value="60">60 min</option></select></label>
         <label>Pieces to clip<input type="number" name="max_chunks" value="0" min="0" max="500" title="0 = keep going until the stream ends (or you press Stop)"></label>
-        <label title="After each piece is clipped, upload only its best N clips (by the AI's score), right away while the next piece records; the rest are just clipped and wait in Clips, where you can upload them by hand. Empty = upload every clip as soon as it's made. 0 = upload none.">Upload per piece: best<input type="number" name="upload_best" min="0" max="100" placeholder="all" style="width:60px"> shorts<input type="number" name="upload_best_long" min="0" max="100" placeholder="all" style="width:60px" title="After each piece, upload only its best N long clips. Empty = all of them, 0 = none."> long</label>
         <div class="dim" id="livePlan" style="font-size:12px;align-self:center;max-width:420px"></div>
       </fieldset>
       <button>Start clipping</button>
     </form>
     <p class="dim" style="margin:10px 0 0;font-size:12px">Progress shows under <a href="#jobs">Jobs</a>. A live job's pieces and clips per piece can be changed there while it records.</p>
+  </section>
+  <section class="panel">
+    <h3 style="margin-top:0">Clip a whole channel</h3>
+    <p class="dim" style="margin:0 0 10px;font-size:13px">Paste a YouTube channel and say how many videos: it picks the best ones by views and how recently they went up, and does them one after another with the settings above (clip style, framing, shorts / long, upload only the best), uploading where you tick below. Videos longer than the limit are clipped; shorter ones are posted whole, formatted like the other clips. Videos already done are skipped, so run it again later for the new ones.</p>
+    <form id="chf" class="row" style="flex-wrap:wrap;gap:10px;align-items:end">
+      <label style="flex:1 1 260px">Channel link<input name="channel" placeholder="https://www.youtube.com/@name or @name" required></label>
+      <label>How many videos<input type="number" name="count" value="5" min="1" max="30" style="width:70px"></label>
+      <label title="Videos at least this long are clipped into shorts / long clips; shorter ones are posted whole (one clip, in the clip format).">Clip videos longer than<input type="number" name="min_minutes" value="10" min="0" max="600" step="0.5" style="width:70px"> min</label>
+      <label title="Clips that are uploaded go into a queue: one every this many minutes (best first), so they don't all go up at once. They show as scheduled (⏰) in Clips. 0 = upload each one as soon as it's made.">Upload one clip every<input type="number" name="every_min" value="60" min="0" max="1440" style="width:70px"> min</label>
+      <label title="No clip is posted before this time; then one every N minutes. Empty = start right away.">Start posting at<input type="datetime-local" name="start_at"></label>
+      <fieldset class="pf" data-default="youtube" style="flex-basis:100%"><legend>Upload this channel's clips to (none = don't upload)</legend></fieldset>
+      <button>Clip channel</button>
+      <button type="button" class="ghost" onclick="stopChannel()">Stop channel</button>
+    </form>
+    <div class="dim" id="chState" style="font-size:12px;margin-top:8px"></div>
   </section>
  </div>
 
@@ -461,7 +480,8 @@
   <div class="page-head"><h2>Clips</h2><p>Rendered clips, newest first. Upload a clip to any connected platform from its card,
     or every clip at once below.</p></div>
   <section class="panel"><div class="row" style="margin-bottom:10px"><button type="button" onclick="openReels()">▶ Watch as reels (full screen)</button></div>
-    <div class="row" id="bulk" style="margin-bottom:14px"></div><div class="clips" id="clips"></div></section>
+    <div class="row" id="bulk" style="margin-bottom:14px"></div><div class="clips" id="clips"></div>
+    <div class="dim" id="clipMore" style="text-align:center;padding:16px;font-size:13px"></div></section>
  </div>
 
  <div class="page" id="page-news">
@@ -642,20 +662,44 @@ const notOn = (s, c, t) => live(s, t).filter(p => !(JSON.parse(c.uploads || "{}"
 $("#f").onsubmit = async e => {
   e.preventDefault();
   const f = new FormData(e.target), file = f.get("file");
-  const opts = {shorts: +f.get("shorts"), longs: +f.get("longs"), ...framing(e.target), hq: f.has("hq"), mode: f.get("mode"), subtitles: f.has("subtitles"), follow: f.has("follow"), voiceover: f.has("voiceover"), notes: f.get("notes") || ""};
-  const live = {chunk_minutes: +f.get("chunk_minutes"), max_chunks: +f.get("max_chunks"), upload_best: f.get("upload_best") === "" ? null : +f.get("upload_best"), upload_best_long: f.get("upload_best_long") === "" ? null : +f.get("upload_best_long")};
+  const opts = {shorts: +f.get("shorts"), longs: +f.get("longs"), ...framing(e.target), hq: f.has("hq"), mode: f.get("mode"), subtitles: f.has("subtitles"), follow: f.has("follow"), voiceover: f.has("voiceover"), notes: f.get("notes") || "", style: f.get("style")};
+  const best = Object.fromEntries(["upload_best", "upload_best_long"].filter(k => f.get(k) !== "").map(k => [k, +f.get(k)]));
+  const live = {chunk_minutes: +f.get("chunk_minutes"), max_chunks: +f.get("max_chunks")};
   const btn = e.target.querySelector("button");
   let r;
   if (file && file.size) {
     btn.disabled = true; btn.textContent = "Uploading file…";
-    r = await fetch("/api/jobs/file?" + new URLSearchParams({...opts, platforms: picked(e.target).join(","), filename: file.name}), {method: "POST", body: file});
+    r = await fetch("/api/jobs/file?" + new URLSearchParams({...opts, ...best, platforms: picked(e.target).join(","), filename: file.name}), {method: "POST", body: file});
     btn.disabled = false; btn.textContent = "Start clipping";
   } else if (f.get("url")) {
-    r = await post("/api/jobs", {url: f.get("url"), ...opts, ...live, platforms: picked(e.target)});
+    r = await post("/api/jobs", {url: f.get("url"), ...opts, ...best, ...live, platforms: picked(e.target)});
   } else return alertBox("Paste a URL or choose a file.");
   if (!r.ok) return alertBox(await r.text());
   e.target.url.value = ""; e.target.file.value = ""; location.hash = "#jobs"; refresh();
 };
+$("#chf").onsubmit = async e => {  // a channel: the main form's settings + which videos
+  e.preventDefault();
+  const m = new FormData($("#f")), c = new FormData(e.target), btn = e.target.querySelector("button");
+  const best = Object.fromEntries(["upload_best", "upload_best_long"].filter(k => m.get(k) !== "").map(k => [k, +m.get(k)]));
+  const body = {channel: c.get("channel"), count: +c.get("count"), every_min: +c.get("every_min"),
+    start_at: c.get("start_at") ? new Date(c.get("start_at")).getTime() / 1000 : null, min_minutes: +c.get("min_minutes"),
+    shorts: +m.get("shorts"), longs: +m.get("longs"), ...framing($("#f")), hq: m.has("hq"), mode: m.get("mode") === "manual" ? "hype" : m.get("mode"),
+    subtitles: m.has("subtitles"), follow: m.has("follow"), voiceover: m.has("voiceover"), notes: m.get("notes") || "", style: m.get("style"),
+    chunk_minutes: +m.get("chunk_minutes"), max_chunks: +m.get("max_chunks"), ...best, platforms: picked(e.target)};
+  btn.disabled = true; btn.textContent = "Reading the channel…";
+  const r = await post("/api/channel", body);
+  btn.disabled = false; btn.textContent = "Clip channel";
+  if (!r.ok) return alertBox((await r.json()).detail || "could not read the channel");
+  const {videos} = await r.json();
+  showChannel({running: true, plan: videos});
+};
+function showChannel(s) {
+  $("#chState").innerHTML = !s.plan || !s.plan.length ? "" : `${s.running ? "⏳ Working through" : "✓ Done:"} ${s.plan.length} video(s)<br>` + s.plan.map(v =>
+    `${esc(v.why)} · ${esc(v.title)} · ${Math.round(v.duration / 60)} min · ${(v.views || 0).toLocaleString()} views · `
+    + (v.done ? "already done, skipped" : v.whole ? "posted whole" : "clipped") + (v.job ? ` · <a href="#jobs">job #${v.job}</a>` : "")).join("<br>");
+}
+async function stopChannel() { await fetch("/api/channel", {method: "DELETE"}); alertBox("Stopped: the video being clipped finishes, the rest are skipped."); }
+setInterval(async () => { if (location.hash && location.hash !== "#create") return; try { showChannel(await (await fetch("/api/channel")).json()); } catch {} }, 8000);
 $("#tf").onsubmit = async e => {
   e.preventDefault();
   const f = new FormData(e.target);
@@ -749,9 +793,14 @@ function livePlan() {
     ? `for ${n} piece${n > 1 ? "s" : ""} (${n * m >= 60 ? (n * m / 60).toFixed(n * m % 60 ? 1 : 0) + " h" : n * m + " min"} of stream, up to ${n * (sh + lo)} clips), then stops.`
     : `until the stream ends or you press Stop. Clips come out while it's still live.`)
     + (up === "" && upl === "" ? " Every clip is uploaded as soon as it's made."
-       : ` After each piece, uploads its best ${up === "" ? "all" : up} short(s) + ${upl === "" ? "all" : upl} long(s) right away; the rest are only clipped.`);
+       : ` After each piece (a video: once all its clips are made), uploads the best ${up === "" ? "all" : up} short(s) + ${upl === "" ? "all" : upl} long(s); the rest are only clipped.`);
 }
 ["chunk_minutes", "max_chunks", "shorts", "longs", "upload_best", "upload_best_long"].forEach(k => $("#f")[k].addEventListener("input", livePlan));
+function styleOpts() {  // clean style: subtitles / follow message / voice-over don't apply
+  const clean = $("#f").elements.style.value === "clean";  // .elements: form.style is the CSS style
+  $("#f").querySelectorAll(".full-only").forEach(l => { l.style.opacity = clean ? .45 : ""; l.querySelector("input").disabled = clean; });
+}
+$("#f").elements.style.addEventListener("change", styleOpts); styleOpts();
 $("#f").chunk_minutes.addEventListener("change", e => e.target.dataset.touched = 1);
 const liveSel = (id, v) => `<select id="${id}">${[2, 5, 10, 15, 20, 30, 60].concat([v]).filter((x, i, a) => a.indexOf(x) === i)
   .sort((a, b) => a - b).map(m => `<option value="${m}" ${m === v ? "selected" : ""}>${m} min</option>`).join("")}</select>`;
@@ -1710,11 +1759,13 @@ async function refresh() {
       ${t === "instagram" && igMax ? `title="only clips up to ${igMax}s: Instagram's API rejects longer Reels right now"` : ""}>${TARGET_NAMES[t]}${
       t === "instagram" && igMax ? ` ≤${igMax}s` : ""} (${n})</button>`).join("")
     : `<span class="dim">Connect a platform on the <a href="#socials">Socials</a> page to upload.</span>`;
-  const key = JSON.stringify([s.platforms, igMax, [...schedOpenIds], [...editOpenIds], s.clips.map(c => [c.id, c.status, c.path, c.uploads, c.views, c.post_at, c.post_to, c.title, c.headline, c.description, c.tags, c.caption])]);
+  const shown = s.clips.slice(0, clipShown);  // infinite scroll: CLIP_PAGE more each time the bottom comes into view
+  const key = JSON.stringify([s.platforms, igMax, [...schedOpenIds], [...editOpenIds], s.clips.length, shown.map(c => [c.id, c.status, c.path, c.uploads, c.views, c.post_at, c.post_to, c.title, c.headline, c.description, c.tags, c.caption])]);
   if (key === clipKey) return;
   if ($("#clips").contains(document.activeElement) && document.activeElement.matches("input, textarea, select")) return;  // you're typing
   clipKey = key;
-  $("#clips").innerHTML = s.clips.length ? s.clips.map(c => {
+  $("#clipMore").textContent = s.clips.length > shown.length ? `Showing ${shown.length} of ${s.clips.length}: scroll for more…` : s.clips.length > CLIP_PAGE ? `All ${s.clips.length} clips shown` : "";
+  $("#clips").innerHTML = s.clips.length ? shown.map(c => {
     const tags = JSON.parse(c.tags || "[]").map(t => "#" + t).join(" ");
     const canUpload = c.path && !["uploaded","uploading"].includes(c.status);
     const ups = Object.entries(JSON.parse(c.uploads || "{}")).map(([p, u]) => u.id
@@ -1739,7 +1790,7 @@ async function refresh() {
           ${ups ? `<span class="ups">${ups}</span>` : c.youtube_id ? `<a href="https://youtu.be/${esc(c.youtube_id)}" target="_blank">▶ on YouTube</a>` : `<span class="dim">${esc(c.status)}</span>`}
           ${canUpload ? `<button class="ghost" onclick="uploadClip(${c.id}, this)" title="to the job's platforms; only retries the ones not done yet">${ups ? "Retry upload" : "Upload"}</button>` : ""}
           ${c.path ? `<a href="/media/${esc(c.path)}" target="_blank">Open</a>` : ""}
-          ${c.path ? `<button class="ghost" onclick="openReels(${c.id})" title="Watch full screen, swipe to the next">⛶ Reels</button>` : ""}
+          ${c.path ? `<button onclick="openReels(${c.id})" title="Watch the reels full screen starting with this clip, swipe for the next ones">▶ Watch from here</button>` : ""}
         </div>
         <div class="row">
           ${ready(c) ? Object.keys(TARGETS).filter(t => notOn(s, c, t).length).map(t =>
@@ -1759,6 +1810,13 @@ async function refresh() {
       </div></div>`;
   }).join("") : `<p class="empty">Clips will appear here as they render.</p>`;
 }
+const CLIP_PAGE = 24;
+let clipShown = CLIP_PAGE;
+new IntersectionObserver(es => {  // the bottom of the clip list came into view: show the next page
+  if (es.some(e => e.isIntersecting) && lastState && clipShown < lastState.clips.length) {
+    clipShown += CLIP_PAGE; clipKey = ""; refresh();
+  }
+}, {rootMargin: "600px"}).observe($("#clipMore"));
 const fmt = s => `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;
 // ---- Campaigns (campaign.py): the brief -> rules -> official videos -> clips with captions built to the rules ----
 const campOpen = new Set(), campErr = {};
@@ -2007,7 +2065,7 @@ async function markPosted(id, btn) {
 
 
 // ---- Reels viewer: every clip full screen, one per screen; the visible one plays, actions on the right ----
-let lastState = null, reelMuted = true, reelObs = null, reelKeys = {};
+let lastState = null, reelMuted = true, reelObs = null, reelNear = null, reelKeys = {};
 const reelFilters = {
   all: c => c.path,
   unposted: c => c.path && !Object.values(JSON.parse(c.uploads || "{}")).some(u => u.id),
@@ -2046,13 +2104,15 @@ const clipVideo = (c, attrs) => `<video src="/api/clips/${c.id}/preview?v=${clip
 const reelReady = c => c.path && !["rendering", "uploading"].includes(c.status);
 const reelKey = c => JSON.stringify([c.status, c.uploads, c.post_at, c.post_to, c.title]);
 function reelHtml(s, c) {
-  const media = isPhoto(c) ? `<img src="/media/${esc(c.path)}" alt="">`
-    : clipVideo(c, `loop playsinline ${reelMuted ? "muted" : ""} onclick="reelToggle(this)"`);
+  const media = isPhoto(c) ? `<img src="/media/${esc(c.path)}" alt="" loading="lazy">`  // poster: set when the reel comes near
+    : clipVideo(c, `loop playsinline ${reelMuted ? "muted" : ""} onclick="reelToggle(this)"`).replace(" poster=", " data-poster=");
   return `<section class="reel" data-id="${c.id}">${media}<div class="rx">${reelInfo(c)}${reelActions(s, c)}</div></section>`;
 }
 function openReels(startId) {
   const s = lastState; if (!s) return;
-  const f = reelFilters[$("#reelFilter").value] || reelFilters.all;
+  let f = reelFilters[$("#reelFilter").value] || reelFilters.all;
+  const pick = startId && s.clips.find(c => c.id === startId);
+  if (pick && !f(pick)) { $("#reelFilter").value = "all"; f = reelFilters.all; }  // "watch from here": that clip must be in the list
   const list = s.clips.filter(f);
   $("#reels").hidden = false; document.body.style.overflow = "hidden"; $("#rsheet").hidden = true;
   $("#reelList").innerHTML = list.length ? list.map(c => reelHtml(s, c)).join("")
@@ -2069,7 +2129,12 @@ function openReels(startId) {
       if (nv) nv.preload = "auto";  // the next reel loads while you watch this one
     } else if (v) v.pause();
   }), {threshold: 0.6});
-  $("#reelList").querySelectorAll(".reel").forEach(r => reelObs.observe(r));
+  reelNear && reelNear.disconnect();
+  reelNear = new IntersectionObserver(es => es.forEach(e => {  // only reels within ~2 screens load their poster
+    const v = e.target.querySelector("video[data-poster]");
+    if (e.isIntersecting && v) { v.poster = v.dataset.poster; v.removeAttribute("data-poster"); reelNear.unobserve(e.target); }
+  }), {root: $("#reelList"), rootMargin: "200% 0px"});
+  $("#reelList").querySelectorAll(".reel").forEach(r => { reelObs.observe(r); reelNear.observe(r); });
   const at = startId && $(`#reelList .reel[data-id="${startId}"]`);
   (at || $("#reelList").firstElementChild)?.scrollIntoView({behavior: "instant", block: "start"});
 }

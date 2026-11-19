@@ -392,11 +392,41 @@ record piece 1 ──▶ record piece 2 ──▶ record piece 3 ──▶ ...  
   Chat speed is the strongest signal on a live stream, alongside loudness; there's no "most replayed" heatmap or
   comments yet. Each piece's log says how many chat messages it got. If chat can't be read, it says why, and the
   piece is clipped on loudness only.
-- **Live clips: your layout, the original sound, a short title.** Clips from a live stream keep the job's framing /
-  layout (e.g. streamer on top, gameplay below) with the stream's own audio, and a short title on top (the AI's
-  headline for that scene, at most 5 words). No subtitles, follow line, logo, end card or voice-over. The cut is
-  sync-safe: it decodes from a little
-  before the clip and trims on the exact frame, so picture and sound both start at 0 and the voice stays on the
+- **The reel look (live clips, and videos with Clip style "Clean").** Each clip keeps the job's framing / layout
+  (e.g. streamer on top, gameplay below) and the original sound. On top of that:
+  - **A funny header:** the streamer's name and what they're doing, ending with one emoji, for example
+    "SPEED THINKS ANIMALS ARE HUMAN 😭". It's at most 7 words, written by the AI (`pick.reel_note`), and the
+    streamer's name comes from the channel.
+  - **Layout:** the header sits at the top.
+  - **Subtitles:** the streamer's words, at the bottom. The word being said turns yellow and bounces.
+  - **What's left out:** the follow line, logo, end card and voice-over.
+  - **Emoji:** they render in black and white, because the subtitle renderer has no colour emoji.
+- **Upload only the best, for any video.** "Upload only the best N shorts / M long" applies to:
+  - normal videos: once all their clips are made;
+  - live streams and long videos: per piece.
+  The rest wait in Clips.
+- **Long clips show what you can do in the game.** For game videos, a long clip can be a full showcase of one
+  activity or feature, shown start to finish and titled that way: "You Can Take Dates In GTA 6".
+- **Clip a whole channel** (Create page). Paste a channel link and say how many videos. It ranks the channel's
+  recent uploads and past streams by views and by how recently they went up, and takes the best overall (lowest
+  rank by views + rank by date). It does them one at a time, with the settings of the form above.
+
+  Videos longer than your limit are clipped, and their titles stay on that video's topic. Shorter ones are posted
+  whole as one clip in the same format (header, subtitles), under the video's own title; the AI writes the header
+  and hashtags. Videos already done are skipped, so run it again later for the new ones (`channels.py`).
+  **Upload one clip every N minutes, starting at a time you pick:** the clips that are uploaded go into a queue
+  instead of all at once. The best go first, and they show as ⏰ scheduled in Clips (`worker.post_or_queue`; the
+  minute timer posts them, autopilot on or off).
+- **Clips page: infinite scroll and "▶ Watch from here".** The Clips page shows 24 clips at a time, and more load
+  as you scroll down. Each clip has a "▶ Watch from here" button that opens the full-screen reels at that clip. In
+  the reels, a clip's poster loads only when it's near the screen.
+- **Colour grade.** Every clip gets more saturation, a little more contrast and slightly deeper midtones
+  (`render.GRADE`), since stream footage comes out flat. Campaign clips don't: they keep the official picture.
+- **Upload quality.** NVENC p7 (the slowest, best preset) at constant quality 16, with spatial and temporal adaptive
+  quantization (more bits on faces, text and edges), lookahead and B-frames. Peaks are capped at 24 Mbps for
+  Instagram, and the 1440p YouTube copy at 40.
+- **Sync-safe cuts.** Live clips (and clean ones) decode from a little
+  before the clip and trim on the exact frame, so picture and sound both start at 0 and the voice stays on the
   lips, even after Instagram or TikTok re-process the upload (`render.cut(..., exact=True)`).
 - **Recording keeps voice and picture together.** YouTube sends a live stream's picture and sound as two streams
   that join the live edge seconds apart. The recorder keeps YouTube's own timestamps (`-copyts`, one clock for
@@ -404,6 +434,12 @@ record piece 1 ──▶ record piece 2 ──▶ record piece 3 ──▶ ...  
   becomes a second or two of silence instead of the voice landing seconds before the lips.
   Live is recorded as sharp as the stream comes, up to 1440p (4K with the 4K box), since the facecam and gameplay
   panels are crops blown up to full width.
+- **Sharper clips.** The facecam panel (a small box blown up about 3x) gets a light denoise before upscaling, so the
+  stream's compression blocks aren't enlarged. After the lanczos upscale, it gets contrast-adaptive sharpening
+  (`CAM_SHARPEN`), and the gameplay and other framings a lighter one (`SHARPEN`, in `render.py`).
+  **YouTube gets a 1440p copy** (1440x2560 / 2560x1440, ~28 Mbps), made just before the upload and deleted after.
+  YouTube gives 1440p uploads its better VP9/AV1 encode, which looks clearly sharper to viewers even at 1080p.
+  Instagram and TikTok get the 1080p clip, since they scale to 1080 anyway.
 - **Upload the best of each piece.** On the form (and on the job card while it records): *Upload per piece: best
   [N] shorts [M] long*. Right after each piece is clipped, its N highest-scored shorts and M highest-scored longs
   are uploaded (best first) while the next piece records; the rest are only clipped and wait in **Clips**, where

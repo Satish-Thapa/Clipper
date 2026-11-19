@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import autopilot, campaign, db, download, insights, news, pick, render, reset, social, stats, topics, upload, worker
+from . import autopilot, campaign, channels, db, download, insights, news, pick, render, reset, social, stats, topics, upload, worker
 from .config import CROP_ASPECT, DATA, IG_MAX_SECONDS, LIVE_CHUNK_SECONDS, SHORT_HARD_MAX, YT_COOKIES
 
 app = FastAPI(title="Clipper")
@@ -49,10 +49,11 @@ class NewJob(BaseModel):
     follow: bool = True  # the follow message at the top (with or without a headline)
     notes: str = Field("", max_length=1000)  # your own instructions for the AI (go into its prompts)
     voiceover: bool = False
+    style: Literal["clean", "full"] = "full"  # clean = like live clips: original sound + a short title on top, nothing else
     chunk_minutes: int | None = Field(None, ge=1, le=120)  # live streams: length of each recorded piece
     max_chunks: int = Field(0, ge=0, le=500)  # live streams: pieces to record and clip; 0 = until the stream ends
-    upload_best: int | None = Field(None, ge=0, le=100)  # live: after each piece, upload only its best N shorts (None = all)
-    upload_best_long: int | None = Field(None, ge=0, le=100)  # ... and its best N longs (None = all). Both None = upload every clip
+    upload_best: int | None = Field(None, ge=0, le=100)  # upload only the best N shorts (per piece for live / long videos; None = all)
+    upload_best_long: int | None = Field(None, ge=0, le=100)  # ... and the best N longs (None = all). Both None = upload every clip
 
 
 class LiveControls(BaseModel):
@@ -150,10 +151,44 @@ def create_job(j: NewJob):
     if j.shorts + j.longs == 0:
         raise HTTPException(400, "ask for at least one clip")
     jid = db.insert("jobs", url=j.url, shorts=j.shorts, longs=j.longs, auto_upload=int(bool(j.platforms)),
-                    platforms=json.dumps(j.platforms), aspect=j.aspect, hq=int(j.hq), mode=j.mode, subtitles=int(j.subtitles), follow=int(j.follow), notes=j.notes.strip(), voiceover=int(j.voiceover),
+                    platforms=json.dumps(j.platforms), aspect=j.aspect, hq=int(j.hq), mode=j.mode, subtitles=int(j.subtitles), follow=int(j.follow), notes=j.notes.strip(), voiceover=int(j.voiceover), style=j.style,
                     chunk_minutes=j.chunk_minutes, max_chunks=j.max_chunks, upload_best=j.upload_best, upload_best_long=j.upload_best_long, layout=j.layout, created=time.time())
     worker.start(jid)
     return {"id": jid}
+
+
+class ChannelRun(NewJob):
+    """Clip a channel: its best `count` videos by views and upload date. Longer than min_minutes = clipped,
+    shorter = posted whole in the clip format. The rest = the same settings as a single video."""
+    url: str = ""
+    channel: str = Field(min_length=2, max_length=300)
+    count: int = Field(5, ge=1, le=30)
+    min_minutes: float = Field(10, ge=0, le=600)
+    every_min: float = Field(0, ge=0, le=1440)  # upload one clip every N minutes (a queue); 0 = as soon as it's made
+    start_at: float | None = None  # epoch seconds: no clip is posted before this (None = right away)
+
+
+@app.post("/api/channel")
+def channel_run(r: ChannelRun):
+    job = dict(shorts=r.shorts, longs=r.longs, auto_upload=int(bool(r.platforms)), platforms=json.dumps(r.platforms),
+               aspect=r.aspect, hq=int(r.hq), mode=r.mode, subtitles=int(r.subtitles), follow=int(r.follow),
+               notes=r.notes.strip(), voiceover=int(r.voiceover), style=r.style, upload_best=r.upload_best,
+               upload_best_long=r.upload_best_long, layout=r.layout, chunk_minutes=r.chunk_minutes, max_chunks=r.max_chunks,
+               post_every=r.every_min or None, post_from=r.start_at)
+    try:
+        return {"videos": channels.start(r.channel, r.count, r.min_minutes, job)}
+    except Exception as e:
+        raise HTTPException(409 if "already" in str(e) else 502, str(e)[:300])
+
+
+@app.get("/api/channel")
+def channel_state():
+    return channels.STATE
+
+
+@app.delete("/api/channel")
+def channel_stop():
+    return {"was_running": channels.stop()}
 
 
 def _best_text(s, lo):
@@ -180,14 +215,16 @@ def live_controls(jid: int, c: LiveControls):
 async def create_file_job(request: Request, filename: str, shorts: int = 3, longs: int = 1,
                           platforms: str = "youtube", mode: Mode = "hype", aspect: float = CROP_ASPECT,
                           subtitles: bool = True, voiceover: bool = False, layout: str = "", follow: bool = True,
-                          notes: str = ""):
+                          notes: str = "", style: Literal["clean", "full"] = "full",
+                          upload_best: int | None = Query(None, ge=0, le=100), upload_best_long: int | None = Query(None, ge=0, le=100)):
     """Raw file bytes in the body (no multipart, so no python-multipart dependency)."""
     plats = [p for p in platforms.split(",") if p in social.PLATFORMS]  # comma-separated in the query string
     ext = Path(filename).suffix.lower()
     if ext not in (".mp4", ".mkv", ".mov", ".webm", ".ts", ".avi"):
         raise HTTPException(400, f"unsupported file type {ext or '(none)'}")
     jid = db.insert("jobs", url=f"file:{Path(filename).name}", title=Path(filename).stem, shorts=shorts,
-                    longs=longs, auto_upload=int(bool(plats)), platforms=json.dumps(plats), aspect=min(max(aspect, 0.5625), 16 / 9), layout=layout if layout.startswith("split:") or render.cam_layout(layout) else "", mode=mode, subtitles=int(subtitles), follow=int(follow), notes=notes.strip()[:1000], voiceover=int(voiceover), status="uploading", created=time.time())
+                    longs=longs, auto_upload=int(bool(plats)), platforms=json.dumps(plats), aspect=min(max(aspect, 0.5625), 16 / 9), layout=layout if layout.startswith("split:") or render.cam_layout(layout) else "", mode=mode, subtitles=int(subtitles), follow=int(follow), notes=notes.strip()[:1000], voiceover=int(voiceover), style=style, upload_best=upload_best, upload_best_long=upload_best_long,
+                    status="uploading", created=time.time())
     d = DATA / "jobs" / str(jid)
     d.mkdir(parents=True, exist_ok=True)
     with open(d / f"source{ext}", "wb") as f:

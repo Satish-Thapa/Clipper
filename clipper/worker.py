@@ -92,7 +92,11 @@ def _run(job_id):
     t0 = time.time()
     db.log(job_id, f"job started: {job['url']} | {job['shorts']} shorts, {job['longs']} long, mode {job.get('mode')}, "
                    f"framing {job.get('aspect') or 'default'}, {'4K' if job.get('hq') else 'up to 1440p'}, "
-                   f"subtitles {'on' if job.get('subtitles') else 'off'}, follow message {'on' if job.get('follow', 1) else 'off'}, voice-over {'on' if job.get('voiceover') else 'off'}, "
+                   + ("clean style (original sound, short title on top, like live clips), " if job.get("style") == "clean" else
+                      f"subtitles {'on' if job.get('subtitles') else 'off'}, follow message {'on' if job.get('follow', 1) else 'off'}, voice-over {'on' if job.get('voiceover') else 'off'}, ")
+                   + (f"upload only the best {'all' if job.get('upload_best') is None else job['upload_best']} short(s) + "
+                      f"{'all' if job.get('upload_best_long') is None else job['upload_best_long']} long(s), "
+                      if job.get("upload_best") is not None or job.get("upload_best_long") is not None else "") +
                    f"upload to {job.get('platforms') if job.get('auto_upload') else 'nowhere'}"
                    + (f", topic T{job['topic_id']}" if job.get("topic_id") else ""))
     if (job.get("notes") or "").strip():
@@ -108,7 +112,8 @@ def _run(job_id):
         db.update("jobs", job_id, status="fetching info")
         with db.step(job_id, "fetching video info"):
             i = download.info(job["url"])
-        db.update("jobs", job_id, title=i.get("title"), is_live=int(bool(i.get("is_live"))))
+        db.update("jobs", job_id, title=i.get("title"), is_live=int(bool(i.get("is_live"))), channel=i.get("channel") or "")
+        job.update(is_live=int(bool(i.get("is_live"))), channel=i.get("channel") or "")
         db.log(job_id, f"{'LIVE' if i.get('is_live') else 'video'}: {i.get('title')} | channel {i.get('channel')}, "
                        f"{(i.get('duration') or 0) / 60:.1f} min, {i.get('view_count') or 0:,} views")
         if i.get("is_live"):
@@ -178,7 +183,8 @@ def _vod(job, i, d):
     src = next(d.glob("source.*"))
     db.log(jid, f"source file: {src.name}, {src.stat().st_size / 1e6:.0f} MB, {_describe(src)}")
     total = i.get("duration") or _dur(src)
-    if LONG_VIDEO_MINUTES and total >= LONG_VIDEO_MINUTES * 60 and (job.get("mode") or "hype") != "manual":
+    if (LONG_VIDEO_MINUTES and total >= LONG_VIDEO_MINUTES * 60 and (job.get("mode") or "hype") != "manual"
+            and not job.get("whole")):
         _pieces(job, src, total, d, i.get("title", ""), i.get("heatmap"), chat, comments)
     else:
         _process(job, src, i.get("title", ""), d, heatmap=i.get("heatmap"), chat=chat, comments=comments)
@@ -342,7 +348,7 @@ def _live(job, i, d):
 
 
 JOIN_SECONDS = 60  # live: how much of the previous piece's end is put in front of the next piece
-LIVE_HEAD_WORDS = 5  # live: the title on top is kept short (the AI's headline, at most this many words)
+LIVE_HEAD_WORDS = 7  # reel header (live / clean style): the AI's headline, at most this many words incl. its emoji
 
 
 def _join_tail(prev, cur, out):
@@ -424,6 +430,8 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None, live=No
         if mode == "manual":
             say("manual mode: add your cuts in the UI")
             return
+        if job.get("whole") and not live:
+            return _whole(job, src, title, d, parts, n, say)
 
         # STEP 3: Candidate windows. Slide a fixed-length window (60s shorts, 120s longs) over
         # the curve and greedily take the highest-scoring non-overlapping ones, 3x as many as requested
@@ -486,7 +494,9 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None, live=No
         pick.LAST.model, pick.LAST.link = "", ""
         try:
             with db.step(jid, tag + f"STEP 5 asking {pick.ai_name()} to pick {counts['short']} short / {counts['long']} long"):
-                note, verdict = (pick.live_note(B, title, live["piece"]) if live else "") + pick.user_note(job.get("notes")), {}
+                note, verdict = ((pick.live_note(B, title, live["piece"]) if live else "")
+                                 + (pick.reel_note(job.get("channel") or "") if clean_style(job) else "")
+                                 + pick.user_note(job.get("notes"))), {}
                 if mode == "hype":
                     chosen = pick.choose(title, cands, counts, note, verdict)
                 else:
@@ -551,6 +561,13 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None, live=No
                 say(f"snapped to sentences: {_mmss(c['start'])}-{_mmss(c['end'])} -> {_mmss(s)}-{_mmss(e)} "
                             f"({e - s:.0f}s) \"{c['title']}\"")
             c["start"], c["end"] = s, e
+        lim = _best_limits(job)
+        if not live and job.get("auto_upload") and lim:  # a video: only its best N shorts / M longs go up, once all are made
+            for c in chosen:
+                c["upload"] = False
+            say("DECISION: when all clips are made, upload the best "
+                + " + ".join(f"{'all' if lim.get(k) is None else lim[k]} {k}(s)" for k in ("short", "long"))
+                + "; the rest stay in Clips")
         _save_curves(d, src, curve, parts, chosen)  # now with the picked clips marked on the graph
         by = pick.LAST.model or "", pick.LAST.link or ""
         for c in chosen:
@@ -562,10 +579,58 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None, live=No
         if live:
             _upload_best(jid, live["piece"], say)
             _piece_done(jid, live["piece"], say)
+        elif lim:
+            _upload_best(jid, None, say)
     except Stopped:
         say("stopped by you: no more clips from this part")
     except Exception as e:
         say(f"ERROR processing {src.name}: {e!r}", exc=True)
+
+
+def _whole(job, src, title, d, parts, n, say):
+    """A short video from a channel (shorter than its "clip videos longer than" limit): posted WHOLE as one clip,
+    formatted like the others (framing / layout, header, subtitles). The AI only writes its title, header,
+    description and hashtags."""
+    kind = "short" if n <= pick.HARD_MAX["short"] else "long"
+    with db.step(job["id"], f"STEP 4 transcribing the whole video ({n}s, {transcribe.device()})"):
+        words = transcribe.words(src, 0, n)
+    c = {"kind": kind, "start": 0.0, "end": float(n), "score": 0, "title": title[:100], "headline": "",
+         "description": title, "tags": [], "reason": "the whole video: shorter than the channel's clip limit, posted in full"}
+    pick.LAST.model, pick.LAST.link = "", ""
+    try:
+        with db.step(job["id"], f"STEP 5 asking {pick.ai_name()} for the title, header and hashtags of the whole video"):
+            note = ((pick.reel_note(job.get("channel") or "") if clean_style(job) else "") + pick.user_note(job.get("notes"))
+                    + f"\n\nTHIS WHOLE VIDEO IS POSTED AS ONE CLIP under its own title (\"{title}\"): return exactly one "
+                      f"{kind} with start 0 and end {min(n, pick.HARD_MAX[kind])}; your job is its headline, description "
+                      f"and hashtags, all about the same topic as that title.\n")
+            got = pick.choose_full(title, n, transcribe.text_with_times(words, 0, n), None,
+                                   {"short": int(kind == "short"), "long": int(kind == "long")}, note, {})
+        if got:
+            c.update({k: got[0][k] for k in ("headline", "description", "tags", "score") if got[0].get(k)})
+    except Exception as e:
+        say(f"AI failed ({e!r}): posting it with the video's own title")
+    c["start"], c["end"], c["title"] = 0.0, float(n), title[:100]  # the whole video keeps its own title
+    c["why"] = {**_why(c, parts, words, "ai", (pick.LAST.model or "", pick.LAST.link or ""), None, 0, title), "whole": True}
+    say(f"WHOLE VIDEO as one {kind} ({n}s): \"{c['title']}\" [{c.get('headline', '')}]")
+    _render_clips(job, src, d, [c], words, job.get("subtitles", 1))
+
+
+_SLOT = threading.Lock()
+
+
+def post_or_queue(job, cid):
+    """Auto-upload a finished clip: now, or, when the job has post_every (minutes; channel runs), on the next free
+    slot of that queue: one clip every post_every minutes, in the order they're handed over (best first), and never
+    before post_from (the job's "start posting at")."""
+    every, start = float(job.get("post_every") or 0), float(job.get("post_from") or 0)
+    if not every and start <= time.time():
+        return upload_clip(cid)
+    with _SLOT:  # two renders can finish at once: each gets its own slot
+        at = max(time.time() + 30, float(db.get_setting("post_queue_next") or 0), start)
+        db.set_setting("post_queue_next", str(at + every * 60))
+    db.update("clips", cid, status="timed", post_at=at, post_to=job.get("platforms") or "[]")
+    db.log(job["id"], f"clip #{cid} queued: posts {time.strftime('%d %b %H:%M', time.localtime(at))}"
+                      + (f" (one clip every {every:g} min)" if every else ""))
 
 
 def _best_limits(job):
@@ -589,12 +654,12 @@ def _upload_best(jid, piece, say):
         if not ready:
             continue
         best = ready if lim.get(kind) is None else ready[:lim[kind]]
-        say(f"UPLOADING THE BEST {len(best)} of this piece's {len(ready)} {kind}(s): "
+        say(f"UPLOADING THE BEST {len(best)} of {'the video' if piece is None else 'this piece'}'s {len(ready)} {kind}(s): "
             + (", ".join(f"#{c['id']} \"{c['title']}\" (score {c['score']:.0f})" for c in best) or "none")
             + (f"; the other {len(ready) - len(best)} stay in Clips" if len(ready) > len(best) else ""))
         for c in best:
             try:
-                upload_clip(c["id"])
+                post_or_queue(job, c["id"])
             except Exception as e:
                 say(f"clip #{c['id']} upload failed: {e!r}", exc=True)
 
@@ -652,32 +717,44 @@ def _why(c, parts, words, mode, by, live, boundary, title):
             "piece": live["piece"] if live else None, "joined": bool(live and c["start"] < boundary), "source": title}
 
 
+def clean_style(job):
+    """Live streams always, videos when the job's style is "clean": original sound, short title on top, nothing else.
+    Campaign jobs have their own flow."""
+    return bool(job.get("is_live")) or job.get("style") == "clean"
+
+
 def _render_one(job, src, d, c, words, subtitles):
     jid = job["id"]
     _check(jid)  # Stop pressed: don't start the next render
+    clean = clean_style(job)
+    # Clean style: a short title at the top matching the scene (the AI's headline); saved as the clip's headline too,
+    # so the Clips page shows (and edits) what's on the video.
+    head = pick.reel_headline(c.get("headline"), c.get("title"), LIVE_HEAD_WORDS) if clean else c.get("headline", "")
     cid = db.insert("clips", job_id=jid, kind=c["kind"], start=c["start"], end=c["end"], score=c["score"],
                     title=c["title"], description=c["description"], tags=json.dumps(c["tags"]),
-                    reason=c["reason"], headline=c.get("headline", ""), why=json.dumps(c.get("why") or {}), status="rendering")
+                    reason=c["reason"], headline=head, why=json.dumps(c.get("why") or {}), status="rendering")
     out = d / "clips" / f"{cid}.mp4"
-    if job.get("is_live"):
-        # Live streams: the job's framing / layout (e.g. streamer on top, gameplay below) with the ORIGINAL sound in
-        # sync, cut sync-safe (exact), and a short title at the top matching the scene (the AI's headline). No
-        # subtitles, follow line, logo, end card or voice-over.
-        head = " ".join(pick.headline_for(c.get("headline"), c.get("title")).split()[:LIVE_HEAD_WORDS])
+    if clean:
+        # Live streams, and videos in the clean style (the reel look): the job's framing / layout (e.g. streamer on
+        # top, gameplay below) with the ORIGINAL sound in sync, cut sync-safe (exact); the funny header (streamer +
+        # what they're doing) at the top, the streamer's words at the bottom with the word being said in yellow.
+        # No follow line, logo, end card or voice-over.
         with db.step(jid, f"STEP 6 cutting {c['kind']} #{cid} ({c['end'] - c['start']:.0f}s, original audio, "
-                          f"title on top \"{head.upper()}\"): {c['title']}"):
+                          f"header \"{head.upper()}\", subtitles): {c['title']}"):
             try:
-                render.cut(src, out, c["start"], c["end"], True, (), head, (), job.get("aspect"), job.get("layout") or "",
-                           follow=False, hook_text="", clean=True, exact=True)
+                render.cut(src, out, c["start"], c["end"], True, words, head, (), job.get("aspect"), job.get("layout") or "",
+                           follow=False, hook_text="", clean=True, exact=True, reel=True)
             except Exception:
                 db.update("clips", cid, status="render failed")
                 raise
         db.log(jid, f"clip #{cid} ready: {out.name}, {out.stat().st_size / 1e6:.1f} MB")
+        if not job.get("is_live"):
+            keep_master(jid, src, out, c["start"], c["end"], words)  # so its header can be changed later
         db.update("clips", cid, path=str(out.relative_to(DATA)), status="rendered")
         if job["auto_upload"] and c.get("upload", True):
-            upload_clip(cid)
+            post_or_queue(job, cid)
         elif job["auto_upload"]:
-            db.log(jid, f"clip #{cid} ready, waiting for the rest of this piece: only its best ones go up")
+            db.log(jid, f"clip #{cid} ready, waiting for the rest: only the best ones go up")
         return
     voice = _voiceover(job, c, words, out) if job.get("voiceover") else []
     try:
@@ -703,7 +780,7 @@ def _render_one(job, src, d, c, words, subtitles):
             db.update("clips", cid, status="scheduled")
             db.log(jid, f"clip #{cid} scheduled: the autopilot posts it on the next free slot")
         else:
-            upload_clip(cid)
+            post_or_queue(job, cid)
 
 
 def keep_master(jid, src, out, start, end, words):
@@ -780,7 +857,7 @@ def _rerender(cid, before):
     try:
         with db.step(jid, f"re-rendering #{cid} with the new headline \"{c['headline']}\""):
             if words is None:
-                words = transcribe.words(src, s, e) if job.get("subtitles", 1) else []
+                words = transcribe.words(src, s, e) if job.get("subtitles", 1) or clean_style(job) else []
                 keep_master(jid, src, out, s, e, words)  # next time it renders from the master
                 words = [w for w in words if s <= w["s"] < e]
             subs = words if job.get("subtitles", 1) else ()
@@ -788,6 +865,9 @@ def _rerender(cid, before):
             if job.get("campaign_id"):
                 render.cut(src, tmp, s, e, True, subs, c["headline"], (), job.get("aspect"), job.get("layout") or "",
                            follow=False, hook_text=(why.get("campaign") or {}).get("onscreen_line") or "", clean=True)
+            elif clean_style(job):  # same reel look as when it was made (header, yellow-word subtitles)
+                render.cut(src, tmp, s, e, True, words, c["headline"], (), job.get("aspect"), job.get("layout") or "",
+                           follow=False, hook_text="", clean=True, exact=True, reel=True)
             else:
                 render.cut(src, tmp, s, e, True, subs, c["headline"], (), job.get("aspect"), job.get("layout") or "",
                            follow=bool(job.get("follow", 1)))

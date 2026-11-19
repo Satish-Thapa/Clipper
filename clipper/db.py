@@ -90,7 +90,7 @@ def init():
                            ("clips", "post_to TEXT"),
                            ("jobs", "notes TEXT DEFAULT ''"), ("topics", "notes TEXT DEFAULT ''"),
                            ("clips", "why TEXT DEFAULT '{}'"),
-                           ("jobs", "campaign_id INTEGER"), ("clips", "caption TEXT DEFAULT ''")):  # campaign.py  # why: the Clips page "Why this clip?"  # post_to: platforms for a clip scheduled by hand  # columns added after v0.1
+                           ("jobs", "campaign_id INTEGER"), ("jobs", "style TEXT DEFAULT 'full'"), ("jobs", "channel TEXT DEFAULT ''"), ("jobs", "whole INTEGER DEFAULT 0"), ("jobs", "post_every REAL"), ("jobs", "post_from REAL"), ("clips", "caption TEXT DEFAULT ''")):  # campaign.py  # why: the Clips page "Why this clip?"  # post_to: platforms for a clip scheduled by hand  # columns added after v0.1
             try:
                 c.execute(f"ALTER TABLE {table} ADD COLUMN {col}")
             except sqlite3.OperationalError:
