@@ -92,7 +92,7 @@ def refresh():
     errors, tasks, yt = {}, [], {}  # yt: account id -> {video id: clip id}
     for c in clips:
         for p, u in social.entries(json.loads(c["uploads"])):
-            if not u.get("id"):
+            if not u.get("id") or u.get("manual"):  # posted by hand: no API id to read views with
                 continue
             aid = u.get("account") or (accounts.default_for(p) or {}).get("id")
             if p == "youtube" and aid:

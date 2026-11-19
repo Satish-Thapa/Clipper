@@ -20,6 +20,7 @@ dependencies = [
   "cryptography",  # encrypts tokens and API keys in the database (crypto.py)
   "mlx-whisper; sys_platform == 'darwin' and platform_machine == 'arm64'",  # transcription on the Apple Silicon GPU
   "opencv-python-headless",  # face detector (YuNet) for the topic "mostly gameplay, not a person" check
+  "pillow",  # captions with colour emoji (nostalgia clips, meme bubbles): libass can't draw colour emoji
 ]
 
 [project.optional-dependencies]

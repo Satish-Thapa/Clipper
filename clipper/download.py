@@ -12,14 +12,18 @@ from . import config
 from .config import YT_COOKIES
 
 
-BOT_CHECK = "Sign in to confirm"  # YouTube's anti-bot wall: needs cookies (see config.YT_COOKIES)
+BOT_CHECK = "Sign in to confirm you"  # YouTube's anti-bot wall ("...you're not a bot"): needs cookies (config.YT_COOKIES)
+AGE_CHECK = "confirm your age"  # an age-restricted video: just skip it (only a signed-in, age-verified account gets it)
 
 
-def ydl(opts):
+def ydl(opts, cookies=True):
     """yt_dlp.YoutubeDL with the YouTube cookies added, when there are any (every YouTube call goes through this).
-    IPv4 only by default (config.YT_FORCE_IPV4): yt-dlp's --force-ipv4."""
+    IPv4 only by default (config.YT_FORCE_IPV4): yt-dlp's --force-ipv4. cookies=False: without them (picture
+    searches don't need your login, and reading a browser's cookies can wait on the macOS keychain prompt)."""
     if config.YT_FORCE_IPV4:
         opts = {**opts, "source_address": "0.0.0.0"}
+    if not cookies:
+        return yt_dlp.YoutubeDL(opts)
     if config.YT_COOKIES_FROM_BROWSER:
         opts = {**opts, "cookiesfrombrowser": (config.YT_COOKIES_FROM_BROWSER,)}
     elif YT_COOKIES.exists():
@@ -27,9 +31,15 @@ def ydl(opts):
     return yt_dlp.YoutubeDL(opts)
 
 
+def age_restricted(e):
+    return AGE_CHECK in str(e)
+
+
 def bot_checked(e):
-    """True when an error is YouTube's 'Sign in to confirm you're not a bot'; remembers when, for the UI banner."""
-    if BOT_CHECK not in str(e):
+    """True when an error is YouTube's 'Sign in to confirm you're not a bot'; remembers when, for the UI banner.
+    'Sign in to confirm your age' (an age-restricted video) is NOT a bot check: that video is skipped, nothing pauses."""
+    s = str(e)
+    if BOT_CHECK not in s or AGE_CHECK in s:
         return False
     from . import db
     db.set_setting("yt_bot_check", str(time.time()))
@@ -71,12 +81,12 @@ def info(url, comments=False):
 RECENT = ("EgIIAw%3D%3D", "EgIIBA%3D%3D", "")
 
 
-def search(query, n=20, recent=RECENT[0]):
+def search(query, n=20, recent=RECENT[0], cookies=True):
     """YouTube search results (flat: id, title, duration, view_count, live_status...), no download."""
     # gl/hl = the country and language YouTube ranks results for (US English by default: US-trending videos).
     url = (f"https://www.youtube.com/results?search_query={urllib.parse.quote(query)}&gl={config.SEARCH_REGION}&hl=en"
            + (f"&sp={recent}" if recent else ""))
-    with ydl({"quiet": True, "extract_flat": True, "playlistend": n, "skip_download": True}) as y:
+    with ydl({"quiet": True, "extract_flat": True, "playlistend": n, "skip_download": True}, cookies) as y:
         es = y.extract_info(url, download=False).get("entries") or []
     return [e for e in es if e and e.get("id") and e.get("ie_key") == "Youtube"]  # videos only, no channels/playlists
 
@@ -97,10 +107,24 @@ def search_many(queries, n=20, recent=RECENT[0]):
         return list(ex.map(one, queries))
 
 
+MIN_FREE_GB = 5  # a download doesn't start with less free space than this (a 4K source can be 2 GB+)
+
+
+def disk_ok(path):
+    """Raise a clear error when the disk is nearly full, instead of filling it up mid-download."""
+    import shutil
+    from pathlib import Path
+    free = shutil.disk_usage(Path(path).parent if not Path(path).is_dir() else path).free / 1e9
+    if free < MIN_FREE_GB:
+        raise RuntimeError(f"only {free:.1f} GB free on the disk: free some space (Clipper needs {MIN_FREE_GB} GB to "
+                           "download a video safely)")
+
+
 def download_vod(url, out_path, height=1080, stop=None, progress=None):
     """stop: a threading.Event; when it's set, the download is cancelled at the next progress update (~every chunk).
     progress: called with 0..1 as it downloads (video and audio are fetched one after the other: each 0..1)."""
     import threading
+    disk_ok(out_path)
     form, sort = fmt(height)
     last, lock = [0.0], threading.Lock()
 
@@ -137,25 +161,27 @@ def download_vod(url, out_path, height=1080, stop=None, progress=None):
                 f.unlink(missing_ok=True)
 
 
-def download_section(url, out_path, start, end, height=1080, tries=2):
+def download_section(url, out_path, start, end, height=1080, tries=2, cookies=True):
     """Only [start, end) seconds of a video (cut exactly: keyframes are forced at the edges), e.g. to re-render a clip
     whose source was deleted."""
     form, sort = fmt(height)
     opts = {"quiet": True, "noprogress": True, "outtmpl": str(out_path), "merge_output_format": "mp4", "format": form,
             "format_sort": sort, "ffmpeg_location": config.FFMPEG, "retries": 10, "fragment_retries": 10,
             "download_ranges": yt_dlp.utils.download_range_func(None, [(max(start, 0), end)]),
-            "force_keyframes_at_cuts": True}
+            "force_keyframes_at_cuts": True, "socket_timeout": 20}  # a stalled connection fails instead of hanging
     from pathlib import Path
     for attempt in range(1, tries + 1):  # a stream that drops mid-cut ("ffmpeg exited with code 8") usually works the second time
         try:
-            with ydl(opts) as y:
+            with ydl(opts, cookies) as y:
                 y.download([url])
             return
         except yt_dlp.utils.DownloadError:
             if attempt == tries:
                 raise
-            for f in Path(out_path).parent.glob("*"):
-                f.unlink(missing_ok=True)
+            stem = Path(out_path).name.split("%")[0]  # only this download's own partial files, nothing else there
+            for f in Path(out_path).parent.glob(stem + "*"):
+                if f.is_file():
+                    f.unlink(missing_ok=True)
             time.sleep(3)
 
 

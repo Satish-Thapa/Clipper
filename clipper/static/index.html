@@ -532,7 +532,7 @@ function paintChrome() {
   $("#n-scheduled").textContent = S.clips.filter(c => c.status === "scheduled").length || "";
   $("#n-accounts").textContent = S.accounts.filter(a => a.status === "expired").length ? "!" : "";
   const lim = S.limit_timers || {}, msgs = [];
-  for (const [p, l] of Object.entries(lim)) msgs.push(`${PLATFORMS[p] || p} upload limit reached at ${clock(l.hit_at)}; the autopilot skips it until ${when(l.until)}.`);
+  for (const [p, l] of Object.entries(lim)) msgs.push(`${PLATFORMS[p] || p} upload limit reached at ${clock(l.hit_at)}; the autopilot skips it until ${when(l.until)}. <a href="#" onclick="if(confirm('Try ${PLATFORMS[p] || p} again now? If it still refuses, it pauses for another 24 h.'))act(null, () => DEL('/api/limits/${p}'), 'Pause lifted: the next upload tries ${PLATFORMS[p] || p} again');return false">Try again now</a>`);
   if (S.youtube_cookies && S.youtube_cookies.bot_check_at) msgs.push(`YouTube asked to confirm you're not a bot. Add cookies in <a href="#settings/downloads">Settings → Downloads</a>.`);
   const expired = S.accounts.filter(a => a.status === "expired");
   if (expired.length) msgs.push(`${expired.map(a => esc(a.name)).join(", ")} ${expired.length > 1 ? "need" : "needs"} reconnecting: <a href="#accounts">Accounts</a>.`);
@@ -574,6 +574,15 @@ const fclip = () => S.clips.find(c => c.id === flow.clipId);
 const jobClips = () => S.clips.filter(c => c.job_id === flow.jobId);
 const ready = c => c && c.path && c.status !== "rendering";
 function goStep(n) { flow.step = n; saveFlow(); flowKey = ""; renderClipFlow(true); window.scrollTo({top: 0}); }
+async function restartJob(b, id) {  // Start over: same video, fresh picks; posted clips are kept
+  if (!confirm("Start over on this video? It stops, the clips from it that haven't been posted are deleted, and Clipper finds clips in it again from scratch.")) return false;
+  await act(b, () => POST(`/api/jobs/${id}/restart`), "Starting over…");
+  return true;
+}
+async function restartFlowJob(b) {
+  if (!await restartJob(b, flow.jobId)) return;
+  Object.assign(flow, {step: 0, clipId: null, dests: null, publishedAt: null}); saveFlow(); flowKey = ""; renderClipFlow(true);
+}
 function newFlow() { Object.assign(flow, {step: 0, jobId: null, clipId: null, dests: null, tab: "all", publishedAt: null}); saveFlow(); flowKey = ""; renderClipFlow(true); }
 function openClipInFlow(c, step = 2) {
   Object.assign(flow, {jobId: c.job_id, clipId: c.id, step, category: c.category_id, dests: null, publishedAt: null});
@@ -596,7 +605,10 @@ function renderClipFlow(entering) {
   if (entering || key !== flowKey) {
     flowKey = key;
     const body = [stepSource, stepClip, stepFormat, stepCaption, stepPublish][flow.step]();
-    $("#create-clip").innerHTML = `<div class="stack" style="gap:var(--s4)">${stepsBar()}${body}</div>`;
+    const over = flow.jobId ? `<div class="row" style="justify-content:flex-end;gap:8px">
+        ${btn("Start over", `title="Stop, delete the clips from this video that haven't been posted, and find clips in it again from scratch" onclick="restartFlowJob(this)"`, "ghost sm")}
+        ${btn("New video", `title="Leave this one and add another video" onclick="newFlow()"`, "text sm")}</div>` : "";
+    $("#create-clip").innerHTML = `<div class="stack" style="gap:var(--s4)">${stepsBar()}${over}${body}</div>`;
     afterStep();
   }
   tickClip();
@@ -618,7 +630,7 @@ function clipPanel() {
 function stepSource() {
   const j = fjob();
   if (j) return `<div class="card"><div class="head"><div><h2>${esc(j.title || j.url)}</h2><p class="muted sm" id="srcStatus"></p></div>
-      <div class="row">${btn("Stop", `id="srcStop" onclick="act(this, () => POST('/api/jobs/${j.id}/stop'))"`, "ghost sm")}${btn("Start over", 'onclick="newFlow()"', "text sm")}</div></div>
+      <div class="row">${btn("Stop", `id="srcStop" onclick="act(this, () => POST('/api/jobs/${j.id}/stop'))"`, "ghost sm")}</div></div>
       <div id="srcProg"></div><div class="stack" id="srcStages"></div></div>`;
   return `<form class="card" id="srcForm" onsubmit="return startJob(event)">
     <h2>Add a video</h2>
@@ -630,7 +642,7 @@ function stepSource() {
     <details class="more"><summary>More options</summary><div class="grid2">
       <label class="f">Who picks the moments<select name="mode"><option value="hype">AI, using audience signals (fast)</option>
         <option value="ai+hype">AI reads the whole video + signals</option><option value="ai">AI reads the whole video</option>
-        <option value="manual">I'll cut it myself</option></select></label>
+        <option value="nostalgia">Nostalgia: calm moments, caption on top, music</option><option value="manual">I'll cut it myself</option></select></label>
       <label class="f">Vertical framing<select name="aspect"><option value="">Default (Settings)</option><option value="0.5625">Fill the screen</option>
         <option value="0.8">Slightly wider</option><option value="1">Square, with bars</option><option value="1.7778">Whole frame, with bars</option></select></label>
       <label class="check"><input type="checkbox" name="subtitles" checked> Captions + headline</label>
@@ -914,7 +926,7 @@ function renderPostFlow(entering) {
         <div><h2 style="margin-bottom:8px">Post to</h2><div id="pdests"></div></div><div class="stack" id="pwarn"></div>
         <div class="row"><label class="check"><input type="checkbox" id="plater" onchange="$('#pat').hidden=!this.checked;$('#pgo').textContent=this.checked?'Schedule':'Post now'"> Schedule for later</label>
           <input type="datetime-local" id="pat" hidden style="max-width:240px" value="${localInput(Date.now() / 1000 + 3600)}"></div>
-        <div class="row">${btn("Post now", 'id="pgo" onclick="sendPost(this)"', "primary")}<span class="sm muted">Want the AI to write posts for you? Turn on <a href="#categories">auto posts</a> for a category.</span></div></div></div>`;
+        <div class="row">${btn("Post now", 'id="pgo" onclick="sendPost(this)"', "primary")}${btn("Start over", 'onclick="resetPostForm()"', "text sm")}<span class="sm muted">Want the AI to write posts for you? Turn on <a href="#categories">auto posts</a> for a category.</span></div></div></div>`;
     const drop = $("#pdrop"), inp = $("#pfile");
     inp.onchange = () => addPhotos([...inp.files]);
     drop.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); inp.click(); } };
@@ -933,7 +945,7 @@ async function aiPost(b) {
   if ($("#aiTpl").value) q.set("template", $("#aiTpl").value);
   if ($("#aiTopic").value.trim()) q.set("topic", $("#aiTopic").value.trim());
   b.innerHTML = "Writing…";
-  const p = await act(b, () => POST(`/api/categories/${cid}/make?${q}`), "Draft made");
+  const p = await act(b, () => POST(`/api/categories/${cid}/make?${q}`), "Started: watch it being made");
   showPost(p);
 }
 async function upPhoto(it) {
@@ -1048,6 +1060,9 @@ async function renderAutoPosts(force) {
         <label class="f">Extra keywords (optional)<input name="keywords" value="${esc(a.keywords || "")}" maxlength="300" placeholder="Added to the category's keywords"></label></div>
       <div><p class="sm muted" style="margin-bottom:6px">Templates it can use (the learning picks the one that does best) · <a href="#settings/templates">edit templates</a></p>
         <div class="row tplPick">${T.map(t => chip(esc(t.name), (a.templates || []).includes(t.id), `data-t="${t.id}" onclick="this.setAttribute('aria-pressed', this.getAttribute('aria-pressed')!=='true')"`)).join("")}</div></div>
+      <div><p class="sm muted" style="margin-bottom:6px">Post to</p><div class="row acctPick">${S.accounts.filter(x => x.platform === "facebook" || x.platform === "instagram").map(x => chip(`${ICON[x.platform]}${esc(x.name)}`,
+          (a.accounts && a.accounts.length ? a.accounts : ((cat(a.category_id) || {}).defaults || [])).includes(x.id), `data-a="${x.id}" onclick="this.setAttribute('aria-pressed', this.getAttribute('aria-pressed')!=='true')"`)).join("")
+          || `<span class="sm muted">No Facebook or Instagram accounts yet: <a href="#accounts">add one</a>.</span>`}</div></div>
       <div class="grid2"><label class="f">Posts a day<input type="number" name="posts_per_day" min="1" max="48" value="${a.posts_per_day || 4}"></label>
         <label class="f">From<select name="post_from">${opts(Array.from({length: 24}, (_, h) => [h, hh(h)]), a.post_from ?? 9)}</select></label>
         <label class="f">To<select name="post_to">${opts(Array.from({length: 24}, (_, h) => [h + 1, hh(h + 1)]), a.post_to ?? 21)}</select></label></div>
@@ -1068,12 +1083,15 @@ async function renderAutoPosts(force) {
       ${pill(p.status === "posted" ? "published" : p.status === "failed" ? "failed" : p.status === "draft" ? "draft" : "scheduled", {posted: "Posted", failed: "Failed", draft: "Draft", ready: "Queued", making: "Writing", posting: "Posting", skipped: "Skipped"}[p.status] || p.status)}</div>`).join("")}</div>`
     : `<p class="sm muted">No posts yet${a.enabled ? ": the first one is written on its next slot, or press Make one now." : "."}</p>`;
   const card = a => `<div class="card stack" style="gap:var(--s3)"><div class="head"><div><h2 class="row" style="gap:8px"><span aria-hidden="true" style="width:10px;height:10px;border-radius:50%;background:${esc(a.color)}"></span>${esc(title(a))}</h2>
-        <p class="sm muted">${esc(a.category)}${a.niche ? " · " + esc(a.niche) : ""} · ${a.posts_per_day} a day, ${hh(a.post_from)}–${hh(a.post_to)} · ${a.targets.map(t => esc(t.name)).join(", ") || "no accounts"}</p></div>
+        <p class="sm muted">${esc(a.category)}${a.niche ? " · " + esc(a.niche) : ""} · ${a.posts_per_day} a day, ${hh(a.post_from)}–${hh(a.post_to)} · posts to: ${a.targets.map(t => esc(t.name)).join(", ") || "no account"}</p></div>
         ${toggle("pa" + a.id, a.enabled, a.enabled ? "Running" : "Paused", `onchange="saveAutoPost(${a.id}, {enabled: this.checked}, this.checked ? 'Started' : 'Paused')"`)}</div>
       <div class="sm">${status(a)}</div>
+      ${(() => { const fit = apData.gap_min ? Math.floor((a.post_to - a.post_from) * 60 / apData.gap_min) : 0;
+        return fit && a.posts_per_day > fit ? `<p class="sm" style="color:var(--warn)">With ${apData.gap_min} minutes between posts on an account, only ${fit} fit ${hh(a.post_from)}–${hh(a.post_to)} (fewer when clip autopilots post to the same accounts): lower "Posts a day" or widen the hours.</p>` : ""; })()}
       ${a.error ? `<div class="alert">Last try failed: ${esc(a.error)}</div>` : ""}
       ${recent(a)}
-      <div class="row">${btn("Make one now", `onclick="act(this, () => POST('/api/posts/autos/${a.id}/make' + ($('#paMk${a.id}').value ? '?template=' + $('#paMk${a.id}').value : '')), 'Draft made').then(showPost)" ${a.templates.length ? "" : "disabled"}`, "ghost sm")}
+      ${(a.log || []).length ? `<details class="more" ${a.working ? "open" : ""}><summary>Activity</summary><pre class="log" style="max-height:200px;margin-top:6px">${esc(a.log.join("\n"))}</pre></details>` : ""}
+      <div class="row">${btn("Make one now", `onclick="act(this, () => POST('/api/posts/autos/${a.id}/make' + ($('#paMk${a.id}').value ? '?template=' + $('#paMk${a.id}').value : '')), 'Started: watch it being made').then(showPost)" ${a.templates.length ? "" : "disabled"}`, "ghost sm")}
         <select id="paMk${a.id}" style="max-width:190px" aria-label="Template"><option value="">Template: best so far</option>${a.templates.map(t => `<option value="${t}">${esc((T.find(x => x.id === t) || {}).name || "")}</option>`).join("")}</select>
         ${btn("Delete", `onclick="if(confirm('Delete this automation? Posts it made stay.'))act(this, () => DEL('/api/posts/autos/${a.id}'), 'Automation deleted').then(() => renderAutoPosts(true))"`, "text sm danger")}</div>
       <details class="more" data-id="${a.id}" ${open.has(String(a.id)) ? "open" : ""}><summary>Settings</summary>${form(a, false)}</details></div>`;
@@ -1098,6 +1116,40 @@ async function renderAutoPosts(force) {
   clearTimeout(renderAutoPosts.t);
   if (apData.autos.some(a => a.working)) renderAutoPosts.t = setTimeout(() => renderAutoPosts(), 3000);  // watch it work
 }
+async function showManual(kind, id) {
+  const box = $("#manualBox"); if (!box) return;
+  if (box.dataset.open === `${kind}${id}`) { box.innerHTML = ""; box.dataset.open = ""; return; }
+  let k; try { k = await api(`/api/manual/${kind}/${id}`); } catch (e) { toast(e.message, true); return; }
+  box.dataset.open = `${kind}${id}`;
+  const name = f => f.split("/").pop();
+  box.innerHTML = `<div class="card flat stack" style="gap:var(--s3)"><h3>Post manually</h3>
+      <p class="sm muted">1. Download the file · 2. Copy the caption · 3. Open the platform and post it · 4. Mark it as posted (paste the post's link if you like) so Clipper shows it as published and won't post it again.</p>
+      <div class="row">${k.files.length ? k.files.map(f => `<a class="btn ghost sm" href="/media/${esc(f)}" download="${esc(name(f))}">Download ${esc(/\.mp4$/.test(f) ? "video" : "image")}${k.files.length > 1 ? " · " + esc(name(f)) : ""}</a>`).join("") : `<span class="sm muted">The file was deleted after publishing.</span>`}</div>
+      ${Object.entries(k.platforms).map(([p, v]) => `<div class="stack" style="gap:6px;border-top:1px solid var(--line);padding-top:var(--s2)">
+        <div class="row" style="justify-content:space-between"><b class="row" style="gap:6px">${pbadge(p)} ${esc(PLATFORMS[p] || p)}</b>${v.posted ? pill("published", "Posted") : ""}</div>
+        ${v.title ? `<label class="f sm">Title<input readonly value="${esc(v.title)}" id="mt_${p}"></label><div>${btn("Copy title", `onclick="copyText($('#mt_${p}').value)"`, "text sm")}</div>` : ""}
+        <textarea readonly id="mc_${p}" style="min-height:90px">${esc(v.text)}</textarea>
+        <div class="row">${btn("Copy caption", `onclick="copyText($('#mc_${p}').value)"`, "ghost sm")}
+          <a class="btn ghost sm" href="${esc(v.link)}" target="_blank" rel="noopener">Open ${esc(PLATFORMS[p] || p)}</a></div>
+        ${v.posted ? "" : `<div class="row"><input id="mu_${p}" placeholder="Link to the post (optional)" style="max-width:320px">
+          ${btn("Mark as posted", `onclick="act(this, () => POST('/api/manual/${kind}/${id}', {platform: '${p}', url: $('#mu_${p}').value}), 'Marked as posted').then(() => { libItems = null; libKey = ''; renderLibrary(); })"`, "primary sm")}</div>`}
+      </div>`).join("")}</div>`;
+}
+async function copyText(t) {
+  try { await navigator.clipboard.writeText(t); toast("Copied"); }
+  catch (e) { const a = document.createElement("textarea"); a.value = t; document.body.appendChild(a); a.select(); document.execCommand("copy"); a.remove(); toast("Copied"); }
+}
+async function restartPost(b, id) {
+  if (!confirm("Start over? This post is thrown away and the AI writes a new one.")) return;
+  b.innerHTML = "Starting over…";
+  const p = await act(b, () => POST(`/api/posts/${id}/restart`), "Writing a new one: watch it being made");
+  showPost(p);
+}
+function resetPostForm() {  // your own photos: clear the photos, caption and hashtags
+  if ((pc.items.length || pc.caption || pc.tags) && !confirm("Start over? Your photos, caption and hashtags are cleared.")) return;
+  Object.assign(pc, {items: [], caption: "", tags: "", dests: null});
+  $("#pcap").value = ""; $("#ptags").value = ""; paintThumbs(); paintPostBits();
+}
 function showPost(p) {  // a just-made post: open it in Library (big preview, Approve / Post now / Schedule)
   if (!p || !p.id) return;
   Object.assign(lib, {kind: "all", q: "", cat: "", plat: "", status: ""}); store.set("lib", lib);
@@ -1108,8 +1160,10 @@ async function submitAutoPost(e, id) {
   const f = new FormData(e.target), go = e.submitter && e.submitter.value;
   const o = {name: f.get("name"), category_id: +f.get("category_id"), niche: f.get("niche"), keywords: f.get("keywords"),
     templates: [...e.target.querySelectorAll(".tplPick .chip[aria-pressed=true]")].map(c => +c.dataset.t),
+    accounts: [...e.target.querySelectorAll(".acctPick .chip[aria-pressed=true]")].map(c => +c.dataset.a),
     posts_per_day: +f.get("posts_per_day"), post_from: +f.get("post_from"), post_to: +f.get("post_to"), approve: f.has("approve")};
   if (!o.templates.length) { toast("Tick at least one template", true); return false; }
+  if (!o.accounts.length) { toast("Tick at least one account to post to", true); return false; }
   const btnEl = e.submitter || e.target.querySelector(".btn.primary");
   if (id == null) {
     const r = await act(btnEl, () => POST("/api/posts/autos", {...o, enabled: go === "start"}), go === "start" ? "Created and started" : "Created (paused)");
@@ -1133,6 +1187,8 @@ function apCard(st) {
   return `<div class="card stack" style="gap:var(--s3)" id="apc${id}"><div class="head"><div><h2>${esc(apName(a))}</h2><p class="sm" id="apState${id}"></p></div>
       ${toggle("apOn" + id, a.enabled, "On", `onchange="act(null, () => POST('/api/auto?id=${id}', {enabled: this.checked}))"`)}</div>
     <div id="apToday${id}"></div>
+    <p class="sm" id="apNow${id}"></p>
+    <details class="more" open><summary>Activity</summary><pre class="log" id="apLog${id}" style="max-height:220px;margin-top:6px"></pre></details>
     <div class="row">${btn("Make one clip now", `id="apOne${id}" title="Find one trending video for this topic and make a single clip" onclick="act(this, () => POST('/api/auto/run?id=${id}&one=true'), 'Looking for a video: the clip appears in Library')"`, "ghost sm")}
       ${btn("Run a round now", `id="apRun${id}" onclick="act(this, () => POST('/api/auto/run?id=${id}'), 'Finding trends…')"`, "ghost sm")}
       ${btn("Stop", `onclick="if(confirm('Turn this autopilot off, stop its videos and cancel its scheduled clips?'))act(this, () => POST('/api/auto/stop?id=${id}'))"`, "text sm danger")}
@@ -1149,7 +1205,7 @@ function apCard(st) {
       <div><p class="sm muted" style="margin-bottom:6px">Post to (uses the category's accounts)</p><div class="row apPlats">${Object.keys(PLATFORMS).map(p => chip(`${ICON[p]}${PLATFORMS[p]}`, a.platforms.includes(p), `data-p="${p}" onclick="this.setAttribute('aria-pressed', this.getAttribute('aria-pressed')!=='true')"`)).join("")}</div></div>
       <details class="more"><summary>More options</summary><div class="grid2">
         <label class="f">Framing<select name="aspect">${apOpts([[0.5625, "Fill the screen"], [0.8, "Slightly wider"], [1, "Square, with bars"], [1.7778, "Whole frame"]], a.aspect)}</select></label>
-        <label class="f">Who picks the moments<select name="mode">${apOpts([["hype", "AI + audience signals"], ["ai+hype", "AI, whole video + signals"], ["ai", "AI, whole video"]], a.mode)}</select></label>
+        <label class="f">Who picks the moments<select name="mode">${apOpts([["hype", "AI + audience signals"], ["ai+hype", "AI, whole video + signals"], ["ai", "AI, whole video"], ["nostalgia", "Nostalgia: calm moments, caption on top, music"]], a.mode)}</select></label>
         <label class="f">How choosy<select name="choosy">${apOpts([[2, "Relaxed"], [3, "Normal"], [5, "Picky"], [8, "Very picky"]], a.choosy)}</select></label>
         <label class="f">Start finding videos at<select name="hour">${apOpts(hours, a.hour)}</select></label>
         <label class="f">Narrow the topic (optional)<input name="niche" value="${esc(a.niche)}" placeholder="Empty = the category's topic">
@@ -1170,8 +1226,14 @@ function paintAp(st) {
   $("#apToday" + id).innerHTML = `<div class="row sm muted" style="gap:var(--s4)"><span><b style="color:var(--text)">${sc.posted_today} / ${sc.posts_per_day}</b> posted today</span>
     <span><b style="color:var(--text)">${st.scheduled}</b> waiting</span><span><b style="color:var(--text)">${st.coming}</b> being made</span><span>Next: <b style="color:var(--text)">${!a.enabled ? "off" : sc.next_at - now < 60 ? "any moment" : clock(sc.next_at)}</b></span></div>`;
   $("#apRun" + id).disabled = $("#apOne" + id).disabled = st.running;
+  const fit = st.gap_min ? Math.floor((a.post_to - a.post_from) * 60 / st.gap_min) : 0;
+  $("#apToday" + id).insertAdjacentHTML("beforeend", fit && a.posts_per_day > fit ? `<p class="sm" style="color:var(--warn);margin-top:6px">With ${st.gap_min} minutes between posts on an account, only ${fit} fit ${hh(a.post_from)}–${hh(a.post_to)} (and fewer when other automations post to the same accounts): lower "Posts a day" or widen the hours.</p>` : "");
+  const act_ = st.activity || {lines: []};
+  $("#apNow" + id).innerHTML = act_.now ? `<span class="row" style="gap:8px"><span class="spin" aria-hidden="true"></span><b>Now:</b> ${esc(act_.now)}</span>` : `<span class="muted">Idle${a.enabled ? ": the next round or post runs on its schedule" : ""}.</span>`;
+  const logEl = $("#apLog" + id), txt = act_.lines.join("\n") || "Nothing yet today.";
+  if (logEl.textContent !== txt) { const atEnd = logEl.scrollTop + logEl.clientHeight >= logEl.scrollHeight - 8; logEl.textContent = txt; if (atEnd) logEl.scrollTop = logEl.scrollHeight; }
 }
-async function renderAuto(entering) {
+async function renderAutoLegacy(entering) {  // the old per-autopilot screen (kept for reference, unused)
   try { autoSt = await api("/api/auto"); } catch (e) { return; }
   if (entering || !autoBuilt) {
     autoBuilt = true; autoKey = "";
@@ -1207,6 +1269,8 @@ async function renderAuto(entering) {
   const busyForm = $("#apList").contains(document.activeElement) && document.activeElement.matches("input,select,textarea");
   if (autoKey !== ids && !busyForm) { autoKey = ids; $("#apList").innerHTML = autoSt.autopilots.map(apCard).join(""); }
   autoSt.autopilots.forEach(paintAp);
+  clearTimeout(renderAuto.t);  // keep it live while the Automate page is open
+  if ($("#autoClips") && !$("#autoClips").hidden) renderAuto.t = setTimeout(() => { if (location.hash.startsWith("#create")) renderAuto(); }, 4000);
   const tps = S.topics.slice(0, 20);
   const tk = JSON.stringify(tps.map(t => [t.id, t.status]));
   if ($("#topicList").dataset.k !== tk) { $("#topicList").dataset.k = tk;
@@ -1293,21 +1357,31 @@ function itemPanel(i) {
       <div><h3 style="margin-bottom:6px">Destinations</h3>${destRows(i)}</div>
       <div class="row">${i.media && i.file !== false ? btn(i.status === "published" ? "Publish elsewhere" : "Publish…", `onclick='openClipInFlow(S.clips.find(x=>x.id===${i.id}))'`, "primary") : ""}
         ${failed && i.status !== "processing" ? btn("Retry failed", `onclick="act(this, () => POST('/api/clips/${i.id}/retry'))"`, "ghost") : ""}
+        ${i.file !== false && i.media ? btn("Post manually", `onclick="showManual('clip', ${i.id})"`, "ghost") : ""}
         ${i.status === "scheduled" ? btn("Unschedule", `onclick="act(this, () => POST('/api/clips/${i.id}/unschedule'))"`, "ghost") : ""}</div>
       ${i.media && !Object.keys(i.uploads || {}).length && i.status !== "processing" ? `<div class="row">${btn("Redo captions", `title="Transcribe this clip again with Whisper and re-render it" onclick="act(this, () => POST('/api/clips/${i.id}/recaption'), 'Redoing captions: takes a minute or two')"`, "text sm")}</div>` : ""}
+      <div class="stack" id="manualBox" style="gap:var(--s3)"></div>
       <div class="row">${i.media && i.file !== false ? `<a class="btn text sm" href="/media/${esc(i.media)}" download>Download</a>` : ""}
         ${i.status !== "processing" ? btn("Delete", `onclick="if(confirm('Delete this clip file? Copies already published stay up.'))act(this, () => DEL('/api/clips/${i.id}')).then(()=>{libSel=null;libItems=null;renderLibrary()})"`, "text sm danger") : ""}</div></div>`;
   }
   const draft = i.detail === "draft" || i.detail === "skipped";
+  clearTimeout(itemPanel.t);
+  if (i.status === "processing") itemPanel.t = setTimeout(() => { if (location.hash.startsWith("#library") && libSel === "post" + i.id) { libItems = null; libKey = ""; renderLibrary(); } }, 3000);
   return `<div class="stack" style="gap:var(--s3)">${i.video ? `<video src="/media/${esc(i.video)}" controls playsinline poster="/media/${esc(i.media)}" style="border-radius:8px;background:#000;aspect-ratio:9/16;object-fit:contain"></video><p class="sm muted">Reel${i.music ? ` · music: ${esc(i.music)}` : ""}</p>` : i.media ? `<img src="/media/${esc(i.media)}" alt="" style="border-radius:8px">` : ""}
     ${i.media_count > 1 ? `<p class="sm muted">Carousel of ${i.media_count} photos</p>` : ""}
     <h2>${esc(i.title || "Post")}</h2><div class="row">${pill(i.status)}<span class="sm muted">${esc(i.kind || "")} · ${esc(i.category)}</span></div>
     ${i.status === "scheduled" ? `<p class="sm">${i.publish_at ? "Goes out " + when(i.publish_at) : "Goes out on the category's next posting slot"}</p>` : ""}
+    ${i.status === "processing" ? `<p class="sm row" style="gap:8px"><span class="spin" aria-hidden="true"></span><b>${esc((i.log || []).slice(-1)[0]?.replace(/^\[[^\]]*\]\s*/, "") || "Starting…")}</b></p>` : ""}
     <div><h3 style="margin-bottom:6px">Destinations</h3>${destRows(i)}</div>
+    ${(i.log || []).length ? `<details class="more" ${i.status === "processing" || i.status === "failed" ? "open" : ""}><summary>Log</summary><pre class="log" style="max-height:240px;margin-top:6px">${esc(i.log.join("\n"))}</pre></details>` : ""}
+    <div class="stack" id="manualBox" style="gap:var(--s3)"></div>
     <div class="row">${draft ? btn("Approve", `onclick="act(this, () => POST('/api/posts/${i.id}/approve'), 'Queued for the next slot')"`, "primary") : ""}
       ${["draft", "scheduled", "failed"].includes(i.status) ? btn(i.status === "failed" ? "Retry now" : "Post now", `onclick="act(this, () => POST('/api/posts/${i.id}/publish'), 'Posting…')"`, "ghost") : ""}
+      ${i.media ? btn("Post manually", `onclick="showManual('post', ${i.id})"`, "ghost") : ""}
       ${["draft", "scheduled"].includes(i.status) ? `<input type="datetime-local" id="psAt" style="max-width:220px" value="${localInput(i.publish_at || Date.now() / 1000 + 3600)}" aria-label="Post at">${btn("Schedule", `onclick="act(this, () => POST('/api/posts/${i.id}/schedule', {publish_at: fromInput($('#psAt').value)}), 'Scheduled')"`, "ghost sm")}` : ""}</div>
-    <div class="row">${["draft", "scheduled"].includes(i.status) ? btn("Skip", `onclick="act(this, () => POST('/api/posts/${i.id}/skip'))"`, "text sm") : ""}
+    <div class="row">${i.ai && !Object.values(i.uploads || {}).some(u => u && u.id) && !["published"].includes(i.status) && i.detail !== "posting"
+        ? btn("Start over", `title="Throw this one away and write a new one (same category, post type and topic)" onclick="restartPost(this, ${i.id})"`, "ghost sm") : ""}
+      ${["draft", "scheduled"].includes(i.status) ? btn("Skip", `onclick="act(this, () => POST('/api/posts/${i.id}/skip'))"`, "text sm") : ""}
       ${i.status !== "processing" ? btn("Delete", `onclick="if(confirm('Delete this post? Copies already posted stay up.'))act(this, () => DEL('/api/posts/${i.id}')).then(()=>{libSel=null;libItems=null;renderLibrary()})"`, "text sm danger") : ""}</div></div>`;
 }
 const openJobLogs = new Set();
@@ -1318,7 +1392,8 @@ async function renderJobs() {
   $("#libBody").innerHTML = S.jobs.length ? `<div class="stack">${S.jobs.slice(0, 50).map(j => { const run = !["done", "failed", "stopped", "interrupted"].includes(j.status);
     return `<div class="card flat"><div class="head"><div class="grow"><b>${esc(j.title || j.url)}</b><p class="sm muted">${new Date(j.created * 1000).toLocaleString()} · ${plural(S.clips.filter(c => c.job_id === j.id).length, "clip")}</p></div>
       ${pill(j.status === "done" ? "published" : j.status === "failed" ? "failed" : run ? "processing" : "draft", j.status)}
-      ${j.status === "stopping" ? btn("Stopping…", "disabled", "ghost sm") : run ? btn("Stop", `onclick="this.textContent='Stopping…';act(this, () => POST('/api/jobs/${j.id}/stop'))"`, "ghost sm") : ""}</div>
+      ${j.status === "stopping" ? btn("Stopping…", "disabled", "ghost sm") : run ? btn("Stop", `onclick="this.textContent='Stopping…';act(this, () => POST('/api/jobs/${j.id}/stop'))"`, "ghost sm") : ""}
+      ${j.status !== "stopping" ? btn("Start over", `title="Delete its unposted clips and find clips in the same video again" onclick="restartJob(this, ${j.id})"`, "text sm") : ""}</div>
       ${run && j.status === "downloading" && j.progress ? bar(j.progress) : ""}
       <details ${openJobLogs.has(j.id) ? "open" : ""} ontoggle="this.open?openJobLogs.add(${j.id}):openJobLogs.delete(${j.id});if(this.open)loadJobLog(${j.id})"><summary class="sm" style="cursor:pointer;color:var(--accent)">Log</summary>
         <pre class="log" id="jlog-${j.id}">Loading…</pre></details></div>`; }).join("")}</div>` : emptyState("No jobs yet.");
@@ -1345,6 +1420,86 @@ async function renderScheduled(entering) {
   if ($("#schedBody").dataset.html !== html) { $("#schedBody").innerHTML = html; $("#schedBody").dataset.html = html; }
   setPanel(null);
 }
+
+
+/* ================= AUTOMATE = THE PAGE PLAN ================= */
+// One plan for the page (clips + posts a day, hours) and one card per category: its share and what it makes.
+// Categories only make content into the queue; the plan decides when each item goes out (Scheduled tab).
+let pageSt = null, pageKey = "";
+async function renderAuto(entering) {
+  try { pageSt = await api("/api/page"); } catch (e) { return; }
+  const box = $("#create-auto");
+  const busy = box.contains(document.activeElement) && document.activeElement.matches("input,select,textarea");
+  const key = JSON.stringify(pageSt);
+  if ((key !== pageKey || entering) && !busy) {
+    const open = new Set($$("#create-auto details[open]").map(d => d.dataset.id));
+    pageKey = key; box.innerHTML = pageHtml(pageSt, open);
+  }
+  clearTimeout(renderAuto.t);
+  renderAuto.t = setTimeout(() => { if (location.hash.startsWith("#create/auto")) renderAuto(); }, 5000);
+}
+function pageHtml(st, open) {
+  const P = st.plan, n = P.clips_per_day + P.posts_per_day;
+  const every = n ? Math.round((P.to - P.from) * 60 / n) : 0;
+  const num = (k, v, max, label) => `<label class="f">${label}<input type="number" min="0" max="${max}" value="${v}" onchange="savePlan({${k}: +this.value})"></label>`;
+  const hour = (k, v, label) => `<label class="f">${label}<select onchange="savePlan({'${k}': +this.value})">${Array.from({length: 25}, (_, h) => `<option value="${h}" ${h === v ? "selected" : ""}>${String(h).padStart(2, "0")}:00</option>`).join("")}</select></label>`;
+  const nxt = st.next ? `${st.next.kind === "clip" ? "Clip" : "Post"} #${st.next.id} at ${when(st.next.at)}` : "nothing queued";
+  const plan = `<div class="card stack" style="gap:var(--s3)">
+    <div class="head"><h2>Page plan</h2>${toggle("planOn", P.on, P.on ? "Posting" : "Paused", `onchange="savePlan({on: this.checked})"`)}</div>
+    <p class="sm muted" style="max-width:68ch">Everything the page posts, in one plan. Each category below makes content into the queue in proportion
+      to its share; the plan posts the queue across the day, one item every ~${every} min. Clips go to ${st.accounts.map(a => avatar(acct(a.id), true)).join("") || "no accounts yet"}
+      (photo posts skip YouTube). Pausing the plan holds the queue; nothing is cancelled.</p>
+    <div class="grid2">${num("clips_per_day", P.clips_per_day, 48, "Clips a day")}${num("posts_per_day", P.posts_per_day, 24, "Photo posts a day")}
+      ${hour("from", P.from, "Posting from")}${hour("to", P.to, "Until")}</div>
+    ${toggle("planApprove", P.approve, "Ask me before posts go out (drafts wait in Library)", `onchange="savePlan({approve: this.checked})"`)}
+    <p class="row sm"><b>Today:</b> ${st.today.clips} / ${P.clips_per_day} clips · ${st.today.posts} / ${P.posts_per_day} posts
+      <span class="muted">· Next: ${nxt} · <a href="#scheduled">Scheduled</a></span></p></div>`;
+  const T = st.templates;
+  const cards = st.categories.map(c => {
+    const r = c.recipe, id = c.id;
+    const tpl = T.map(t => chip(esc(t.name), r.templates.includes(t.id), `onclick="toggleTpl(${id}, ${t.id})"`)).join("");
+    const plats = ["youtube", "instagram", "facebook"].map(p => chip(`${ICON[p] || ""}${PLATFORMS[p]}`, r.platforms.includes(p), `onclick="togglePlat(${id}, '${p}')"`)).join("");
+    return `<div class="card stack" style="gap:var(--s3)">
+      <div class="head"><h2 class="row">${cdot(c.color)}${esc(c.name)}</h2>${toggle(`rc${id}`, r.on, r.on ? "Making" : "Paused", `onchange="saveRecipe(${id}, {on: this.checked})"`)}</div>
+      ${c.description ? `<p class="sm muted" style="max-width:68ch">${esc(c.description)} <a href="#categories" onclick="store.set('catSel', ${id})">Edit</a></p>`
+        : `<p class="sm" style="color:var(--bad)">Describe what this category is about on <a href="#categories" onclick="store.set('catSel', ${id})">Categories</a>: the AI finds and writes from it.</p>`}
+      <div class="grid2">
+        <label class="f">Share of clips<input type="number" min="0" max="100" value="${r.clip_share}" onchange="saveRecipe(${id}, {clip_share: +this.value})">
+          <span class="sm muted" style="font-weight:400">${c.clip_pct}% · about ${c.clips_a_day} a day</span></label>
+        <label class="f">Clip style<select onchange="saveRecipe(${id}, {clip_mode: this.value})">
+          <option value="hype" ${r.clip_mode === "hype" ? "selected" : ""}>Highlights: the best moments, hook + captions</option>
+          <option value="nostalgia" ${r.clip_mode === "nostalgia" ? "selected" : ""}>Nostalgia: calm gameplay, feelings caption, music</option></select></label>
+        ${r.clip_mode === "nostalgia" ? `<label class="f">Time of day<select onchange="saveRecipe(${id}, {light: this.value})">
+          <option value="any" ${r.light !== "day" ? "selected" : ""}>Any (sunsets, nights, rain)</option>
+          <option value="day" ${r.light === "day" ? "selected" : ""}>Bright daylight only</option></select></label>
+        <label class="f">Look<select onchange="saveRecipe(${id}, {look: this.value})">
+          <option value="" ${r.look !== "retro" ? "selected" : ""}>Clean (as the game looks)</option>
+          <option value="retro" ${r.look === "retro" ? "selected" : ""}>Retro: warm, faded, film grain</option></select></label>`
+          : `<label class="f">Streamer videos (facecam on top), %<input type="number" min="0" max="100" value="${r.streamer_share ?? 50}" onchange="saveRecipe(${id}, {streamer_share: +this.value})">
+            <span class="sm muted">The rest is clean gameplay. Moves by itself toward the style that gets more views.</span></label>`}
+        <label class="f">Share of photo posts<input type="number" min="0" max="100" value="${r.post_share}" onchange="saveRecipe(${id}, {post_share: +this.value})">
+          <span class="sm muted" style="font-weight:400">${c.post_pct}% · about ${c.posts_a_day} a day${r.post_share && !r.templates.length ? " · pick a post type below" : ""}</span></label>
+        <div class="stack" style="gap:4px"><span class="sm" style="font-weight:600">Posts to</span><div class="row">${plats}</div></div></div>
+      <div class="stack" style="gap:4px"><span class="sm" style="font-weight:600">Post types</span><div class="row" style="flex-wrap:wrap">${tpl}</div></div>
+      <p class="row sm"><b>Queue:</b> ${plural(c.queued_clips, "clip")} · ${plural(c.queued_posts, "post")} <span class="muted">· posted today: ${c.posted_clips} clips, ${c.posted_posts} posts</span></p>
+      ${c.now ? `<p class="sm"><b>Now:</b> ${esc(c.now)}</p>` : ""}
+      ${c.log.length ? `<details class="more" data-id="log${id}" ${open.has("log" + id) ? "open" : ""}><summary>Activity</summary><pre class="log sm">${c.log.map(esc).join("\n")}</pre></details>` : ""}
+      <div class="row">${btn("Make one clip now", `onclick="act(this, () => POST('/api/page/${id}/make?kind=clip'), 'Started: it joins the queue when ready')"`, "ghost sm")}
+        ${btn("Make one post now", `onclick="act(this, () => POST('/api/page/${id}/make?kind=post'), 'Started: it joins the queue when ready')"`, "ghost sm")}</div></div>`;
+  }).join("");
+  return `<div class="stack" style="gap:var(--s4)">${plan}
+    <p class="sm muted" style="max-width:68ch">Shares are relative: 60 / 25 / 15 means 60%, 25% and 15% of the clips. A paused category makes nothing new,
+      but what it already queued still goes out. New category: <a href="#categories">Categories</a>.</p>
+    ${cards || emptyState("No categories yet: create one on Categories and describe what it's about.")}</div>`;
+}
+async function savePlan(o) { try { await POST("/api/page", o); pageKey = ""; renderAuto(true); } catch (e) { toast(e.message, true); } }
+async function saveRecipe(id, o) { try { await POST(`/api/categories/${id}/recipe`, o); pageKey = ""; renderAuto(true); } catch (e) { toast(e.message, true); } }
+function toggleTpl(id, t) { const r = pageSt.categories.find(c => c.id === id).recipe;
+  saveRecipe(id, {templates: r.templates.includes(t) ? r.templates.filter(x => x !== t) : [...r.templates, t]}); }
+function togglePlat(id, p) { const r = pageSt.categories.find(c => c.id === id).recipe;
+  const next = r.platforms.includes(p) ? r.platforms.filter(x => x !== p) : [...r.platforms, p];
+  if (!next.length) return toast("Keep at least one platform", true);
+  saveRecipe(id, {platforms: next}); }
 
 /* ================= CATEGORIES ================= */
 const SWATCHES = ["#6b8f86", "#5b7fa6", "#a07c5b", "#8a6fa0", "#b36b6b", "#6f8f5b", "#8a8f98"];
@@ -1386,22 +1541,16 @@ async function catPanel(c) {
         <span class="sm muted" style="font-weight:400">The AI reads this when it picks moments and writes titles, captions and posts.</span></label>
       <label class="f">Keywords<input value="${esc(c.keywords || "")}" maxlength="300" placeholder="e.g. football, goals, premier league" onchange="saveCat(${c.id}, {keywords: this.value})">
         <span class="sm muted" style="font-weight:400">Comma-separated. Used in titles and hashtags where they fit.</span></label></div>
-    <div class="stack"><h2>Accounts</h2><p class="sm muted">Ticked accounts can publish this category. The default one is picked automatically in Create.</p>
-      ${Object.keys(PLATFORMS).map(p => { const list = S.accounts.filter(a => a.platform === p);
-        return `<div class="stack" style="gap:4px"><p class="row sm" style="font-weight:600">${pbadge(p)} ${PLATFORMS[p]}</p>${list.length ? list.map(a => { const on = c.accounts.includes(a.id), def = c.defaults.includes(a.id);
-          return `<div class="dest"><input type="checkbox" id="m${a.id}" ${on ? "checked" : ""} onchange="mapAcct(${c.id}, ${a.id}, this.checked, false)">
-            <label for="m${a.id}" class="row grow" style="gap:10px">${avatar(a, true)}<span class="sm">${esc(a.name)}</span></label>
-            ${on ? (def ? `<span class="pill ok">Default</span>` : btn("Make default", `onclick="mapAcct(${c.id}, ${a.id}, true, true)"`, "text sm")) : ""}</div>`; }).join("")
-          : `<p class="sm muted">No ${PLATFORMS[p]} accounts. <a href="#accounts">Add one</a></p>`}</div>`; }).join("")}</div>
+    <p class="sm muted">${isUnc ? "" : `Everything from this category goes to the page's accounts (<a href="#accounts">Accounts</a>). How much it makes and in which style:
+      <a href="#create/auto">Create → Automate</a>.`}</p>
     ${isUnc ? "" : `<details class="more"><summary>Posts</summary><div class="stack" style="gap:var(--s3)">
-      <p class="sm muted">Automations that write posts for this category live in <a href="#create/auto" onclick="store.set('autoTab','posts')">Create → Automate → Posts</a>
-        (several per category, each with its own topic, keywords and schedule). Here: how its cards look.</p>
+      <p class="sm muted">How its photo posts look.</p>
       <label class="f">Topic<input value="${esc(c.niche)}" onchange="saveCat(${c.id}, {niche: this.value})" placeholder="What this category's posts are about (automations can narrow it)"></label>
       <label class="f">Handle on cards<input value="${esc(c.handle)}" placeholder="@yourpage" onchange="saveCat(${c.id}, {handle: this.value})"></label>
       ${toggle("cLogo", c.logo, "Logo on cards", `onchange="saveCat(${c.id}, {logo: this.checked})"`)}
       <div class="row">${c.logo_file ? `<img src="/media/${esc(c.logo_file)}" alt="" style="height:32px;border-radius:4px;background:#000;padding:2px">${btn("Remove logo", `onclick="catLogo(${c.id}, null)"`, "text sm")}`
         : `<label class="btn text sm" style="cursor:pointer">Upload its own logo<input type="file" accept="image/png,image/jpeg" hidden onchange="catLogo(${c.id}, this.files[0])"></label>`}</div>
-      <div class="row">${btn("Make a post now", `onclick="act(this, () => POST('/api/categories/${c.id}/make'), 'Draft made').then(showPost)"`, "ghost sm")}</div>
+      <div class="row">${btn("Make a post now", `onclick="act(this, () => POST('/api/categories/${c.id}/make'), 'Started: watch it being made').then(showPost)"`, "ghost sm")}</div>
       </div></details>
     <details class="more"><summary>Delete category</summary><div class="stack" style="gap:var(--s2)">
       <label class="f">Move its ${c.counts.clips} clips and ${c.counts.posts} posts to<select id="mvTo">${catsFull.filter(x => x.id !== c.id).map(x => `<option value="${x.id}" ${x.name === "Uncategorized" ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select></label>
@@ -1532,15 +1681,18 @@ async function renderGeneral() {
     if (f.type.startsWith("account:")) { const pl = f.type.slice(8); return `<select id="${id}" name="${f.key}"><option value="">None</option>${s.accounts.filter(a => a.platform === pl).map(a => `<option value="${a.id}" ${a.id === v ? "selected" : ""}>${esc(a.name)}</option>`).join("")}</select>`; }
     return `<input id="${id}" name="${f.key}" type="${f.type === "int" || f.type === "float" ? "number" : "text"}" ${f.type === "float" ? 'step="any"' : ""} value="${esc(v)}">`;
   };
+  const tag = f => f.brand ? ` <span class="pill" title="Each brand has its own value">${esc(s.brand || "This brand")} only</span>` : "";
   setTimeout(() => { const prov = $("#set-LLM_PROVIDER"), url = $("#set-LLM_BASE_URL");
     if (prov && url) prov.onchange = () => { const u = LLM_URLS[prov.value]; if (u) url.value = u; }; }, 0);
-  $("#setBody").innerHTML = `<form class="stack" id="setForm" style="gap:var(--s4)" onsubmit="return saveSettings(event)">${groups.map((g, gi) => `<details class="card" ${gi < 2 ? "open" : ""}><summary style="cursor:pointer"><h2 style="display:inline">${esc(g)}</h2></summary>
+  $("#setBody").innerHTML = `<form class="stack" id="setForm" style="gap:var(--s4)" onsubmit="return saveSettings(event)">
+    <p class="sm muted" style="max-width:68ch">Settings marked "${esc(s.brand || "This brand")} only" belong to the brand you're in (switch brands at the top left);
+      everything else is shared by all brands.</p>${groups.map((g, gi) => `<details class="card" ${gi < 2 ? "open" : ""}><summary style="cursor:pointer"><h2 style="display:inline">${esc(g)}</h2></summary>
     <div class="grid2" style="margin-top:var(--s3)">${s.fields.filter(f => f.group === g).map(f => f.type === "bool"
-      ? `<label class="toggle" style="grid-column:1/-1">${input(f)}<span>${esc(f.label)}${f.help ? ` <span class="sm muted">— ${esc(f.help)}</span>` : ""}</span></label>`
-      : `<label class="f" ${f.type === "text" || f.key === "YT_CLIENT_SECRET_JSON" ? 'style="grid-column:1/-1"' : ""}>${esc(f.label)}${input(f)}${f.help ? `<span class="sm muted" style="font-weight:400">${esc(f.help)}</span>` : ""}
+      ? `<label class="toggle" style="grid-column:1/-1">${input(f)}<span>${esc(f.label)}${tag(f)}${f.help ? ` <span class="sm muted">— ${esc(f.help)}</span>` : ""}</span></label>`
+      : `<label class="f" ${f.type === "text" || f.key === "YT_CLIENT_SECRET_JSON" ? 'style="grid-column:1/-1"' : ""}><span>${esc(f.label)}${tag(f)}</span>${input(f)}${f.help ? `<span class="sm muted" style="font-weight:400">${esc(f.help)}</span>` : ""}
         ${f.type === "secret" && f.set ? `<button type="button" class="btn text sm" style="justify-self:start" onclick="clearSetting('${f.key}')">Clear saved value</button>` : ""}</label>`).join("")}
       ${g === "Branding" ? `<div class="row" style="grid-column:1/-1">${s.logo ? `<img src="/media/${esc(s.logo)}?${Date.now()}" alt="Your logo" style="height:44px;border-radius:6px;background:#000;padding:4px">${btn("Remove logo", 'onclick="setLogo(null)"', "text sm")}` : `<span class="sm muted">No logo uploaded.</span>`}
-        <label class="btn ghost sm" style="cursor:pointer">${s.logo ? "Replace" : "Upload"} logo<input type="file" accept="image/png,image/jpeg" hidden onchange="setLogo(this.files[0])"></label></div>
+        <label class="btn ghost sm" style="cursor:pointer">${s.logo ? "Replace" : "Upload"} ${esc(s.brand || "this brand")}'s logo<input type="file" accept="image/png,image/jpeg" hidden onchange="setLogo(this.files[0])"></label></div>
         <div class="stack" id="musicBox" style="grid-column:1/-1;gap:var(--s2)"></div>` : ""}</div></details>`).join("")}
     <div class="row" style="position:sticky;bottom:16px"><button class="btn primary">Save settings</button></div></form>`;
   renderMusic();
@@ -1654,7 +1806,7 @@ function editTpl(id) {
     <label class="f">What to write<textarea name="instructions" placeholder="Tell the AI what this post is: length, tone, what goes on the card and in the caption">${esc(t.instructions)}</textarea></label>
     <div class="row"><label class="f">Background<input type="color" name="bg" value="${esc(t.bg)}"></label><label class="f">Accent<input type="color" name="accent" value="${esc(t.accent)}"></label>
       <label class="f grow">Font<select name="font"><option value="sans" ${t.font === "sans" ? "selected" : ""}>Bold</option><option value="serif" ${t.font === "serif" ? "selected" : ""}>Serif italic</option></select></label></div>
-    <label class="f">Post as<select name="format">${[["auto", "Card or Reel with music: learn which does better"], ["photo", "Card (a carousel when there's more to tell)"], ["reel", "Reel: the slides as a video with music"], ["text", "Card on Instagram, text only on Facebook"]].map(([v, l]) => `<option value="${v}" ${t.format === v ? "selected" : ""}>${l}</option>`).join("")}</select>
+    <label class="f">Post as<select name="format">${[["auto", "Card on Facebook; card or Reel on Instagram (learns which does better)"], ["photo", "Card everywhere (a carousel when there's more to tell)"], ["reel", "Card on Facebook; Reel with music on Instagram"], ["text", "Card on Instagram, text only on Facebook"]].map(([v, l]) => `<option value="${v}" ${t.format === v ? "selected" : ""}>${l}</option>`).join("")}</select>
       <span class="sm muted" style="font-weight:400">Reels need tracks in Settings → Branding → Music. Put {N} in the label for a numbered series, e.g. "GTA DAILY #{N}".</span></label>
     <div class="row"><button class="btn primary">Save template</button>${id ? btn("Delete", `onclick="if(confirm('Delete this template? Categories stop using it.'))act(this, () => DEL('/api/templates/${id}'), 'Template deleted').then(()=>{tplEdit=null;setBuilt='';renderSettings(true,'templates')})"`, "text danger") : ""}</div></form>`);
   $("#tplForm").oninput = e => { if (e.target.name !== "instructions") { clearTimeout(prevT); prevT = setTimeout(tplPreview, 350); } };

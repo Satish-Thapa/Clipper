@@ -21,6 +21,7 @@ accounts.migrate()  # tokens encrypted; the old single YouTube / TikTok logins -
 posts.seed_templates()  # once: the starter post templates (yours to edit)
 brands.migrate()  # a brand always exists ("Demo channel" on a fresh install); older things belong to the first one
 categories.migrate()  # account lists -> the mapping table; anything without a category -> Uncategorized
+config.migrate_brands()  # once: the branding settings saved before brands had their own -> the real page's brand
 db.syslog(f"server started, data in {DATA}")
 
 
@@ -31,6 +32,7 @@ def _start():
     autopilot.start_loop()  # posts scheduled clips + runs rounds, when switched on in the UI
     stats.start_loop()  # hourly WhatsApp report, if WA_PHONE_NUMBER_ID/WA_TOKEN/WA_TO are set
     posts.start_loop()  # photo/text posts on their own schedule, when switched on on the Posts page
+    threading.Thread(target=pick.keep_warm_loop, daemon=True).start()  # local model stays loaded while busy
     social.backfill_times()  # give old uploads a time so the 24h upload counter includes them
     social.backfill_limit_hits()  # start the 24h timer of a limit error logged before timers existed
 
@@ -50,7 +52,7 @@ def media(path: str):
 
 
 Platform = Literal["youtube", "facebook", "instagram", "tiktok"]
-Mode = Literal["hype", "ai+hype", "ai", "manual"]
+Mode = Literal["hype", "ai+hype", "ai", "manual", "nostalgia"]
 
 
 class NewJob(BaseModel):
@@ -76,7 +78,7 @@ class NewTopic(BaseModel):
     platforms: list[Platform] = []
     aspect: float | None = Field(None, ge=0.56, le=1.78)
     hq: bool = False
-    mode: Literal["hype", "ai+hype", "ai"] = "hype"  # no "manual": nobody is there to type the cuts
+    mode: Literal["hype", "ai+hype", "ai", "nostalgia"] = "hype"  # no "manual": nobody is there to type the cuts
     category_id: int | None = None
     subtitles: bool = True
     voiceover: bool = False
@@ -235,6 +237,17 @@ def stop_job(jid: int):
     return {"ok": True}
 
 
+@app.post("/api/jobs/{jid}/restart")
+def restart_job(jid: int):
+    """Start over: stop it, delete its unposted clips, find clips in the same video again (in the background)."""
+    if not db.get("jobs", jid):
+        raise HTTPException(404, "job not found")
+    if str(db.get("jobs", jid)["url"]).startswith("file:") and not any((DATA / "jobs" / str(jid)).glob("source.*")):
+        raise HTTPException(409, "the uploaded file is gone: add it again")
+    threading.Thread(target=worker.restart, args=(jid,), daemon=True).start()
+    return {"ok": True}
+
+
 @app.post("/api/clips/{cid}/upload")
 def upload_clip(cid: int, platforms: list[Platform] | None = None, force: bool = False):
     """Body: optional list of platforms; default = the ones chosen for the clip's job.
@@ -311,7 +324,7 @@ class AutoSettings(BaseModel):
     choosy: int | None = Field(None, ge=1, le=10)  # videos researched per video clipped
     hour: int | None = Field(None, ge=0, le=23)  # when the day's first round starts
     keep_sources: bool | None = None
-    mode: Literal["hype", "ai+hype", "ai"] | None = None
+    mode: Literal["hype", "ai+hype", "ai", "nostalgia"] | None = None
     aspect: float | None = Field(None, ge=0.56, le=1.78)
     hq: bool | None = None
     face_check: bool | None = None
@@ -490,6 +503,7 @@ class PostAuto(BaseModel):
     post_from: int | None = Field(None, ge=0, le=23)
     post_to: int | None = Field(None, ge=1, le=24)
     approve: bool | None = None
+    accounts: list[int] | None = None  # Facebook Pages / Instagram accounts it posts to ([] = the category's defaults)
 
 
 @app.post("/api/posts/autos")
@@ -526,10 +540,24 @@ def post_auto_make(aid: int, template: int | None = None):
     a = posts.auto_get(aid)
     if not a:
         raise HTTPException(404, "no such automation")
+    # "Ask me before posting" off: it goes straight into the queue for the next slot; on: a draft to approve
+    return _make_in_background(a["category_id"], template, "", a, "draft" if a["approve"] else "ready")
+
+
+def _make_in_background(cid, template, topic, auto, status="draft"):
+    """Start a post and return it right away (status 'making'): the page opens it and shows its log as it's made."""
     try:
-        return posts.locked(posts.make, a["category_id"], template, "draft", "", a)
-    except Exception as e:
-        raise HTTPException(400, str(e)[:300])
+        pid = posts.start(cid, auto)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    def run():
+        try:
+            posts.locked(posts.make, cid, template, status, topic, auto, pid)
+        except Exception as e:
+            db.syslog(f"post {pid} failed: {e!r}")
+    threading.Thread(target=run, daemon=True).start()
+    return db.get("posts", pid)
 
 
 @app.post("/api/posts/approve-all")
@@ -573,10 +601,7 @@ def posts_make(cid: int, template: int | None = None, topic: str = ""):
     """Write + render one post now (a draft, whatever the approval setting). Takes a few seconds (DeepSeek).
     topic: a keyword for this one post (empty = the category's topic)."""
     _category(cid)
-    try:
-        return posts.locked(posts.make, cid, template, "draft", topic[:200])
-    except Exception as e:
-        raise HTTPException(400, str(e)[:300])
+    return _make_in_background(cid, template, topic[:200], None)
 
 
 IMAGE_MAGIC = (b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff")  # PNG, JPEG
@@ -648,7 +673,8 @@ def template_delete(tid: int):
 def settings_get():
     """Every setting with its value; secrets only say whether one is saved. Plus the accounts (for the pickers)."""
     return {"fields": config.public(), "accounts": posts.accounts(),
-            "logo": str(config.LOGO_FILE.relative_to(DATA)) if config.LOGO_FILE.exists() else ""}
+            "logo": str(config.logo_file().relative_to(DATA)) if config.logo_file().exists() else "",
+            "brand": (brands.get(brands.current()) or {}).get("name", "")}
 
 
 @app.post("/api/settings")
@@ -685,13 +711,14 @@ def settings_save(new: dict):
 
 @app.post("/api/settings/logo")
 async def settings_logo_upload(request: Request):
-    await _save_image(request, config.LOGO_FILE)
+    config.logo_file().parent.mkdir(parents=True, exist_ok=True)
+    await _save_image(request, config.logo_file())  # this brand's logo
     return settings_get()
 
 
 @app.delete("/api/settings/logo")
 def settings_logo_delete():
-    config.LOGO_FILE.unlink(missing_ok=True)
+    config.logo_file().unlink(missing_ok=True)
     return settings_get()
 
 
@@ -807,6 +834,18 @@ def posts_publish(pid: int, body: PublishNow | None = None):
         return posts.locked(posts.publish, pid, body.accounts if body else None)
     except ValueError as e:
         raise HTTPException(400, str(e))
+
+
+@app.post("/api/posts/{pid}/restart")
+def posts_restart(pid: int):
+    """Start over: throw this post away (one still being written stops) and write a new one for the same category,
+    post type and topic. -> the new post (status 'making'), opened as a draft when done."""
+    _post(pid)
+    try:
+        req = posts.restart(pid)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    return _make_in_background(req["cid"], req["template"], req["topic"], req["auto"], "draft")
 
 
 @app.delete("/api/posts/{pid}")
@@ -991,6 +1030,94 @@ def clip_publish(cid: int, p: Publish):
     return db.get("clips", cid)
 
 
+# ---- posting by hand (when an API won't take it: limits, an unpublished Meta app...) ----
+
+MANUAL_LINKS = {  # where to post by hand
+    "facebook": "https://business.facebook.com/latest/composer",
+    "instagram": "https://business.facebook.com/latest/composer",
+    "youtube": "https://studio.youtube.com/",
+    "tiktok": "https://www.tiktok.com/tiktokstudio/upload",
+}
+
+
+def _manual_files(kind, row):
+    if kind == "clip":
+        files = [row["path"]] + list(json.loads(row.get("renders") or "{}").values()) if row.get("path") else []
+    else:
+        files = ([row["video"]] if row.get("video") else []) + (json.loads(row.get("media") or "[]") or ([row["image"]] if row.get("image") else []))
+    return [f for f in files if f and (DATA / f).exists()]
+
+
+@app.get("/api/manual/{kind}/{iid}")
+def manual_kit(kind: Literal["clip", "post"], iid: int):
+    """Everything to post an item by hand: its files, the caption per platform (as Clipper would have posted it) and
+    where to post it. Platforms it's already on are marked."""
+    row = db.get("clips" if kind == "clip" else "posts", iid)
+    if not row:
+        raise HTTPException(404, "not found")
+    ups = json.loads(row.get("uploads") or "{}")
+    done = {u.get("platform") for u in ups.values() if isinstance(u, dict) and u.get("id")}
+    plats = ["instagram", "facebook", "youtube", "tiktok"] if kind == "clip" else ["instagram", "facebook"]
+    out = {}
+    for p in plats:
+        if kind == "clip":
+            title, desc = worker._caption(row, p)
+            tags = json.loads(row.get("tags") or "[]")[:social.HASHTAGS[p]]
+            if p == "youtube":
+                out[p] = {"title": title[:100], "text": "\n\n".join(x for x in (desc, " ".join(f"#{x}" for x in tags + ["Shorts"])) if x)}
+            else:
+                out[p] = {"text": "\n\n".join(x for x in (title, desc, " ".join(f"#{x}" for x in tags)) if x)}
+        else:
+            out[p] = {"text": posts.caption_for(row, p, posts._is_text(row) if p == "facebook" else False)}
+        out[p].update(link=MANUAL_LINKS[p], posted=p in done)
+    return {"files": _manual_files(kind, row), "platforms": out}
+
+
+class ManualDone(BaseModel):
+    platform: Literal["youtube", "facebook", "instagram", "tiktok"]
+    url: str | None = Field(None, max_length=500)
+
+
+@app.post("/api/manual/{kind}/{iid}")
+def manual_done(kind: Literal["clip", "post"], iid: int, m: ManualDone):
+    """You posted it by hand: record it (with its link, if given) so it shows as published and isn't posted again."""
+    table = "clips" if kind == "clip" else "posts"
+    row = db.get(table, iid)
+    if not row:
+        raise HTTPException(404, "not found")
+    ups = json.loads(row.get("uploads") or "{}")
+    url = (m.url or "").strip()
+    if url and not url.startswith("http"):
+        raise HTTPException(400, "the link should start with http")
+    for k in [k for k, u in ups.items() if isinstance(u, dict) and u.get("platform") == m.platform and not u.get("id")]:
+        ups.pop(k)  # its failed attempt: replaced by the manual post
+    ups[f"manual@{m.platform}"] = {"platform": m.platform, "id": f"manual:{url or 'posted'}", "url": url, "manual": True,
+                                   "name": "posted by hand", "at": time.time()}
+    ok = [u for u in ups.values() if isinstance(u, dict) and u.get("id")]
+    if kind == "clip":
+        # "published everywhere" (and so its file may be cleaned up) only when every platform its category posts to
+        # has it, not just the one you marked
+        want = {a["platform"] for a in categories.destinations(row.get("category_id"), list(social.PLATFORMS))}
+        have = {u.get("platform") for u in ok}
+        total = max(len(want | have), len(ups))
+        status = "uploaded" if want <= have and len(ok) == len(ups) else f"uploaded {len(ok)}/{total}"
+        db.update("clips", iid, uploads=json.dumps(ups), status=status, publish_at=None)
+        db.log(row["job_id"], f"#{iid} posted by hand on {m.platform}" + (f": {url}" if url else ""))
+    else:
+        db.update("posts", iid, uploads=json.dumps(ups), status="posted" if len(ok) == len(ups) else row["status"], publish_at=None)
+        db.log(iid, f"posted by hand on {m.platform}" + (f": {url}" if url else ""), "posts")
+    return db.get(table, iid)
+
+
+@app.delete("/api/limits/{platform}")
+def limit_clear(platform: str):
+    """Lift Clipper's 24 h pause on a platform now (the platform itself may still refuse: then it pauses again)."""
+    if platform not in social.PLATFORMS:
+        raise HTTPException(404, "unknown platform")
+    social.clear_limit(platform)
+    return {"ok": True}
+
+
 @app.post("/api/clips/{cid}/recaption")
 def clip_recaption(cid: int):
     """Transcribe the clip again with Whisper and re-render it with the new captions (runs in the background)."""
@@ -1016,8 +1143,13 @@ def clip_retry(cid: int):
         raise HTTPException(404, "clip not found")
     ups = json.loads(c["uploads"] or "{}")
     failed = [d for d in json.loads(c["targets"] or "[]") if not ups.get(worker.dest_key(d), {}).get("id")]
+    if not failed:  # autopilot clips go straight to platforms (no saved destinations): retry their failed uploads
+        failed = [{"account": u["account"], "format": u["format"]} for u in ups.values()
+                  if isinstance(u, dict) and not u.get("id") and u.get("account") and u.get("format") in social.FORMATS]
     if not failed:
         raise HTTPException(400, "nothing failed")
+    if not c.get("path") or not (DATA / c["path"]).exists():
+        raise HTTPException(409, "the clip's video file is gone, so it can't be uploaded again")
     db.update("clips", cid, status="uploading")
     threading.Thread(target=worker.publish_clip, args=(cid, failed), daemon=True).start()
     return db.get("clips", cid)
@@ -1213,7 +1345,8 @@ def _post_item(p, cats_by_id):
               "failed": "failed"}.get(p["status"], "draft")
     return {"type": "post", "id": p["id"], "title": p["card"] or (p["caption"] or "")[:80], "media": p["image"],
             "video": p.get("video") or "", "music": json.loads(p.get("features") or "{}").get("music", ""),
-            "kind": p["kind"], "duration": None,
+            "log": (p.get("log") or "").splitlines()[-25:],
+            "kind": p["kind"], "duration": None, "ai": p["kind"] != "Your post",
             "platforms": sorted({u.get("platform") for u in ups.values() if u.get("platform")}),
             "status": status, "detail": p["status"], "category_id": p["category_id"],
             "category": (cats_by_id.get(p["category_id"]) or {}).get("name", ""), "publish_at": p["publish_at"],
@@ -1233,21 +1366,117 @@ def library(category: int | None = None, platform: str | None = None, status: st
     return items[:min(max(limit, 1), 1000)]
 
 
+class PagePlan(BaseModel):
+    on: bool | None = None
+    clips_per_day: int | None = Field(None, ge=0, le=48)
+    posts_per_day: int | None = Field(None, ge=0, le=24)
+    start: int | None = Field(None, ge=0, le=23, alias="from")
+    to: int | None = Field(None, ge=1, le=24)
+    approve: bool | None = None
+
+
+class Recipe(BaseModel):
+    on: bool | None = None
+    clip_share: int | None = Field(None, ge=0, le=100)
+    clip_mode: Literal["hype", "nostalgia"] | None = None
+    post_share: int | None = Field(None, ge=0, le=100)
+    templates: list[int] | None = None
+    platforms: list[Platform] | None = None
+    light: Literal["any", "day"] | None = None
+    look: Literal["", "retro"] | None = None
+    streamer_share: int | None = Field(None, ge=0, le=100)
+
+
+@app.get("/api/page")
+def page_get():
+    """The page plan, each category's recipe with its share, queue and what its makers are doing, today's numbers,
+    and the next items to go out."""
+    from . import page as pg, planner
+    bid = brands.current()
+    p, cs, ps = pg.plan(bid), pg.shares("clip", bid), pg.shares("post", bid)
+    done = pg.posted_today(autopilot._day_start(time.time()))
+    rows = []
+    for c in pg.cats(bid):
+        ap, pa = pg._producer_clip(c["id"]), pg._producer_post(c["id"])
+        act = autopilot.activity(ap["id"]) if ap else {"now": "", "lines": []}
+        making = posts.WORKING.get(pa["id"]) if pa else ""
+        clips_q, posts_q = pg.queued(c["id"])
+        rows.append({"id": c["id"], "name": c["name"], "color": c["color"], "description": c["description"],
+                     "recipe": c["recipe"], "clip_pct": round(cs.get(c["id"], 0) * 100), "post_pct": round(ps.get(c["id"], 0) * 100),
+                     "clips_a_day": round(p["clips_per_day"] * cs.get(c["id"], 0), 1),
+                     "posts_a_day": round(p["posts_per_day"] * ps.get(c["id"], 0), 1),
+                     "queued_clips": clips_q, "queued_posts": posts_q,
+                     "posted_clips": done["clip"].get(c["id"], 0), "posted_posts": done["post"].get(c["id"], 0),
+                     "now": (f"Writing a post: {making}" if making else "") or act.get("now", ""), "log": act.get("lines", [])[-8:]})
+    nxt = sorted(planner.plan(bid=bid).items(), key=lambda x: x[1])[:1]
+    return {"plan": p, "categories": rows, "accounts": [{"id": a["id"], "platform": a["platform"], "name": a["name"]}
+                                                       for a in pg.page_accounts(bid)],
+            "today": {"clips": sum(done["clip"].values()), "posts": sum(done["post"].values())},
+            "next": {"kind": nxt[0][0][0], "id": nxt[0][0][1], "at": nxt[0][1]} if nxt else None,
+            "templates": [{"id": t["id"], "name": t["name"]} for t in posts.templates()]}
+
+
+@app.post("/api/page")
+def page_save(b: PagePlan):
+    from . import page as pg
+    new = b.model_dump(exclude_none=True)
+    if "start" in new:
+        new["from"] = new.pop("start")
+    cur = {**pg.plan(), **new}
+    if cur["to"] <= cur["from"]:
+        raise HTTPException(400, "the posting hours must end after they start")
+    return pg.save_plan(new)
+
+
+@app.post("/api/page/{cid}/make")
+def page_make(cid: int, kind: Literal["clip", "post"] = "clip"):
+    """One clip (a single video, a single clip) or one post for this category now, into the queue."""
+    from . import page as pg
+    _category(cid)
+    pg.sync()
+    if kind == "clip":
+        s = pg._producer_clip(cid)
+        if not s:
+            raise HTTPException(400, "this category makes no clips: give it a share of clips first")
+        if autopilot._lock(s["id"]).locked():
+            raise HTTPException(409, "it's already finding videos: wait for that round")
+        threading.Thread(target=autopilot.run_round, args=("one clip", s["id"], True), daemon=True).start()
+        return {"ok": True}
+    a = pg._producer_post(cid)
+    if not a or not pg.recipe(cid)["templates"]:
+        raise HTTPException(400, "pick at least one post type for this category first")
+    return _make_in_background(cid, None, "", a, "draft" if pg.plan()["approve"] else "ready")
+
+
+@app.post("/api/categories/{cid}/recipe")
+def recipe_save(cid: int, r: Recipe):
+    from . import page as pg
+    _category(cid)
+    return pg.save_recipe(cid, r.model_dump(exclude_none=True))
+
+
 @app.get("/api/scheduled")
 def scheduled():
-    """What's going out next: clips and posts with a time, plus autopilot clips / approved posts waiting for a slot
-    (time = the next slot of their schedule)."""
+    """What's going out next: clips and posts with a fixed time, plus items waiting for a slot with the time the
+    planner gives them (planner.plan: the same plan planner.dispatch posts on). None = its automation is off."""
+    from . import planner
     cats_by_id, out = {c["id"]: c for c in categories.all(brand_id=brands.current())}, []
-    nxt = {s["id"]: autopilot.schedule(s, posts=autopilot._posts(s["id"]))["next_at"] for s in autopilot.profiles()}
+    times = planner.plan()
     for c in db.all("clips", "status='scheduled'"):
         if c["category_id"] not in cats_by_id:
             continue
-        at = c["publish_at"] or nxt.get(autopilot.clip_aid(c) or 0) or min(nxt.values(), default=None)
-        out.append({**_clip_item(c, cats_by_id), "at": at, "slot": not c["publish_at"]})
+        item = {**_clip_item(c, cats_by_id), "at": c["publish_at"] or times.get(("clip", c["id"])),
+                "slot": not c["publish_at"]}
+        aid = autopilot.clip_aid(c)
+        if not item["targets"]:  # an autopilot clip: where it will go = its autopilot's platforms through the category's
+            s = autopilot.settings(aid) if aid else None  # accounts *now*
+            dests = categories.destinations(c["category_id"], (s or {}).get("platforms") or [])
+            item["targets"] = [{"account": a["id"], "format": social.DEFAULT_FORMAT[a["platform"]]} for a in dests]
+            item["platforms"] = sorted({a["platform"] for a in dests})
+        out.append(item)
     for p in db.all("posts", "status='ready'"):
-        cat = cats_by_id.get(p["category_id"])
-        if not cat:
+        if p["category_id"] not in cats_by_id:
             continue
-        at = p["publish_at"] or (autopilot.schedule(cat, posts=posts._times(cat["id"]))["next_at"] if cat else None)
-        out.append({**_post_item(p, cats_by_id), "at": at, "slot": not p["publish_at"]})
+        out.append({**_post_item(p, cats_by_id), "at": p["publish_at"] or times.get(("post", p["id"])),
+                    "slot": not p["publish_at"]})
     return sorted(out, key=lambda i: i["at"] or 9e12)

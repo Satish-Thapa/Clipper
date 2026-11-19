@@ -10,6 +10,7 @@ import json
 import os
 import shutil
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -23,7 +24,7 @@ SHORT_HARD_MAX = 180  # YouTube Shorts can't be longer than 3 min; no clip of an
 IG_MAX_MBPS, IG_BITRATE = 20, "14M"  # Instagram rejects Reels over 25 Mbps: heavier files get an IG-only re-encode
 YT_TOKEN = DATA / "youtube_token.json"  # written by the Google sign-in
 TIKTOK_TOKEN = DATA / "tiktok_token.json"  # TikTok's refresh token rotates; the current one is kept here
-YT_COOKIES = ROOT / "cookies.txt"  # uploaded on the Socials page
+YT_COOKIES = ROOT / "cookies.txt"  # uploaded in Settings → Downloads
 LOGO_FILE = DATA / "logo.png"  # uploaded on the Settings page (Branding); no logo is built in
 
 ASPECTS = [("0.5625", "Full screen 9:16"), ("0.8", "4:5 (thin bars)"), ("1", "Square 1:1"), ("1.7778", "Whole frame 16:9")]
@@ -43,6 +44,10 @@ FIELDS = [
     ("VISION_MODEL", "AI", "Model that can see images (optional)", "str", "",
      "Same provider. It looks at 2 frames of each candidate when picking clips, e.g. gpt-4o-mini on OpenAI. "
      "Empty = text only (DeepSeek can't see images)."),
+    ("OLLAMA_KEEP_WARM", "AI", "Keep the local model loaded while busy", "bool", True,
+     "ollama only: Ollama unloads an idle model after 5 minutes and the next request waits ~15 s while it reloads. On = "
+     "keep it loaded while Clipper is working (an AI call in the last 30 min, or an automation inside its hours); it "
+     "unloads as usual when Clipper goes quiet."),
     ("TWO_PASS", "AI", "Two-pass clip picking", "bool", True,
      "The fast model screens many more candidates first, the thorough one picks from the best. Better clips, "
      "a little more AI cost."),
@@ -70,11 +75,21 @@ FIELDS = [
      "Added as the last line of made posts' captions and as a final slide on carousels and Reels. {handle} / {topic} "
      "as for the end card. Empty = none."),
     ("MUSIC_ON", "Branding", "Music on posts", "bool", True,
-     "Posts that go up as Reels get a track from your music library (Settings → Branding → Music), picked by the AI to "
-     "fit the story. Never on clips. Instagram's own music can't be added through Meta's API."),
+     "Posts that go up as Reels (Instagram only: Facebook always gets the still card) get a track from your music "
+     "library (Settings → Branding → Music), picked by the AI to fit the story. Never on clips. Instagram's own music "
+     "can't be added through Meta's API."),
     ("LOGO_ON", "Branding", "Show my logo on clips", "bool", True, "Upload the logo below. No logo uploaded = none shown."),
     ("WATERMARK", "Branding", "Watermark text on clips", "str", "",
      "E.g. @yourchannel, shown faintly on every clip. Empty = none."),
+    ("MIN_CLIP_SCORE", "Clips", "Only keep clips the AI scores at least", "int", 80,
+     "0-100. Higher = pickier: fewer, stronger clips (most moments score 40-75; 85+ is a moment people share)."),
+    ("LIVE_CLIPS_PER_CHUNK", "Clips", "Live streams: most clips per chunk", "int", 3,
+     "The best few moments of each chunk, whatever a job asks for (a 3-hour stream at 3 = about 54 clips at most)."),
+    ("COLD_OPEN", "Clips", "Cold open: flash the payoff first", "bool", True,
+     "The clip opens on 1.5 s of its best moment with \"WAIT FOR IT...\", then plays from the start: hooks scrollers."),
+    ("CAPTION_HIGHLIGHT", "Clips", "Spoken word colour in captions", "str", "#FFE500",
+     "The word being said lights up in this colour while the rest stay white (hex: #FFE500 yellow, #39FF14 green, "
+     "#00E5FF cyan). Empty = plain white captions."),
     ("VOICE", "Clips", "Voice-over voice", "str", "", "A macOS 'say' / Windows voice name. Empty = system default."),
     ("CAPTIONS_FIRST", "Clips", "Use YouTube's own captions when a video has them", "bool", True,
      "Instant, and usually better for Hindi and other languages. Only captions in the language actually spoken are "
@@ -82,6 +97,10 @@ FIELDS = [
     ("WHISPER_FOR", "Clips", "Always transcribe these languages", "str", "en",
      "Spoken-language codes (comma-separated) that Whisper transcribes even when YouTube has captions: it's more "
      "accurate than YouTube's for English. The language is detected from the audio first. Empty = captions for all."),
+    ("POST_GAP_MIN", "Clips", "Minutes between posts on one account", "int", 30,
+     "However many automations post to an account (clip autopilots and post automations), it gets at most one post "
+     "per this many minutes: a post that's due waits for the gap instead of going up right after another. Platforms "
+     "treat bursts as spam. Your own \"Post now\" and timed schedules aren't held back. 0 = no gap."),
     ("DELETE_CLIPS_AFTER_UPLOAD", "Clips", "Delete clip files once published", "bool", True,
      "When a clip has gone up to every destination it was sent to, its video files are deleted to save space (the "
      "thumbnail stays in Library). A clip with a failed destination keeps its file so Retry still works."),
@@ -119,9 +138,12 @@ FIELDS = [
 
     ("YT_CLIENT_SECRET_JSON", "YouTube", "OAuth client (client_secret.json contents)", "secret", "",
      "Google Cloud → Credentials → OAuth client ID (Desktop app) → download JSON, paste it here. Then Connect "
-     "YouTube on the Socials page."),
+     "YouTube in Settings → Downloads."),
     ("YT_COOKIES_FROM_BROWSER", "YouTube", "Read YouTube cookies from", "select:|firefox|chrome|safari|edge|brave", "",
-     "Fixes \"confirm you're not a bot\". Or upload a cookies.txt on the Socials page. Chrome/Edge don't work on Windows."),
+     "Fixes \"confirm you're not a bot\". Or upload a cookies.txt in Settings → Downloads. Chrome/Edge don't work on Windows."),
+    ("YT_MAX_PER_DAY", "YouTube", "Most uploads a day", "int", 6,
+     "The autopilot sends at most this many clips to YouTube in any 24 hours. YouTube blocks a channel's uploads for a "
+     "day after too many (\"uploadLimitExceeded\"), especially in a burst. Other platforms aren't affected. 0 = no cap."),
     ("YT_FORCE_IPV4", "YouTube", "Download over IPv4", "bool", True,
      "Leave on: some providers' YouTube caches time out over IPv6."),
 
@@ -160,6 +182,101 @@ SPEC = {f[0]: f for f in FIELDS}
 _lock = threading.Lock()
 _cache = {}  # the saved values, loaded once; save() keeps it current
 
+# Settings that belong to a brand (its look, voice and audience): each brand has its own, starting from the defaults.
+# Everything else (AI keys and models, ffmpeg, downloads, the Meta / YouTube apps, cleanup) is shared by all brands.
+BRAND_KEYS = {"CHANNEL_FOCUS", "CONTENT_LANGUAGE", "ANY_NICHE", "END_CARD", "POST_CTA", "MUSIC_ON", "LOGO_ON", "WATERMARK",
+              "VOICE", "CROP_ASPECT", "SEARCH_REGION", "NEWS_FEEDS", "CLIP_FB_ACCOUNT", "CLIP_IG_ACCOUNT", "POST_GAP_MIN",
+              "IG_MAX_SECONDS", "YT_MAX_PER_DAY", "WHISPER_LANGUAGE",
+              "MIN_CLIP_SCORE", "COLD_OPEN"}
+_tl = threading.local()
+
+
+@contextmanager
+def brand(bid):
+    """Work as brand `bid`: its settings are the ones read (background work for a brand the app isn't showing)."""
+    prev = getattr(_tl, "bid", None)
+    _tl.bid = int(bid) if bid else None
+    try:
+        yield
+    finally:
+        _tl.bid = prev
+
+
+def brand_of_category(cid):
+    from . import db
+    c = db.get("post_categories", int(cid)) if cid else None
+    return c["brand_id"] if c else None
+
+
+def active_brand():
+    """The brand whose settings apply right now: the one set for this piece of work, else the one the app shows."""
+    bid = getattr(_tl, "bid", None)
+    if bid:
+        return bid
+    from . import db
+    try:
+        return int(db.get_setting("current_brand") or 0) or None
+    except Exception:
+        return None
+
+
+def in_brand(resolve):
+    """Decorator: run the function as the brand `resolve(*args)` returns (a job's / clip's / post's category's brand).
+    Errors resolving it just leave the current brand."""
+    import functools
+
+    def deco(fn):
+        @functools.wraps(fn)
+        def wrapper(*a, **k):
+            try:
+                bid = resolve(*a, **k)
+            except Exception:
+                bid = None
+            if not bid:
+                return fn(*a, **k)
+            with brand(bid):
+                return fn(*a, **k)
+        return wrapper
+    return deco
+
+
+def migrate_brands():
+    """Once: the branding settings saved before brands had their own go to the brand that has accounts (the real
+    page), with the uploaded logo; other brands start from the defaults."""
+    from . import db
+    if db.get_setting("brand_config_migrated"):
+        return
+    with db.conn() as c:
+        row = c.execute("SELECT brand_id, COUNT(*) n FROM accounts GROUP BY brand_id ORDER BY n DESC").fetchone()
+    bid = (row[0] if row else None) or active_brand()
+    if bid:
+        old = {k: v for k, v in _values().items() if k in BRAND_KEYS}
+        if old:
+            db.set_setting(f"config_b{bid}", json.dumps({**old, **_brand_values(bid)}))
+            _cache.pop(f"b{bid}", None)
+        if LOGO_FILE.exists() and not logo_file(bid).exists():
+            logo_file(bid).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(LOGO_FILE, logo_file(bid))
+    db.set_setting("brand_config_migrated", "1")
+
+
+def _brand_values(bid):
+    key = f"b{bid}"
+    if key not in _cache:
+        from . import db
+        try:
+            raw = db.get_setting(f"config_b{bid}")
+        except Exception:
+            return {}
+        _cache[key] = json.loads(raw) if raw else {}
+    return _cache[key]
+
+
+def logo_file(bid=None):
+    """The brand's uploaded logo (data/logos/<brand>.png)."""
+    bid = bid or active_brand()
+    return DATA / "logos" / f"{bid}.png" if bid else LOGO_FILE
+
 
 def _coerce(key, v):
     kind, default = SPEC[key][3], SPEC[key][4]
@@ -193,7 +310,7 @@ def _values():
 
 
 def get(key):
-    v = _values().get(key)
+    v = _brand_values(active_brand()).get(key) if key in BRAND_KEYS else _values().get(key)
     if SPEC[key][3] == "secret" and v:
         from . import crypto
         v = crypto.decrypt(v)  # secrets are stored encrypted (crypto.py)
@@ -204,7 +321,25 @@ def save(new):
     """Merge `new` into the saved settings. A secret sent as "" is left as it was; None removes a value (back to the
     default). Returns the keys that changed."""
     from . import db
-    vals, changed = dict(_values()), []
+    bid = active_brand()
+    mine = {k: v for k, v in new.items() if k in BRAND_KEYS}
+    new = {k: v for k, v in new.items() if k not in BRAND_KEYS}
+    changed = []
+    if mine and bid:  # this brand's own settings
+        bvals = dict(_brand_values(bid))
+        for k, v in mine.items():
+            if v is None:
+                if bvals.pop(k, None) is not None:
+                    changed.append(k)
+                continue
+            v = _coerce(k, v)
+            if bvals.get(k, SPEC[k][4]) != v:
+                bvals[k] = v
+                changed.append(k)
+        with _lock:
+            db.set_setting(f"config_b{bid}", json.dumps(bvals))
+            _cache[f"b{bid}"] = bvals
+    vals = dict(_values())
     for k, v in new.items():
         if k not in SPEC or (SPEC[k][3] == "secret" and v == ""):
             continue
@@ -234,7 +369,7 @@ def public():
     for key, group, label, kind, default, help_ in FIELDS:
         if group == "hidden":
             continue
-        f = {"key": key, "group": group, "label": label, "type": kind, "help": help_}
+        f = {"key": key, "group": group, "label": label, "type": kind, "help": help_, "brand": key in BRAND_KEYS}
         if kind == "secret":
             f["set"] = bool(vals.get(key))
         else:
@@ -252,8 +387,8 @@ def _account(aid):
 
 def _default_ffmpeg():
     """`ffmpeg` on PATH, else Homebrew's keg-only ffmpeg-full (macOS; it has libass for burned-in captions)."""
-    if shutil.which("ffmpeg"):
-        return "ffmpeg"
+    if shutil.which("ffmpeg"):  # the full path: yt-dlp's ffmpeg_location takes a bare "ffmpeg" for a file name
+        return shutil.which("ffmpeg")
     for p in ("/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg", "/usr/local/opt/ffmpeg-full/bin/ffmpeg"):
         if Path(p).exists():
             return p
@@ -274,7 +409,8 @@ def __getattr__(name):
             return v.strip() or _default_ffmpeg()
         return v
     if name == "LOGO":  # your uploaded logo, or None (switched off / none uploaded): nothing is built in
-        return LOGO_FILE if get("LOGO_ON") and LOGO_FILE.exists() else None
+        f = logo_file()
+        return f if get("LOGO_ON") and f.exists() else None
     # The Facebook Page / Instagram account clips upload to: chosen on the Settings page from the Accounts list.
     if name in ("FB_PAGE_ID", "FB_PAGE_TOKEN"):
         a = _account(get("CLIP_FB_ACCOUNT"))

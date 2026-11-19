@@ -104,3 +104,50 @@ if __name__ == "__main__":
     g, noise = np.full((180, 320, 3), 90, np.uint8), np.random.default_rng(0).integers(0, 255, (180, 320, 3), np.uint8)
     assert static_share([g, g, g]) == 1.0 and static_share([g, noise, g]) == 0.0
     print("vision ok")
+
+
+def facecam_box(src, samples=10):
+    """A streamer's facecam: a face that sits in the same spot near an edge / corner in most frames of the video.
+    -> the box around it as fractions of the frame (x, y, w, h), or None (no facecam: game characters move around,
+    and a face filling the middle is a talking head, not a cam box). The box is estimated from the face: a 4:3 window
+    about 3.4 face-widths wide around it, kept inside the frame."""
+    import subprocess
+    import cv2
+    from . import config, render
+    n = render.duration(src)
+    if n < 5:
+        return None
+    hits, seen = [], 0
+    for k in range(samples):
+        t = n * (k + 0.5) / samples
+        raw = subprocess.run([config.FFMPEG, "-loglevel", "error", "-nostdin", "-ss", f"{t:.2f}", "-i", str(src), "-frames:v", "1",
+                              "-vf", "scale=1280:-2", "-f", "image2pipe", "-c:v", "png", "-"],
+                             capture_output=True, timeout=30, stdin=subprocess.DEVNULL).stdout
+        img = cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_COLOR) if raw else None
+        if img is None:
+            continue
+        seen += 1
+        h, w = img.shape[:2]
+        det = cv2.FaceDetectorYN.create(str(MODEL), "", (w, h), 0.8)
+        _, faces = det.detect(img)
+        for fx, fy, fw, fh in ([] if faces is None else faces[:, :4]):
+            cx, cy = (fx + fw / 2) / w, (fy + fh / 2) / h
+            if 0.35 < cx < 0.65:  # the middle third: the game, a talking head, or an esports HUD's row of player cams
+                continue
+            if fw / w > 0.25 or fw / w < 0.025:  # too big for a cam box / too small (an esports HUD's player cams)
+                continue
+            hits.append((cx, cy, fw / w, fh / h))
+    if seen < 4 or not hits:
+        return None
+    # the facecam: the spot most samples have a face in (within 4% of the frame)
+    best = max(hits, key=lambda a: sum(abs(a[0] - b[0]) < 0.04 and abs(a[1] - b[1]) < 0.04 for b in hits))
+    same = [b for b in hits if abs(best[0] - b[0]) < 0.04 and abs(best[1] - b[1]) < 0.04]
+    if len(same) < max(3, 0.6 * seen):
+        return None
+    cx, cy = float(np.median([b[0] for b in same])), float(np.median([b[1] for b in same]))
+    fw = float(np.median([b[2] for b in same]))
+    bw = min(fw * 3.4, 0.45)
+    bh = min(bw * 16 / 9 * 3 / 4, 0.6)  # a 4:3 box: its height in frame-height units on a 16:9 picture
+    x = min(max(cx - bw / 2, 0.0), 1 - bw)
+    y = min(max(cy - bh * 0.45, 0.0), 1 - bh)
+    return round(x, 4), round(y, 4), round(bw, 4), round(bh, 4)
