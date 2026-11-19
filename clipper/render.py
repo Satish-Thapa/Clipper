@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 import subprocess
 import wave
@@ -32,6 +33,11 @@ def _t(sec):
     h, r = divmod(max(sec, 0), 3600)
     m, s = divmod(r, 60)
     return f"{int(h)}:{int(m):02d}:{s:05.2f}"
+
+
+def _secs(t):
+    h, m, s = t.split(":")
+    return int(h) * 3600 + int(m) * 60 + float(s)
 
 
 def bar_height(aspect=CROP_ASPECT):
@@ -147,9 +153,14 @@ def top_block(aspect=CROP_ASPECT, lines=1):
 
 
 def ass(words, start, end, vertical=True, headline="", per_line=3, aspect=CROP_ASPECT, hook=None, split=False,
-        cap_margin=None, head_y=None):
+        cap_margin=None, head_y=None, ending=True, shift=0.0):
     """Headline (white, black outline, no box: the video shows through) in the top black bar for the whole clip + big captions in the bottom black bar,
-    a few words at a time. With no bars (aspect 9/16) they sit on the video instead."""
+    a few words at a time. With no bars (aspect 9/16) they sit on the video instead.
+    shift: every line this many seconds later (an exact cut decodes from `shift` s before the clip starts)."""
+    if shift:
+        out = ass(words, start, end, vertical, headline, per_line, aspect, hook, split, cap_margin, head_y, ending)
+        return re.sub(r"^(Dialogue: \d+,)([\d:.]+),([\d:.]+),",
+                      lambda m: f"{m[1]}{_t(_secs(m[2]) + shift)},{_t(_secs(m[3]) + shift)},", out, flags=re.M)
     ws = [w for w in words if start <= w["s"] < end]
     lines = []
     for i in range(0, len(ws), per_line):
@@ -188,7 +199,8 @@ def ass(words, start, end, vertical=True, headline="", per_line=3, aspect=CROP_A
                       hook_size=40))
     if cap_margin and vertical:
         size["margin"] = cap_margin  # captions this far from the bottom (facecam at the bottom: just above it)
-    lines += end_card(end - start, w=size["w"], h=size["h"])
+    if ending:
+        lines += end_card(end - start, w=size["w"], h=size["h"])
     return ASS_HEAD.format(**size) + "\n".join(lines) + "\n"
 
 
@@ -234,6 +246,22 @@ def encoder():
     # ^ 18 Mbps cap: Instagram rejects Reels over 25 Mbps, and 1080x1920 looks no better above ~15
 
 
+def save_master(src, out, start, end):
+    """The clip's stretch of the source as it was (original framing and sound, no text): what a clip is rendered
+    again from when you change its headline after the source video was deleted. Small: one clip's worth."""
+    # Sync: jump to a point PRE seconds early (fast), then decode up to the exact start and cut there. Seeking straight
+    # to `start` in a stream recording (.ts) lets the picture begin only at the next keyframe while the sound begins
+    # at once, i.e. the video track starts later than the audio; players hide that, but apps that re-process the
+    # upload (Instagram, TikTok) can drop the gap and the voice no longer matches the picture. This way both tracks
+    # start together at 0, and aresample keeps the sound locked to the picture over gaps in the stream.
+    pre = min(start, 20.0)
+    subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-ss", f"{start - pre:.3f}", "-i", str(Path(src).resolve()),
+                    "-ss", f"{pre:.3f}", "-t", f"{end - start:.3f}", "-map", "0:v:0", "-map", "0:a?",
+                    "-af", "aresample=async=1:first_pts=0", *encoder(), "-pix_fmt", "yuv420p",
+                    "-c:a", "aac", "-b:a", "256k", "-ar", "48000", "-avoid_negative_ts", "make_zero",
+                    "-movflags", "+faststart", str(Path(out).resolve())], check=True)
+
+
 FFPROBE = (str(Path(FFMPEG).with_name("ffprobe" + Path(FFMPEG).suffix)) if Path(FFMPEG).parent != Path(".")
            else "ffprobe")
 
@@ -250,6 +278,33 @@ def reencode(src, out, bitrate):
                     "-maxrate", bitrate, "-bufsize", "28M", "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart",
                     str(out)], check=True, capture_output=True)
     return out
+
+
+PREVIEW_W, PREVIEW_RATE = 540, "1200k"  # light copy for watching in the app (over a tunnel: ~1/10 the data)
+_preview_locks, _preview_slots = {}, __import__("threading").Semaphore(2)  # at most 2 preview encodes at once
+
+
+def preview(clip, out_dir, name, poster=False):
+    """For the app's players: a light copy of a clip (540 wide, ~1.2 Mbps, starts playing at once; made when it's
+    first played) or, with poster=True, one small still (1s in, so the title shows). Made once, remade only when the
+    clip changes (e.g. a new headline). Downloads / uploads always use the full-quality clip. -> the file."""
+    clip, out = Path(clip), Path(out_dir) / f"{name}.{'jpg' if poster else 'mp4'}"
+    with _preview_locks.setdefault(str(out), __import__("threading").Lock()):
+        if out.exists() and out.stat().st_mtime >= clip.stat().st_mtime:
+            return out
+        out.parent.mkdir(parents=True, exist_ok=True)
+        tmp = out.with_name(out.stem + "_tmp" + out.suffix)
+        if poster:
+            cmd = ["-ss", f"{min(1.0, _duration(clip) / 2):.2f}", "-i", str(clip), "-frames:v", "1",
+                   "-vf", f"scale={PREVIEW_W}:-2", "-q:v", "5"]
+        else:
+            cmd = ["-i", str(clip), "-vf", f"scale={PREVIEW_W}:-2", *encoder()[:2], "-b:v", PREVIEW_RATE,
+                   "-maxrate", "1800k", "-bufsize", "3600k", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "96k",
+                   "-movflags", "+faststart"]
+        with _preview_slots:
+            subprocess.run([FFMPEG, "-y", "-loglevel", "error", *cmd, str(tmp)], check=True, capture_output=True)
+        tmp.replace(out)
+        return out
 
 
 def encoder_name():
@@ -338,12 +393,21 @@ def _duration(path):
         return 0.0
 
 
-def cut(src, out, start, end, vertical, words=(), headline="", voice=(), aspect=CROP_ASPECT, layout="", follow=True):
+def cut(src, out, start, end, vertical, words=(), headline="", voice=(), aspect=CROP_ASPECT, layout="", follow=True,
+        hook_text=None, clean=False, exact=False):
     """words: burn these as captions; headline: text at the top. Pass ()/"" for none.
     voice: [(wav_path, seconds into clip)] voice-over lines; the original audio is ducked under them.
     aspect: w/h of the kept slice of the frame (9/16 = fills the phone ... 16/9 = whole frame with bars).
     layout: "split:<file>" = the clip on the top half, that background video (data/fillers) on the bottom half.
-            "cam:<top|bottom>:<where>" = the streamer's facecam (cut out of the frame) and the gameplay stacked full screen."""
+            "cam:<top|bottom>:<where>" = the streamer's facecam (cut out of the frame) and the gameplay stacked full screen.
+    hook_text: shown in the follow message's place instead of it ("" = nothing there); campaigns put the required line here.
+    clean: no end card and no logo (campaign clips: only the official picture and sound).
+    exact: sync-safe cut for stream recordings (live clips, no text): seek a little early, then trim to the exact
+           frame, so picture and sound both start at 0 (see save_master). The headline / follow line are shifted to
+           match; no captions or voice-over with it."""
+    if exact:
+        assert not words and not voice, "exact cuts carry no captions or voice-over"
+    pre = min(start, 20.0) if exact else 0.0  # exact: decode from `pre` s early, cut on the exact frame (output -ss)
     filler = filler_path(layout) if vertical else None
     cam = cam_layout(layout) if vertical and not filler else None
     if cam and cam[1] == "auto":
@@ -357,16 +421,18 @@ def cut(src, out, start, end, vertical, words=(), headline="", voice=(), aspect=
     # ponytail: plain center crop; facecam/subject tracking is the upgrade if gameplay gets cut off
     vf = (f"crop='min(iw,ih*{aspect})':ih,scale=1080:1920:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos,"
           "pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,setsar=1" if vertical else "scale=-2:1080")
-    hook = follow_line() if follow and vertical else ""  # the follow message: its own on/off, with or without a headline
+    hook = (_clean_hook(hook_text) if hook_text and vertical else "") if hook_text is not None else (
+        follow_line() if follow and vertical else "")  # the follow message: its own on/off, with or without a headline
+    logo = LOGO if LOGO and LOGO.exists() and not clean else None
     subs = ""
-    if words or headline or hook or END_CARD.strip():
+    if words or headline or hook or (END_CARD.strip() and not clean):
         sub = out.with_suffix(".ass")
         sub.write_text(ass(words, start, end, vertical, headline, aspect=aspect, hook=hook, split=bool(filler),
                            cap_margin=CAM_H + 40 if cam and cam[0] == "bottom" else None,
-                           head_y=split_head_y(hook) if filler else None),
+                           head_y=split_head_y(hook) if filler else None, ending=not clean, shift=pre),
                        encoding="utf-8")
         subs = f",subtitles={sub.name}"  # relative name + cwd avoids ffmpeg path escaping
-    n_in = 1 + (1 if LOGO and LOGO.exists() else 0) + len(voice)  # the background video is the last input
+    n_in = 1 + (1 if logo else 0) + len(voice)  # the background video is the last input
     if filler:
         # Split: the main clip fills the top (full width, cropped to fill, the bigger part), your background video fills
         # the bottom. The follow message + headline sit at the top of the background video, so the clip stays clean.
@@ -394,7 +460,7 @@ def cut(src, out, start, end, vertical, words=(), headline="", voice=(), aspect=
     else:
         head = f"[0:v]{vf}{subs}"
     graph, logo_in = f"{head}[o]", []
-    if LOGO and LOGO.exists():
+    if logo:
         # Small logo top-right. Vertical with bars: in the top bar just above the video (clear of the headline and
         # YouTube's own top icons). Vertical without bars: just under the headline box (which sits at y 120-226),
         # so it never covers the headline. 16:9: in the video's top-right corner.
@@ -426,9 +492,11 @@ def cut(src, out, start, end, vertical, words=(), headline="", voice=(), aspect=
         import random
         off = random.uniform(0, max(0.0, _duration(filler) - (end - start) - 1))
         fill_in = ["-stream_loop", "-1", "-ss", f"{off:.2f}", "-i", str(filler.resolve())]
-    subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-ss", str(start), "-t", str(end - start),
+    sync =["-af", "aresample=async=1:first_pts=0"] if exact and amap == ["-map", "0:a?"] else []
+    subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-ss", f"{start - pre:.3f}", "-t", f"{end - start + pre:.3f}",
                     "-i", str(src.resolve()), *logo_in, *vo_in, *fill_in, "-filter_complex", graph, "-map", "[o]", *amap,
-                    "-t", str(end - start),
+                    *(["-ss", f"{pre:.3f}"] if exact else []), "-t", str(end - start), *sync,
+                    *(["-avoid_negative_ts", "make_zero"] if exact else []),
                     *encoder(), "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "256k", "-ar", "48000",
                     "-movflags", "+faststart", out.name],
                    check=True, cwd=out.parent)

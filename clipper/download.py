@@ -11,47 +11,81 @@ from pathlib import Path
 
 import yt_dlp
 
-from .config import FFMPEG, SEARCH_REGION, YT_COOKIES, YT_COOKIES_FROM_BROWSER
+from .config import DATA, FFMPEG, SEARCH_REGION, YT_COOKIES, YT_COOKIES_FROM_BROWSER
+
+COOKIE_DIR = DATA / "cookies"  # more cookies.txt sets (from other computers / accounts); data/ is never committed
 
 
 BOT_CHECK = "Sign in to confirm"  # YouTube's anti-bot wall: needs cookies (see config.YT_COOKIES)
 
 
+def cookie_sets():
+    """Every YouTube cookies.txt you added: the main one (YT_COOKIES) + any more in data/cookies/ (e.g. one exported
+    on another computer). Name -> path."""
+    sets = {YT_COOKIES.name: YT_COOKIES} if YT_COOKIES.exists() else {}
+    if COOKIE_DIR.exists():
+        sets.update({f.name: f for f in sorted(COOKIE_DIR.glob("*.txt"))})
+    return sets
+
+
+def cookie_file():
+    """The cookies.txt downloads use now: the one picked (or switched to after a bot check), else the first."""
+    sets = cookie_sets()
+    if not sets:
+        return None
+    from . import db
+    return sets.get(db.get_setting("yt_cookie_set") or "") or next(iter(sets.values()))
+
+
+def use_cookies(name):
+    from . import db
+    db.set_setting("yt_cookie_set", name)
+
+
 def ydl(opts):
     """yt_dlp.YoutubeDL with the YouTube cookies added, when there are any (every YouTube call goes through this)."""
+    f = None if YT_COOKIES_FROM_BROWSER else cookie_file()
     if YT_COOKIES_FROM_BROWSER:
         opts = {**opts, "cookiesfrombrowser": (YT_COOKIES_FROM_BROWSER,)}
-    elif YT_COOKIES.exists():
-        opts = {**opts, "cookiefile": str(YT_COOKIES)}
+    elif f:
+        opts = {**opts, "cookiefile": str(f)}
     return yt_dlp.YoutubeDL(opts)
 
 
 def bot_checked(e):
-    """True when an error is YouTube's 'Sign in to confirm you're not a bot'; remembers when, for the UI banner."""
+    """True when an error is YouTube's 'Sign in to confirm you're not a bot'; remembers when, for the UI banner.
+    With more than one cookies.txt, the next one is used from now on (the failed call can simply be run again)."""
     if BOT_CHECK not in str(e):
         return False
     from . import db
     db.set_setting("yt_bot_check", str(time.time()))
+    sets, cur = list(cookie_sets()), cookie_file()
+    if len(sets) > 1 and cur:
+        nxt = sets[(sets.index(cur.name) + 1) % len(sets)]
+        use_cookies(nxt)
+        db.syslog(f"YouTube bot check with cookies {cur.name}: switching to {nxt}")
     return True
 
 
 def cookies_state():
-    """For the UI: where cookies come from, and the last bot check (if newer than the cookies)."""
-    src = (f"browser: {YT_COOKIES_FROM_BROWSER}" if YT_COOKIES_FROM_BROWSER
-           else "cookies.txt" if YT_COOKIES.exists() else "")
+    """For the UI: where cookies come from, every cookies.txt added, and the last bot check (if newer than them)."""
+    sets, cur = cookie_sets(), cookie_file()
+    src = (f"browser: {YT_COOKIES_FROM_BROWSER}" if YT_COOKIES_FROM_BROWSER else cur.name if cur else "")
     from . import db
     hit = float(db.get_setting("yt_bot_check") or 0)
-    fresh = YT_COOKIES.stat().st_mtime if YT_COOKIES.exists() else 0
-    return {"source": src, "bot_check_at": hit if hit > fresh and time.time() - hit < 6 * 3600 else None}
+    fresh = max([f.stat().st_mtime for f in sets.values()] or [0])
+    return {"source": src, "bot_check_at": hit if hit > fresh and time.time() - hit < 6 * 3600 else None,
+            "sets": [{"name": n, "cookies": f.read_text(encoding="utf-8", errors="replace").count(".youtube.com"),
+                      "added": f.stat().st_mtime, "active": cur is not None and n == cur.name} for n, f in sets.items()]}
 
 
 FRAGMENTS = 8  # YouTube throttles each connection; fetching 8 chunks at once is several times faster
 
 
 def height_for(hq):
-    """Source quality: up to 1080p by default (fast), up to 4K when the job asks for it ("4K quality" box).
-    4K is ~10x the data but sharper for full-screen 9:16, where a 1080p source's slice is only 608px wide."""
-    return 2160 if hq else 1080
+    """Source quality: up to 1440p by default (a 9:16 slice / facecam crop is blown up to 1080 wide, so more source
+    pixels = a sharper clip; a 1080p video downloads as before), up to 4K with the "4K quality" box (~4x the data)."""
+    return 2160 if hq else 1440
 
 
 def fmt(height):
@@ -105,13 +139,39 @@ def record_live_chunk(url, out_path, seconds, stop, height=1080):
         return False
     # YouTube live usually serves video and audio as separate HLS streams.
     inputs = [x for f in i.get("requested_formats") or [i] for x in ("-i", f["url"])]
-    maps = ["-map", "0:v", "-map", "1:a"] if len(inputs) == 4 else []
-    p = subprocess.Popen([FFMPEG, "-y", "-loglevel", "error", *inputs, *maps, "-t", str(seconds),
-                          "-c", "copy", str(out_path)], stdin=subprocess.PIPE)
+    two = len(inputs) == 4
+    # SYNC: the two streams join the live edge at different moments (seconds apart). By default ffmpeg zeroes EACH
+    # input's clock on its own, which bakes that gap in (the voice came seconds before the picture). -copyts keeps
+    # YouTube's own timestamps, one clock shared by both, so they line up. -t can't be used with it (it would count
+    # from 0 and write nothing), so a two-stream chunk is ended on the wall clock: a live stream arrives in real time.
+    head, tail = (["-copyts"], ["-map", "0:v", "-map", "1:a"]) if two else ([], ["-t", str(seconds)])
+    p = subprocess.Popen([FFMPEG, "-y", "-loglevel", "error", *head, *inputs, *tail, "-c", "copy", str(out_path)],
+                         stdin=subprocess.PIPE)
+    ends = time.monotonic() + seconds
     while p.poll() is None:
-        if stop.wait(1):
-            p.communicate(b"q", timeout=30)  # 'q' = graceful ffmpeg quit, file stays valid
+        if stop.wait(1) or (two and time.monotonic() >= ends):
+            try:
+                p.communicate(b"q", timeout=30)  # 'q' = graceful ffmpeg quit, file stays valid
+            except subprocess.TimeoutExpired:
+                p.kill()
+    if two and Path(out_path).exists():
+        _align(Path(out_path))
     return True
+
+
+def _align(path):
+    """Make a two-stream recording start picture and sound together at 0. Their shared clock keeps them in sync, but
+    the sound usually starts a few seconds after the picture, and anything that reads only the sound (transcript,
+    loudness) would count from its own first sample, seconds off from the picture. The picture is copied untouched;
+    the sound gets that gap filled with silence. If it fails, the recording is kept as it is."""
+    tmp = path.with_name(path.stem + "_sync" + path.suffix)
+    r = subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-i", str(path), "-map", "0:v:0", "-map", "0:a:0",
+                        "-c:v", "copy", "-af", "aresample=async=1:first_pts=0", "-c:a", "aac", "-b:a", "256k",
+                        str(tmp)], capture_output=True)
+    if r.returncode == 0 and tmp.exists() and tmp.stat().st_size > 0:
+        tmp.replace(path)
+    else:
+        tmp.unlink(missing_ok=True)
 
 
 def frame(url, out_path):
@@ -165,8 +225,9 @@ def chat_events(line):
 
 
 def _chat_cmd(url, out):
+    f = cookie_file()
     cookies = (["--cookies-from-browser", YT_COOKIES_FROM_BROWSER] if YT_COOKIES_FROM_BROWSER
-               else ["--cookies", str(YT_COOKIES)] if YT_COOKIES.exists() else [])
+               else ["--cookies", str(f)] if f else [])
     return [sys.executable, "-m", "yt_dlp", "--quiet", "--no-warnings", "--skip-download", "--write-subs",
             "--sub-langs", "live_chat", *cookies, "-o", str(out), url]
 

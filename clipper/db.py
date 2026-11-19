@@ -53,6 +53,12 @@ CREATE TABLE IF NOT EXISTS news_runs (
 CREATE TABLE IF NOT EXISTS limit_hits (
   platform TEXT PRIMARY KEY, hit_at REAL, message TEXT
 );
+CREATE TABLE IF NOT EXISTS campaigns (
+  id INTEGER PRIMARY KEY, name TEXT, brief TEXT, rules TEXT DEFAULT '{}', platforms TEXT DEFAULT '[]',
+  shorts INTEGER DEFAULT 3, max_seconds INTEGER, aspect REAL, layout TEXT DEFAULT '', subtitles INTEGER DEFAULT 1,
+  onscreen INTEGER DEFAULT 1, trial_on_screen INTEGER DEFAULT 0, notes TEXT DEFAULT '',
+  status TEXT DEFAULT 'ready', log TEXT DEFAULT '', created REAL
+);
 CREATE TABLE IF NOT EXISTS topics (
   id INTEGER PRIMARY KEY, topic TEXT, videos INTEGER, shorts INTEGER, longs INTEGER, mode TEXT,
   subtitles INTEGER, voiceover INTEGER, platforms TEXT DEFAULT '[]', queries TEXT DEFAULT '[]',
@@ -77,13 +83,14 @@ def init():
                            ("jobs", "aspect REAL"), ("topics", "aspect REAL"),
                            ("jobs", "hq INTEGER DEFAULT 0"), ("topics", "hq INTEGER DEFAULT 0"),
                            ("topics", "source TEXT DEFAULT 'manual'"), ("topics", "pool INTEGER"),
-                           ("jobs", "chunk_minutes INTEGER"), ("jobs", "max_chunks INTEGER DEFAULT 0"),
+                           ("jobs", "chunk_minutes INTEGER"), ("jobs", "max_chunks INTEGER DEFAULT 0"), ("jobs", "upload_best INTEGER"), ("jobs", "upload_best_long INTEGER"),
                            ("jobs", "kind TEXT DEFAULT 'video'"), ("clips", "post_at REAL"), ("news", "run_id INTEGER"),
                            ("jobs", "layout TEXT DEFAULT ''"), ("topics", "layout TEXT DEFAULT ''"),
                            ("jobs", "follow INTEGER DEFAULT 1"), ("topics", "follow INTEGER DEFAULT 1"),
                            ("clips", "post_to TEXT"),
                            ("jobs", "notes TEXT DEFAULT ''"), ("topics", "notes TEXT DEFAULT ''"),
-                           ("clips", "why TEXT DEFAULT '{}'")):  # why: the Clips page "Why this clip?"  # post_to: platforms for a clip scheduled by hand  # columns added after v0.1
+                           ("clips", "why TEXT DEFAULT '{}'"),
+                           ("jobs", "campaign_id INTEGER"), ("clips", "caption TEXT DEFAULT ''")):  # campaign.py  # why: the Clips page "Why this clip?"  # post_to: platforms for a clip scheduled by hand  # columns added after v0.1
             try:
                 c.execute(f"ALTER TABLE {table} ADD COLUMN {col}")
             except sqlite3.OperationalError:
@@ -92,6 +99,7 @@ def init():
         c.execute("UPDATE jobs SET status='interrupted' WHERE status NOT IN ('done','failed','stopped')")
         # Topics still 'queued' are picked up again by topics.loop(); only a half-done one is interrupted.
         c.execute("UPDATE topics SET status='interrupted' WHERE status NOT IN ('queued','done','failed','stopped')")
+        c.execute("UPDATE campaigns SET status='ready' WHERE status='reading the brief'")  # its thread died
 
 
 def insert(table, **row):

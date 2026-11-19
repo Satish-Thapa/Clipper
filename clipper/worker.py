@@ -1,10 +1,12 @@
 """Background pipeline: download/record -> signals -> transcribe -> DeepSeek pick -> render -> upload."""
 import json
 import subprocess
-from pathlib import Path
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+import numpy as np
 
 from . import db, download, pick, render, signals, social, transcribe
 from .config import (CLIP_PAD_AFTER, CLIP_PAD_BEFORE, DATA, IG_MAX_SECONDS, KEEP_SOURCES, LIVE_CHUNK_SECONDS,
@@ -89,7 +91,7 @@ def _run(job_id):
     (d / "clips").mkdir(parents=True, exist_ok=True)
     t0 = time.time()
     db.log(job_id, f"job started: {job['url']} | {job['shorts']} shorts, {job['longs']} long, mode {job.get('mode')}, "
-                   f"framing {job.get('aspect') or 'default'}, {'4K' if job.get('hq') else '1080p'}, "
+                   f"framing {job.get('aspect') or 'default'}, {'4K' if job.get('hq') else 'up to 1440p'}, "
                    f"subtitles {'on' if job.get('subtitles') else 'off'}, follow message {'on' if job.get('follow', 1) else 'off'}, voice-over {'on' if job.get('voiceover') else 'off'}, "
                    f"upload to {job.get('platforms') if job.get('auto_upload') else 'nowhere'}"
                    + (f", topic T{job['topic_id']}" if job.get("topic_id") else ""))
@@ -195,7 +197,7 @@ def _pieces(job, src, total, d, title, heatmap, chat, comments):
     """A long video (LONG_VIDEO_MINUTES+) clipped like a live stream: cut into pieces of the job's piece length
     (default LIVE_CHUNK_SECONDS), each with the previous piece's last JOIN_SECONDS in front (a moment on a boundary
     can still be one clip), and each piece processed on its own (two at a time): its own loudness, transcript,
-    AI pick and renders, with shorts/longs PER PIECE and dull pieces skipped, exactly like live pieces.
+    AI pick and renders, with shorts/longs PER PIECE and at least one clip per piece, exactly like live pieces.
     The video's heatmap, chat replay and comment times are shifted to each piece's own clock."""
     from .config import FFMPEG
     jid, stop = job["id"], STOPS[job["id"]]
@@ -235,6 +237,7 @@ def _pieces(job, src, total, d, title, heatmap, chat, comments):
         db.update("jobs", jid, status="clipping pieces")
         for f in futures:
             f.result()
+        db.log(jid, f"ALL {n} PIECE(S) FINISHED: {len(db.all('clips', 'job_id=?', (jid,)))} clip(s) from this video")
 
 
 def _live(job, i, d):
@@ -258,7 +261,12 @@ def _live(job, i, d):
 
     # Chat runs in its own thread for the whole stream. It only stores timestamps (seconds since 1970)
     # of messages, not their text; a burst of messages = something just happened.
-    chat = download.LiveChat(job["url"], stop)
+    # The chat thread gets its OWN stop flag: `stop` means "the user pressed Stop" to every piece still being
+    # processed (_check), so it must never be set just because the recording is over.
+    db.log(jid, "live: clips keep the job's layout with the original sound in sync and a short title on top matching the scene, no subtitles; "
+                "the AI only picks the moments")
+    chat_stop = threading.Event()
+    chat = download.LiveChat(job["url"], chat_stop)
     chat.start()
 
     workers, k = [], 0  # k = chunk number
@@ -281,8 +289,7 @@ def _live(job, i, d):
         # (no re-encode). Returns False if the stream is already over. If Stop is pressed mid-chunk, ffmpeg is
         # told to quit gracefully and the partial chunk is kept and still processed below.
         # Small gaps (a few seconds) between chunks are lost while the next recording starts.
-        if not download.record_live_chunk(job["url"], out, seconds, stop,
-                                           download.height_for(job.get("hq"))):
+        if not download.record_live_chunk(job["url"], out, seconds, stop, download.height_for(job.get("hq"))):
             db.log(jid, "stream ended")
             break
         if not out.exists() or out.stat().st_size == 0:  # ffmpeg produced nothing: stream died mid-chunk
@@ -320,17 +327,22 @@ def _live(job, i, d):
                     + f"; {len(busy)} piece(s) being processed at once while the next one records")
         k += 1
 
-    # Stream is over (or Stop was pressed). Setting stop also ends the chat thread: it checks the flag after
-    # each new message (if chat goes quiet it just lingers; it's a daemon thread so it dies with the server).
+    # Stream is over, the pieces asked for are recorded, or Stop was pressed. End the chat thread (it checks its
+    # flag after each new message; if chat goes quiet it lingers, a daemon thread that dies with the server).
+    # Pieces still processing keep going unless the user really pressed Stop.
     stopped = stop.is_set()
-    stop.set()
+    chat_stop.set()
     db.update("jobs", jid, status="finishing clips")
+    if workers:
+        db.log(jid, f"recording finished: waiting for {sum(w.is_alive() for w in workers)} piece(s) still being clipped")
     for w in workers:  # wait for every chunk's clips to finish, then _run() marks the job done/stopped
         w.join()
+    db.log(jid, f"ALL {len(workers)} PIECE(S) FINISHED: {len(db.all('clips', 'job_id=?', (jid,)))} clip(s) from this stream")
     return stopped
 
 
 JOIN_SECONDS = 60  # live: how much of the previous piece's end is put in front of the next piece
+LIVE_HEAD_WORDS = 5  # live: the title on top is kept short (the AI's headline, at most this many words)
 
 
 def _join_tail(prev, cur, out):
@@ -372,9 +384,17 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None, live=No
       "manual"  - only steps 1-2 (so the UI can show the curves); the user adds cuts via manual_cuts().
     """
     jid = job["id"]
+    if job.get("campaign_id"):  # paid campaign: its own flow and prompts (campaign.process), not the viral-clip one
+        from . import campaign
+        try:
+            return campaign.process(job, src, title, d)
+        except Stopped:
+            return db.log(jid, "stopped by you: no more clips from this part")
+        except Exception as e:
+            return db.log(jid, f"ERROR in the campaign flow for {src.name}: {e!r}", exc=True)
     mode = job.get("mode") or "hype"
     # live = {"piece": N, "boundary": seconds} for a live piece: the first `boundary` seconds of `src` are the end of
-    # the previous piece (so a moment cut in half can be joined), and DeepSeek may skip the piece.
+    # the previous piece (so a moment cut in half can be joined), and every piece makes at least one clip.
     tag = f"[piece {live['piece']}] " if live else ""
     B = live["boundary"] if live else 0
 
@@ -449,6 +469,13 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None, live=No
             for s, e in spans:
                 words += transcribe.words(src, s, e)
         say(f"transcript: {len(words)} words")
+        if mode != "hype":  # whole transcript: where the streamer reacts ("oh my god", "no way", shouting)
+            react = signals.reactions(words, n)
+            if react.any():
+                parts = {**parts, "reaction": react}
+                peaks = sorted({int(t // 10 * 10) for t in np.flatnonzero(react >= 0.6)})
+                say(f"streamer reactions: {len(peaks)} spot(s) with surprise / hype words"
+                    + (f" ({', '.join(_mmss(t) for t in peaks[:10])}{' ...' if len(peaks) > 10 else ''})" if peaks else ""))
         for c in cands:  # "[12.0] hello there [17.1] ..." text per window, absolute seconds
             c["transcript"] = transcribe.text_with_times(words, c["start"], c["end"])
 
@@ -459,30 +486,53 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None, live=No
         pick.LAST.model, pick.LAST.link = "", ""
         try:
             with db.step(jid, tag + f"STEP 5 asking {pick.ai_name()} to pick {counts['short']} short / {counts['long']} long"):
-                note, verdict = (pick.live_note(B) if live else "") + pick.user_note(job.get("notes")), {}
+                note, verdict = (pick.live_note(B, title, live["piece"]) if live else "") + pick.user_note(job.get("notes")), {}
                 if mode == "hype":
                     chosen = pick.choose(title, cands, counts, note, verdict)
                 else:
                     chosen = pick.choose_full(title, n, transcribe.text_with_times(words, 0, n),
-                                              parts if mode == "ai+hype" else None, counts, note, verdict)
+                                              parts if mode == "ai+hype" else ({"reaction": parts["reaction"]} if "reaction" in parts else None),
+                                              counts, note, verdict)
         except Exception as e:
             say(f"AI failed ({e!r}), using raw hype windows")
             chosen = pick.fallback(cands, counts, title)
-        if live:  # live pieces: DeepSeek's decision, spelled out
-            kept = []
+        if live:  # live pieces: DeepSeek's decision, spelled out. Every piece makes at least one clip.
+            fresh = []
             for c in chosen:
                 if c["end"] <= B + 3:
                     say(f"DECISION: dropped \"{c['title']}\": it ends inside the previous piece (already covered)")
-                elif c["score"] < pick.LIVE_MIN:
-                    say(f"DECISION: dropped \"{c['title']}\": virality {c['score']:.0f} < {pick.LIVE_MIN}, not worth a clip")
                 else:
+                    fresh.append(c)
+            best = max(fresh, key=lambda c: c["score"], default=None)
+            kept = []
+            for c in fresh:
+                if c is best or c["score"] >= pick.LIVE_MIN:
                     kept.append(c)
+                    if c is best and c["score"] < pick.LIVE_MIN:
+                        say(f"DECISION: kept \"{c['title']}\" (virality {c['score']:.0f} < {pick.LIVE_MIN}): "
+                            f"the best moment of this piece, every piece makes at least one clip")
+                else:
+                    say(f"DECISION: dropped \"{c['title']}\": virality {c['score']:.0f} < {pick.LIVE_MIN}, not worth a clip")
             chosen = kept
+            if not chosen:  # the AI gave nothing usable: the strongest hype window of this piece instead
+                one = {"short": 1, "long": 0} if counts.get("short") else {"short": 0, "long": 1}
+                chosen = pick.fallback([c for c in cands if c["end"] > B + 5], one, title)
+                if chosen:
+                    chosen[0]["reason"] = "the strongest moment of this piece by the hype signal (the AI picked none)"
+                    say(f"DECISION: the AI picked nothing"
+                        + (f" ({verdict.get('skip')})" if verdict.get("skip") else "")
+                        + ", using this piece's strongest hype window so it still makes one clip")
             if not chosen:
-                say(f"DECISION: nothing worth clipping in this piece, skipped"
-                    + (f": {verdict.get('skip')}" if verdict.get("skip") else ""))
+                say("DECISION: no usable moment in this piece (too short), skipped")
                 _save_curves(d, src, curve, parts)
+                _piece_done(jid, live["piece"], say)
                 return
+            lim = _best_limits(job)
+            if job.get("auto_upload") and lim:  # held: only this piece's best N shorts / M longs go up when it's done
+                for c in chosen:
+                    c["upload"] = False
+                say("DECISION: when this piece is done, upload its best "
+                    + " + ".join(f"{'all' if lim.get(k) is None else lim[k]} {k}(s)" for k in ("short", "long")))
             joined = [c for c in chosen if c["start"] < B]
             say(f"DECISION: {len(chosen)} clip(s) from this piece"
                 + (f", {len(joined)} JOINED across the previous piece and this one (starts {B - joined[0]['start']:.0f}s "
@@ -509,10 +559,63 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None, live=No
         # STEP 6: Save each clip to the DB, render it with ffmpeg (every kind vertical 9:16), burn in the
         # headline (top) + captions (bottom) if the job asked for subtitles, then upload if auto-upload is on.
         _render_clips(job, src, d, chosen, words, job.get("subtitles", 1))
+        if live:
+            _upload_best(jid, live["piece"], say)
+            _piece_done(jid, live["piece"], say)
     except Stopped:
         say("stopped by you: no more clips from this part")
     except Exception as e:
         say(f"ERROR processing {src.name}: {e!r}", exc=True)
+
+
+def _best_limits(job):
+    """{"short": N|None, "long": M|None} when "upload the best" is set for shorts and/or longs (None = all of that
+    kind), or {} when both are empty (every clip uploads as soon as it's made)."""
+    s, lo = job.get("upload_best"), job.get("upload_best_long")
+    return {} if s is None and lo is None else {"short": s, "long": lo}
+
+
+def _upload_best(jid, piece, say):
+    """"Upload the best": right after a piece is clipped, upload THAT piece's best N shorts and best M longs (by the
+    AI's score, best first) while the next piece records; the rest stay in Clips."""
+    job = db.get("jobs", jid)
+    lim = _best_limits(job)
+    if not job.get("auto_upload") or not lim:
+        return
+    _check(jid)  # Stop pressed: upload nothing more
+    mine = [c for c in db.all("clips", "job_id=? AND status='rendered'", (jid,)) if _piece_of(c) == piece]
+    for kind in ("short", "long"):
+        ready = sorted([c for c in mine if c["kind"] == kind], key=lambda c: -(c.get("score") or 0))
+        if not ready:
+            continue
+        best = ready if lim.get(kind) is None else ready[:lim[kind]]
+        say(f"UPLOADING THE BEST {len(best)} of this piece's {len(ready)} {kind}(s): "
+            + (", ".join(f"#{c['id']} \"{c['title']}\" (score {c['score']:.0f})" for c in best) or "none")
+            + (f"; the other {len(ready) - len(best)} stay in Clips" if len(ready) > len(best) else ""))
+        for c in best:
+            try:
+                upload_clip(c["id"])
+            except Exception as e:
+                say(f"clip #{c['id']} upload failed: {e!r}", exc=True)
+
+
+def _piece_of(c):
+    try:
+        return (json.loads(c.get("why") or "{}") or {}).get("piece")
+    except ValueError:
+        return None
+
+
+def _piece_done(jid, piece, say):
+    """Log line when a piece is fully clipped: how many clips it made and what the job does next."""
+    mine = db.all("clips", "job_id=?", (jid,))
+    made = [c for c in mine if c.get("status") != "render failed" and _piece_of(c) == piece]
+    total = len(mine)
+    st = (db.get("jobs", jid) or {}).get("status") or ""
+    nxt = (f"piece {st.split()[-1].split('/')[0]} is recording" if st.startswith("recording chunk") else
+           f"now {st}" if st.startswith(("cutting piece", "clipping pieces")) else
+           "finishing the other pieces" if st == "finishing clips" else st or "done")
+    say(f"FINISHED: {len(made)} clip(s) ready in Clips ({total} from this job so far). Next: {nxt}")
 
 
 def _render_clips(job, src, d, chosen, words, subtitles):
@@ -556,6 +659,26 @@ def _render_one(job, src, d, c, words, subtitles):
                     title=c["title"], description=c["description"], tags=json.dumps(c["tags"]),
                     reason=c["reason"], headline=c.get("headline", ""), why=json.dumps(c.get("why") or {}), status="rendering")
     out = d / "clips" / f"{cid}.mp4"
+    if job.get("is_live"):
+        # Live streams: the job's framing / layout (e.g. streamer on top, gameplay below) with the ORIGINAL sound in
+        # sync, cut sync-safe (exact), and a short title at the top matching the scene (the AI's headline). No
+        # subtitles, follow line, logo, end card or voice-over.
+        head = " ".join(pick.headline_for(c.get("headline"), c.get("title")).split()[:LIVE_HEAD_WORDS])
+        with db.step(jid, f"STEP 6 cutting {c['kind']} #{cid} ({c['end'] - c['start']:.0f}s, original audio, "
+                          f"title on top \"{head.upper()}\"): {c['title']}"):
+            try:
+                render.cut(src, out, c["start"], c["end"], True, (), head, (), job.get("aspect"), job.get("layout") or "",
+                           follow=False, hook_text="", clean=True, exact=True)
+            except Exception:
+                db.update("clips", cid, status="render failed")
+                raise
+        db.log(jid, f"clip #{cid} ready: {out.name}, {out.stat().st_size / 1e6:.1f} MB")
+        db.update("clips", cid, path=str(out.relative_to(DATA)), status="rendered")
+        if job["auto_upload"] and c.get("upload", True):
+            upload_clip(cid)
+        elif job["auto_upload"]:
+            db.log(jid, f"clip #{cid} ready, waiting for the rest of this piece: only its best ones go up")
+        return
     voice = _voiceover(job, c, words, out) if job.get("voiceover") else []
     try:
         with db.step(jid, f"STEP 6 rendering {c['kind']} #{cid} ({c['end'] - c['start']:.0f}s, {render.encoder_name()}): "
@@ -570,14 +693,114 @@ def _render_one(job, src, d, c, words, subtitles):
         for wav, _ in voice:
             wav.unlink(missing_ok=True)  # voice lines are baked into the mp4 now
     db.log(jid, f"clip #{cid} ready: {out.name}, {out.stat().st_size / 1e6:.1f} MB")
+    keep_master(jid, src, out, c["start"], c["end"], words)
     db.update("clips", cid, path=str(out.relative_to(DATA)), status="rendered")
-    if job["auto_upload"]:
+    if job["auto_upload"] and not c.get("upload", True):  # long video in pieces: held for upload_best at the end
+        db.log(jid, f"clip #{cid} ready, waiting for the rest of this piece: only its best ones go up")
+    elif job["auto_upload"]:
         topic = db.get("topics", job["topic_id"]) if job.get("topic_id") else None
         if topic and topic.get("source") == "auto":  # autopilot.upload_tick() posts it on its slot of the day
             db.update("clips", cid, status="scheduled")
             db.log(jid, f"clip #{cid} scheduled: the autopilot posts it on the next free slot")
         else:
             upload_clip(cid)
+
+
+def keep_master(jid, src, out, start, end, words):
+    """Keep <id>_master.mp4 (the clip's stretch of the source, no text) + <id>_words.json (its words, from 0), so the
+    headline can be changed later from the Clips page even after the source video is deleted."""
+    try:
+        render.save_master(src, out.with_name(f"{out.stem}_master.mp4"), start, end)
+        out.with_name(f"{out.stem}_words.json").write_text(json.dumps(
+            [{**w, "s": round(w["s"] - start, 3), "e": round(w["e"] - start, 3)} for w in words if start <= w["s"] < end]))
+    except Exception as e:
+        db.log(jid, f"couldn't keep the clip's master copy ({e!r}): its headline can't be changed later")
+
+
+EDIT_FIELDS = ("title", "description", "tags", "headline", "caption")
+
+
+def edit_clip(cid, changes):
+    """Your edits from the Clips page: title / description / hashtags / caption are saved as they are; a new
+    headline (the text burned on the video) re-renders the clip in the background, from its master copy (or the
+    job's source if it's still there). Raises ValueError when the headline can't be re-rendered (nothing is saved)."""
+    c = db.get("clips", cid)
+    if not c:
+        raise ValueError("clip not found")
+    job = db.get("jobs", c["job_id"]) or {}
+    new = {k: v for k, v in changes.items() if k in EDIT_FIELDS and v is not None}
+    if "tags" in new:
+        new["tags"] = json.dumps([t for t in dict.fromkeys(str(t).strip().lstrip("#") for t in new["tags"]) if t][:15])
+    redo = "headline" in new and new["headline"].strip() != (c.get("headline") or "")
+    if redo:
+        if c["status"] in ("rendering", "uploading"):
+            raise ValueError(f"the clip is {c['status']}: try again when it's done")
+        if not c.get("path"):
+            raise ValueError("the clip's file is gone")
+        if job.get("voiceover"):
+            raise ValueError("this clip has an AI voice-over, which can't be rebuilt: the headline stays")
+        if not _rerender_source(c, job):
+            raise ValueError("the headline is burned into the video and this clip has no master copy (made before "
+                             "edits existed) and its source video was deleted (KEEP_SOURCES=1 keeps it): title, "
+                             "description and hashtags can still be changed")
+        new["headline"] = new["headline"].strip()[:60]
+    if new:
+        db.update("clips", cid, **new)
+    if redo:
+        before = c["status"]
+        db.update("clips", cid, status="rendering")
+        threading.Thread(target=_rerender, args=(cid, before), daemon=True).start()
+    if job.get("campaign_id"):
+        from . import campaign
+        campaign.recheck(cid)
+    return db.get("clips", cid)
+
+
+def _rerender_source(c, job):
+    """-> (video, start, end, words or None) to render the clip from again, or None."""
+    out = DATA / c["path"]
+    master = out.with_name(f"{out.stem}_master.mp4")
+    if master.exists():
+        wf = master.with_name(f"{out.stem}_words.json")
+        words = json.loads(wf.read_text()) if wf.exists() else []
+        return master, 0.0, render._duration(master), words
+    why = json.loads(c.get("why") or "{}")
+    src = next((DATA / "jobs" / str(c["job_id"])).glob("source.*"), None)
+    if src and not job.get("is_live") and why.get("piece") is None:  # a live / long-video piece's times aren't the source's
+        return src, c["start"], c["end"], None
+    return None
+
+
+def _rerender(cid, before):
+    c = db.get("clips", cid)
+    job = db.get("jobs", c["job_id"]) or {}
+    jid, out = c["job_id"], DATA / c["path"]
+    src, s, e, words = _rerender_source(c, job)
+    tmp = out.with_name(f"{out.stem}_edit.mp4")
+    try:
+        with db.step(jid, f"re-rendering #{cid} with the new headline \"{c['headline']}\""):
+            if words is None:
+                words = transcribe.words(src, s, e) if job.get("subtitles", 1) else []
+                keep_master(jid, src, out, s, e, words)  # next time it renders from the master
+                words = [w for w in words if s <= w["s"] < e]
+            subs = words if job.get("subtitles", 1) else ()
+            why = json.loads(c.get("why") or "{}")
+            if job.get("campaign_id"):
+                render.cut(src, tmp, s, e, True, subs, c["headline"], (), job.get("aspect"), job.get("layout") or "",
+                           follow=False, hook_text=(why.get("campaign") or {}).get("onscreen_line") or "", clean=True)
+            else:
+                render.cut(src, tmp, s, e, True, subs, c["headline"], (), job.get("aspect"), job.get("layout") or "",
+                           follow=bool(job.get("follow", 1)))
+        tmp.replace(out)
+        out.with_suffix(".ass").unlink(missing_ok=True)
+        tmp.with_suffix(".ass").replace(out.with_suffix(".ass")) if tmp.with_suffix(".ass").exists() else None
+        db.update("clips", cid, status=before)
+        if json.loads(c.get("uploads") or "{}"):
+            db.log(jid, f"#{cid}: the new version is only here; the copies already posted don't change")
+    except Exception as ex:
+        tmp.unlink(missing_ok=True)
+        db.update("clips", cid, status=before)
+        db.log(jid, f"re-rendering #{cid} failed, the old video stays: {ex!r}", exc=True)
 
 
 def _voiceover(job, c, words, out):
@@ -692,7 +915,8 @@ def upload_clip(cid, platforms=None, force=False):
         db.log(c["job_id"], f"uploading #{cid} to {p}...")
         try:
             done[p] = {**social.upload(p, DATA / c["path"], c["title"], c["description"],
-                                       json.loads(c["tags"] or "[]"), c["end"] - c["start"]), "at": time.time()}
+                                       json.loads(c["tags"] or "[]"), c["end"] - c["start"],
+                                       caption=c.get("caption") or None), "at": time.time()}
             db.log(c["job_id"], f"uploaded #{cid} to {p} in {time.time() - t:.0f}s -> {done[p]['url']}")
         except Exception as e:
             done[p] = {"error": social.error_text(e)[:500], "at": time.time()}  # shown as-is in the UI

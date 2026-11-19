@@ -31,14 +31,15 @@ Vice City sunset look (night purple, pink-to-orange gradients, neon glow, Anton 
 4. [Autopilot](#autopilot)
 5. [News & facts posts](#news--facts-posts)
 6. [Live streams](#live-streams)
-7. [What works (analytics) and reports](#what-works-analytics-and-reports)
-8. [Connecting your socials](#connecting-your-socials)
-9. [Limits and known platform issues](#limits-and-known-platform-issues)
-10. [Settings (.env)](#settings-env)
-11. [How it works inside](#how-it-works-inside)
-12. [Technical deep dive](#technical-deep-dive)
-13. [Troubleshooting](#troubleshooting)
-14. [Legal](#legal)
+7. [Clipping campaigns (Whop)](#clipping-campaigns-whop)
+8. [What works (analytics) and reports](#what-works-analytics-and-reports)
+9. [Connecting your socials](#connecting-your-socials)
+10. [Limits and known platform issues](#limits-and-known-platform-issues)
+11. [Settings (.env)](#settings-env)
+12. [How it works inside](#how-it-works-inside)
+13. [Technical deep dive](#technical-deep-dive)
+14. [Troubleshooting](#troubleshooting)
+15. [Legal](#legal)
 
 ---
 
@@ -58,7 +59,7 @@ Vice City sunset look (night purple, pink-to-orange gradients, neon glow, Anton 
             │             ─▶ DeepSeek: clips well? ─▶ face check      ─▶ DeepSeek picks + writes
             │             ─▶ one job per video                        ─▶ 7-15s news video
             ▼                         │                                   │
-   JOB: download (8 parallel chunks, 1080p or 4K) ◀┘                      │
+   JOB: download (8 parallel chunks, 1440p or 4K) ◀┘                      │
         ─▶ hype curve (YouTube heatmap + chat + comment timestamps + loudness)
         ─▶ candidate windows ─▶ Whisper transcript (GPU)
         ─▶ DeepSeek picks moments, writes titles, headlines, hashtags
@@ -132,8 +133,9 @@ Open **http://127.0.0.1:8000**.
 | **Create** | Paste a YouTube link (video or live stream) or upload a file. Set shorts/long counts, who picks the moments, framing, 4K, subtitles, voice-over, where to post. For live streams: piece length and how many pieces. |
 | **Auto** | The autopilot: ON/OFF, **Stop everything**, today's posting slots, settings, and the **Activity** view of every round. |
 | **Topics** | Queue a topic. It finds the most-viewed recent videos about it, checks they clip well, and clips them one after another. |
+| **Campaigns** | Paid clipping campaigns (Whop): paste the brief → rules, add the official videos → clips with captions built to the rules, a ✓/✕ checklist per clip, copy / download / post / save the post link. See [Clipping campaigns](#clipping-campaigns-whop). |
 | **Jobs** | Every video being or already clipped: status, full log, hype curves, "cut it yourself", and live controls for streams. **■ Stop** stops a job at the next step: the download is aborted, and loudness, transcript, AI pick and each render check first (clips already made stay; a live recording stops too). **↻ Retry** on a failed, interrupted or stopped job runs it again as a new job with the same settings (the old one stays as a record, marked "retried as #N"; an uploaded file is reused if it's still there). At the top: **↻ Retry all failed** (failed + interrupted, not yet retried) and **■ Stop all running**. |
-| **Clips** | **▶ Watch as reels (full screen)** (or **⛶ Reels** on a clip card): every clip full screen, one per screen, like Instagram. Scroll/swipe or ↑ ↓ to the next; the visible one autoplays and loops (space pauses, M toggles sound, Esc closes). Filter: all / not posted yet / scheduled / posted. Buttons on the right: sound, **post** now to a platform, **schedule** (when + where) or **don't post**, **why** this clip, open the file, delete; title, headline, reason and where it's posted/scheduled at the bottom, updating live. Every clip: preview, title, score, why it was picked (open **Why this clip?** for the AI's reasoning as setup → moment → landing, its virality score, which AI picked it with a link to the exact prompt + reply, how the audience signals peaked in that stretch (most-replayed, chat speed, comments, loudness, from "normal" to "top 5% of the video"), and the clip's opening and closing lines; manual cuts say they were yours), where it's posted (with links), errors, upload buttons per platform, bulk upload, and **⏰ Schedule**: pick a date and time and which platforms for any clip not posted yet; it posts then by itself (even with the autopilot off) as long as the server is running. Scheduled clips show the time and platforms, with **Change** and **Cancel schedule**. Each clip keeps its own platforms, so the job's other clips aren't affected. |
+| **Clips** | **✏ Edit** on a clip card: change the title, the **topic on the video** (the headline), the description and the hashtags (campaign clips: the exact caption, re-checked against the rules). Text is saved at once; a new topic renders the clip again in the background from its **master copy** (`<id>_master.mp4` + `<id>_words.json` next to the clip: the clip's stretch of the source with no text, kept for every clip, so this works after the source video is deleted). Clips made before this, with their source already deleted, can still change everything but the topic. Edits don't change posts already up. **▶ Watch as reels (full screen)** (or **⛶ Reels** on a clip card): every clip full screen, one per screen, like Instagram. Scroll/swipe or ↑ ↓ to the next; the visible one autoplays and loops (space pauses, M toggles sound, Esc closes). Filter: all / not posted yet / scheduled / posted. Buttons on the right: sound, **post** now to a platform, **schedule** (when + where) or **don't post**, **why** this clip, open the file, delete; title, headline, reason and where it's posted/scheduled at the bottom, updating live. Every clip: preview, title, score, why it was picked (open **Why this clip?** for the AI's reasoning as hook → content → ending, its virality score, which AI picked it with a link to the exact prompt + reply, how the audience signals peaked in that stretch (most-replayed, chat speed, comments, loudness, from "normal" to "top 5% of the video"), and the clip's opening and closing lines; manual cuts say they were yours), where it's posted (with links), errors, upload buttons per platform, bulk upload, and **⏰ Schedule**: pick a date and time and which platforms for any clip not posted yet; it posts then by itself (even with the autopilot off) as long as the server is running. Scheduled clips show the time and platforms, with **Change** and **Cancel schedule**. Each clip keeps its own platforms, so the job's other clips aren't affected. |
 | **Socials** | Which platforms are connected, uploads in the last 24h, limit timers, the YouTube cookies card, and the WhatsApp report. |
 | **News** | News and fact posts: find stories for a topic, tick the ones to post, make the videos, post now, at a time, or on the autopilot's slots. |
 | **Reports** | **What works** (views per topic, platform and clip length; best and weakest clips; the niche it would pick) and the hourly views reports. |
@@ -266,6 +268,10 @@ The **Auto** page. Flip the switch ON and set:
 - **■ Stop everything:** OFF, plus it stops the round in progress, every autopilot topic and job, and cancels the
   scheduled posts. The clips stay on the Clips page.
 - **▶ Run a round now:** runs a round straight away.
+- **Fast to watch, even over a tunnel** (Clips page, reels viewer): the players show a small poster image and only
+  load the video when you press play. They play a light preview (540 wide, about 1.2 Mbps, about a tenth of the
+  data), made the first time a clip is played and remade when the clip changes. The reels viewer also loads the
+  next reel while you watch one. **Download**, **Open** and every upload use the full-quality clip.
 - **Don't post** (Clips page): any clip waiting for an autopilot slot, held for a live stream, or timed for later can
   be taken off the schedule. It stays on the Clips page, unposted; **⏰ Schedule** can put it back on any time.
 
@@ -373,7 +379,7 @@ record piece 1 ──▶ record piece 2 ──▶ record piece 3 ──▶ ...  
       ▼                  ▼                  ▼
   process 1      [last 60s of 1 + 2]  [last 60s of 2 + 3]        (several pieces processed at once)
       │                  │                  │
- DeepSeek: clips   clips / JOINED clip   clips / SKIP (nothing worth it)
+ DeepSeek: clips   clips / JOINED clip   at least 1 clip, always
 ```
 
 - **Settings per job.** Record it in pieces of 2-60 minutes (default `LIVE_CHUNK_SECONDS`, 10 min), and clip N
@@ -386,10 +392,38 @@ record piece 1 ──▶ record piece 2 ──▶ record piece 3 ──▶ ...  
   Chat speed is the strongest signal on a live stream, alongside loudness; there's no "most replayed" heatmap or
   comments yet. Each piece's log says how many chat messages it got. If chat can't be read, it says why, and the
   piece is clipped on loudness only.
-- **Skipping dull pieces.** For live pieces the clip counts are a maximum, not a quota.
-  - If DeepSeek finds nothing worth clipping (menus, waiting, chatting about nothing), it makes **no clips** and the
-    log says why: `[piece 3] DECISION: nothing worth clipping in this piece, skipped: only menus and silence`.
-  - Picks scoring below 55 are dropped too.
+- **Live clips: your layout, the original sound, a short title.** Clips from a live stream keep the job's framing /
+  layout (e.g. streamer on top, gameplay below) with the stream's own audio, and a short title on top (the AI's
+  headline for that scene, at most 5 words). No subtitles, follow line, logo, end card or voice-over. The cut is
+  sync-safe: it decodes from a little
+  before the clip and trims on the exact frame, so picture and sound both start at 0 and the voice stays on the
+  lips, even after Instagram or TikTok re-process the upload (`render.cut(..., exact=True)`).
+- **Recording keeps voice and picture together.** YouTube sends a live stream's picture and sound as two streams
+  that join the live edge seconds apart. The recorder keeps YouTube's own timestamps (`-copyts`, one clock for
+  both), then re-times each chunk so both start at 0: the picture is copied untouched, and the sound's late start
+  becomes a second or two of silence instead of the voice landing seconds before the lips.
+  Live is recorded as sharp as the stream comes, up to 1440p (4K with the 4K box), since the facecam and gameplay
+  panels are crops blown up to full width.
+- **Upload the best of each piece.** On the form (and on the job card while it records): *Upload per piece: best
+  [N] shorts [M] long*. Right after each piece is clipped, its N highest-scored shorts and M highest-scored longs
+  are uploaded (best first) while the next piece records; the rest are only clipped and wait in **Clips**, where
+  you can upload them by hand. Empty = all of that kind, 0 = none; both empty = every clip goes up as soon as it's
+  made. Log: `[piece 1] UPLOADING THE BEST 1 of this piece's 5 short(s): #4 "GTA 6 Map Is HUGE" (score 91); the
+  other 4 stay in Clips`. Long videos in pieces work the same.
+- **At least one clip per piece.** For live pieces the clip counts are a maximum, not a quota, but every piece
+  makes **at least one clip**: its single best complete moment, even in a quiet piece.
+  - Extra picks scoring below 55 are dropped; the best one is kept anyway and the log says so:
+    `[piece 3] DECISION: kept "..." (virality 41 < 55): the best moment of this piece, every piece makes at least one clip`.
+  - If the AI returns nothing usable, the piece's strongest hype window (loudness + chat) becomes the clip.
+- **Streamer vs game voices.** The transcript mixes the streamer and the game's dialogue. The AI is told to tell
+  them apart (the streamer talks to chat, casually, in first person; the game has scripted lines) and to clip the
+  **streamer reacting to the game**: the game moment that triggers it, then the surprise / hype / laugh / hot take.
+  - A **reaction** signal is added to the graph (purple) in the AI modes: where the streamer says "oh my god", "no
+    way", "bro", "what the", shouts or laughs. A reaction that lines up with a chat or audio spike and makes sense
+    from the transcript is a strong pick. Log: `[piece 1] streamer reactions: 3 spot(s) with surprise / hype words (2:10, 5:40, 8:20)`.
+  - **First looks.** When the title says premiere / reveal / gameplay / first time / launch, new features, the map,
+    vehicles and mechanics are clip-worthy even when the streamer is calm, and the first piece's guaranteed clip is
+    the first proper look at the game.
 - **Moments split between two pieces.** From the 2nd piece on, each piece is processed together with the **last 60
   seconds of the previous piece**.
   - DeepSeek knows that part was already covered, so a clip may start there only if the moment continues into the
@@ -401,7 +435,10 @@ record piece 1 ──▶ record piece 2 ──▶ record piece 3 ──▶ ...  
   can be in progress at once (the log says how many). Only Whisper transcription takes turns, one piece at a time on
   the GPU.
 - **Decisions in the log.** Every line from a piece starts with `[piece N]`: what it analysed, the candidates, what
-  DeepSeek picked (score, title, why), what was dropped and why, joins and skips.
+  DeepSeek picked (score, title, why), what was dropped and why, joins and skips. When a piece is done:
+  `[piece 1] FINISHED: 2 clip(s) ready in Clips (2 from this job so far). Next: piece 2 is recording`; when the
+  recording ends: `recording finished: waiting for 1 piece(s) still being clipped`, then `ALL 3 PIECE(S) FINISHED: 7
+  clip(s) from this stream` (long videos too).
 - **Clean starts.** The joined tail always starts on a video keyframe, so clips that begin in the overlap have
   picture and sound from the first frame (see [Live pieces start on a keyframe](#live-pieces-start-on-a-keyframe)).
 - **Cleanup.** The recordings and the joined pieces are deleted when the job ends.
@@ -410,7 +447,7 @@ Past streams (replays) work like normal videos, and their chat replay (via yt-dl
 
 **Long videos are clipped like streams.** A video at least `LONG_VIDEO_MINUTES` long (default 60) is downloaded once,
 then cut into pieces of the job's piece length (default 10 min) and each piece goes through the same pipeline as a
-live piece: its own loudness, transcript, AI pick and renders, **shorts/longs per piece**, dull pieces skipped, the
+live piece: its own loudness, transcript, AI pick and renders, **shorts/longs per piece**, at least one clip per piece, the
 previous piece's last 60s in front so a moment on a boundary is one clip, two pieces at a time. The video's
 most-replayed heatmap, chat replay and comment timestamps are shifted onto each piece's own clock. The log shows each
 piece's place in the video (`[piece 4] 29:00-40:00 of the video`). A 3-hour video with 3 shorts per piece can make
@@ -418,6 +455,83 @@ up to 54 clips; use **Pieces to clip** to cap it.
 
 **Streamers to watch** (Auto page): see [Autopilot](#autopilot). A watched streamer going live starts exactly this
 kind of live job by itself.
+
+## Clipping campaigns (Whop)
+
+Paid clipping campaigns (Whop "Content Rewards", Clipping Culture and similar): a brand pays per view for shorts cut
+from **its own official footage**, under strict rules. The **Campaigns** page runs that end to end, with **its own
+flow and its own AI prompts**: it is not the viral-clip picker with extra rules bolted on.
+
+### Using it
+
+1. **+ New campaign** → paste the **whole brief** (what to do, caption guidelines, FTC disclosure, required lines,
+   on-screen text, editing rules, requirements, not allowed) → **Analyze the brief**. Every setting the brief answers
+   is filled in and marked **✓ from the brief** (name, post to, clips per video, longest clip, framing, subtitles,
+   on-screen text, the required line on screen). The ones it doesn't answer are highlighted as **? your call**, each
+   with its question listed above the form and a sensible default already picked. Answer those, add *Tell the AI* if
+   you like, **Create campaign**. (Edit the brief and it has to be analysed again.)
+2. The AI turns the brief into **rules** (open *Rules* on the campaign to check or edit them): the tags every caption
+   needs (`@callofduty`), the allowed disclosures (`#Ad`, first = used), the required line ("DMZ gets free access for
+   a limited time") and where it may go, how many more hashtags are allowed, min/max length, how many days a post must
+   stay up, what to clip and which features to show, caption and on-screen examples, what's not allowed, the tone,
+   and no music / no AI voice / official footage only. **Save rules** keeps your edits; **Read the brief again** redoes it.
+3. **Add the official videos**: links (YouTube, a direct .mp4), **a folder on this PC** (download the content
+   folder first: review sites like MediaSilo, Frame.io or Drive usually can't be downloaded from their link) or files.
+   Each video becomes a job (it shows on the Jobs page too); campaign videos are clipped one at a time.
+4. Every clip appears under its campaign with its **caption** (editable: **Save + check**, **✨ Rewrite** for a new
+   one, **📋 Copy**), a **checklist** of the rules (✓/✕), and **⬇ Download**.
+5. Post: **↑ TikTok / ↑ Instagram** posts through the API with exactly that caption, or post by hand (download +
+   copy the caption) and paste the post link under **Save link**. Posted clips show the date they must stay up until
+   (the brief's days, e.g. 30).
+
+Nothing is ever posted by itself. TikTok's API posts **privately** until TikTok audits your app, and campaigns need
+public posts with visible likes: post TikTok by hand until then. Instagram's API may reject Reels over
+`IG_MAX_SECONDS`; the campaign button tries anyway, and posting by hand always works.
+
+### What the example brief becomes
+
+```
+Ghost briefs the squad on X01 @callofduty      ← the AI's caption (true to the clip) + the required tags
+DMZ gets free access for a limited time        ← the required line, always in the caption
+#Ad #MW4 #DMZ                                  ← the disclosure FIRST, on its own line, then at most 3 more
+```
+
+On screen (optional): the AI's short text that matches the picture ("New DMZ location: X01") at the top, the
+required line above it if you ticked *Required line on screen too*, and subtitles of what's said. No follow message,
+no end card, no logo, no music, no voice-over and no background video, whatever the other settings say.
+
+### How it works (campaign.py)
+
+```
+brief ─► C0 RULES   AI (RULES_SYSTEM) reads the brief  +  a regex pass that never misses the must-haves
+                    (@tags, #Ad/#Advertisement/#Sponsored, "Use one of these lines:", "Up to N more hashtags",
+                    "Minimum video length: N seconds", "stay live for N days", the content-folder link).
+                    The regex wins for those, the AI fills the rest (what to clip, focus, examples, tone, not allowed).
+video ─► C1 WATCH   ffmpeg scene detection (select='gt(scene,0.3)' on 320px frames) → every shot cut;
+                    Whisper → the whole narration with sentence markers. No hype curves: official footage is edited,
+                    so its own cuts and sentences are the natural clip edges (loudness means nothing in a trailer).
+      ─► C2 PLAN    one AI call, the campaign editor prompt (PLAN_SYSTEM): what kind of video it is, the list of
+                    features it shows, one feature per clip (no overlaps, no repeats), each opening on a reveal or a
+                    strong line (never a logo or black screen) and closing when the thought / shot sequence closes;
+                    for each clip in the same answer: caption, 0-3 hashtags, on-screen text, quality 0-100, reason.
+                    No AI? Whole sequences of shots, from the start.
+      ─► C3 TRIM    each edge moves to the nearest sentence edge or shot cut (2.5s reach), never through a word,
+                    min = the brief's minimum + 2s, max = your "longest clip"; trimmed clips never overlap.
+      ─► C4 RENDER  render.cut(..., follow=False, hook_text=<required line or "">, clean=True)
+      ─► C5 CAPTION build_caption: text (hashtags/@ stripped) + every @tag, the required line, then
+                    "<disclosure> #a #b #c" on the last line. A caption that repeats one already used in the campaign
+                    is rewritten (CAPTION_SYSTEM). check() ticks every rule off and stores it on the clip.
+```
+
+The check covers: the tags, the disclosure being the first hashtag on its own line after the text, the hashtag
+limit, the required line (in the caption, or on screen where the brief allows), the minimum/maximum length, no AI
+voice-over, and no outside footage (no split layout). The caption is re-checked on every edit.
+
+What the tool can't judge for you: that a campaign's footage really is the official footage, your page's audience
+countries, engagement rate, hidden likes, or posting the same video too many times / on several accounts. Those are
+yours to keep, per the brief.
+
+---
 
 ## What works (analytics) and reports
 
@@ -484,8 +598,14 @@ When YouTube answers *"Sign in to confirm you're not a bot"*, downloads need a s
 1. In Chrome, install the extension **Get cookies.txt LOCALLY**.
 2. Open youtube.com **signed in**. A spare Google account is safest.
 3. Click the extension, then **Export**.
-4. On **Socials → YouTube cookies**, pick the file. It's saved as `cookies.txt` (gitignored) and used for every
-   download, search and face check straight away, with no restart.
+4. On **Socials → YouTube cookies**, click **Add cookies.txt** and pick the file. It's used for every download,
+   search and face check straight away, with no restart.
+
+**Several sets, from any computer.** The upload happens in the browser, so it works from another computer that opens
+the app (for example over your tunnel). Each file is *added* as its own set under its file name: name them apart,
+e.g. `cookies laptop.txt`, because the same name replaces that set. `cookies.txt` is the main one (gitignored); the
+others are kept in `data/cookies/`. The newest is used. When YouTube's bot check blocks one set, downloads switch to
+the next by themselves; the card shows which is **in use**, with **Use** and **Remove** for each set.
 
 Alternatively, set `YT_COOKIES_FROM_BROWSER=firefox` in `.env`. Chrome and Edge on Windows lock and encrypt their
 cookies, so yt-dlp can't read them directly. Cookies last weeks to months; add new ones when the bot check comes back.
@@ -759,6 +879,7 @@ Notes:
 | `pick.py` | the AI: moments, titles, hashtags, search queries, clippability; `_ask` with the provider order and fallbacks (DeepSeek / Ollama on another machine / Ollama on this PC), `ai_name` for the logs |
 | `render.py` | ffmpeg: framing, split and **facecam** layouts (`cam_layout`, `find_cam`), ASS headline/captions/end card, logo, voice-over (TTS), GPU encoder, news videos, Instagram re-encode |
 | `vision.py` | face check from YouTube's storyboard frames (OpenCV YuNet) |
+| `campaign.py` | paid clipping campaigns: the brief → rules (AI + regex), the campaign queue, its own flow (shot cuts + transcript → campaign-editor plan → trim → clean render → caption built to the rules → checklist) |
 | `topics.py` | the topic queue: queries → search → judge → face check → one job per video |
 | `autopilot.py` | the daily rounds, trend research, framing mix, the posting schedule, stop/OFF, news in rounds, the **streamer watch** (pause, live job, resume) |
 | `news.py` | news/facts: Google/Bing News RSS, article reading, Wikipedia, DeepSeek pick/write, post making, timed posts |
@@ -773,7 +894,7 @@ Notes:
 1. **Job.** `POST /api/jobs` inserts a `jobs` row, and `worker.start` runs `_run` in a background thread with a stop
    flag.
 2. **Download.**
-   - **Videos (`_vod`):** the video (1080p, or 4K when asked; 8 fragments in parallel), the comments with the
+   - **Videos (`_vod`):** the video (up to 1440p, or 4K when asked; 8 fragments in parallel), the comments with the
      **most-replayed heatmap**, and the chat replay of past streams, all at once.
    - **Live (`_live`):** pieces are recorded with ffmpeg from fresh stream URLs while a chat thread timestamps every
      message. Each piece goes to `_process` in its own thread.
@@ -978,17 +1099,23 @@ none running and paused  → resume
 (no re-encode, a second or two per piece). Copying starts at the keyframe before the cut, so the real start is
 worked out as `end − piece length`, and the boundary (seconds of the previous piece in front) from that. Heatmap
 ranges, chat and comment times are moved onto the piece's clock and clipped to it. Each piece runs `_process` with
-`live={"piece", "boundary"}`, the same switch live pieces use: the AI may skip a dull piece, picks under 55 are
-dropped, and a clip may start in the overlap only if the moment continues into the new piece.
+`live={"piece", "boundary"}`, the same switch live pieces use: every piece makes at least one clip (its best
+moment), extra picks under 55 are dropped, and a clip may start in the overlap only if the moment continues into the new piece.
 
 ### Making every clip complete (no cut mid-thought)
 
 1. **Sentence markers.** The transcript the AI reads has a `[seconds]` marker at **every sentence start** (and at
    least every 5s), so it picks real sentence boundaries instead of guessing between markers.
-2. **The prompt's story check.** Every clip must have a SETUP (the first line a stranger needs), THE MOMENT, and THE
-   LANDING (the reaction or resolution finishing). A clip may not end mid-thought or mid-action, nor start on
-   "and / but / so / he / it" pointing at something earlier. Before answering, the AI re-reads each clip's first and
-   last sentence and moves the edges until they stand on their own. When in doubt: one sentence earlier, one later.
+2. **The prompt's complete-piece rule.** Every clip must give the viewer the whole thing, in three parts: a **HOOK**
+   in the first 1-3 seconds that stops the scroll and is clear without context, **the CONTENT** with nothing wasted
+   (every few seconds something moves it forward), and **the ENDING** with the payoff delivered and the thought
+   closed ("that was the whole thing", not "what happened next?"). It must also **last**: hold attention to the end,
+   make sense to someone who finds it weeks later, and be worth a rewatch. A clip may not end mid-thought or
+   mid-action, nor start on "and / but / so / he / it" pointing at something earlier. Before answering, the AI
+   checks each clip's first line (a hook?), the middle (all worth watching?) and the last line (closed?), and writes
+   the actual first and last lines into `hook` / `ending` in its answer (they're in the saved prompt + reply).
+   When in doubt: one sentence earlier, one later. The campaign editor's prompt has the same three parts, tuned to
+   official footage (the hook is a reveal or striking shot, never a logo; the content shows the feature properly).
 3. **Snapping.** In code, each edge is moved out to the start/end of its sentence (up to `SNAP_REACH` seconds), using
    Whisper's punctuation and word timings.
 4. **Breathing room.** `CLIP_PAD_BEFORE` before the first word and `CLIP_PAD_AFTER` after the last, so a clip doesn't
@@ -1005,7 +1132,7 @@ first few seconds on clips that started in the overlap.
 ### Post statuses
 
 ```
-rendering → rendered ──(manual Upload)──────────────────────────→ uploading → uploaded
+rendering → rendered ──(manual Upload, or a campaign clip's ↑ / Save link)──────────────────────────→ uploading → uploaded
               │  └─(⏰ Schedule: time + platforms → post_at, post_to)→ timed ──(time comes, news.timed_tick)→ uploading
               └─(autopilot clip)→ scheduled ──(its slot, upload_tick)→ uploading
    scheduled / timed ──(watched streamer live)→ paused (streamer live) ──(stream over)→ back to scheduled / timed

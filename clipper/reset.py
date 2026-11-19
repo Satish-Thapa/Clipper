@@ -8,7 +8,7 @@ import time
 from . import autopilot, db, stats, topics, worker
 from .config import DATA, YT_COOKIES, YT_TOKEN, TIKTOK_TOKEN
 
-TABLES = ("jobs", "clips", "topics", "auto_rounds", "news", "news_runs", "reports", "limit_hits")
+TABLES = ("jobs", "clips", "topics", "campaigns", "auto_rounds", "news", "news_runs", "reports", "limit_hits")
 LOGINS = (YT_TOKEN, TIKTOK_TOKEN, YT_COOKIES)
 
 
@@ -23,7 +23,8 @@ def storage():
     with db.conn() as c:
         counts = {t: c.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for t in TABLES}
     return {"counts": counts, "videos_bytes": _size(DATA / "jobs"), "logs_bytes": _size(DATA / "logs"),
-            "db_bytes": _size(DATA / "clipper.db"), "logins": [p.name for p in LOGINS if p.exists()]}
+            "db_bytes": _size(DATA / "clipper.db"),
+            "logins": [p.name for p in LOGINS if p.exists()] + sorted(f.name for f in (DATA / "cookies").glob("*.txt"))}
 
 
 def _busy():
@@ -84,6 +85,7 @@ def reset_all(keep_settings=True, keep_logins=True):
     if not keep_logins:
         for p in LOGINS:
             p.unlink(missing_ok=True)
+        shutil.rmtree(DATA / "cookies", ignore_errors=True)  # the other cookies.txt sets
 
     freed = before["videos_bytes"] + before["logs_bytes"] + max(0, before["db_bytes"] - _size(DATA / "clipper.db"))
     db.syslog(f"RESET EVERYTHING done: {sum(before['counts'].values())} records and {freed / 1e9:.2f} GB removed"

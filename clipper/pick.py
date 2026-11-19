@@ -59,24 +59,32 @@ What does NOT pop:
 - Anything that needs minutes of context to understand.
 
 How to judge a clip:
-- Hook in the first 1-2 seconds (a shout, a crash, a weird line, a question). Slow setup? Start later.
-- A clear payoff (the crash, the punchline, the reaction, the answer), then end soon after.
+EVERY CLIP IS A COMPLETE PIECE: the viewer gets the WHOLE thing (a hook, the good content, and its ending) and
+watches it to the last second. Build each clip from three parts, all three required:
+    1. THE HOOK (first 1-3 seconds): the line or moment that stops the scroll AND tells a stranger what's going
+       on: a bold line, a question, a shout, a crash, "watch this", the start of the conflict. It must be clear
+       without context (who / what they're trying to do). Slow setup before it? Start later, at the hook. Never open
+       on dead air, "um", greetings, or a line pointing back ("and", "but", "so", "that's why", "he", "it").
+    2. THE CONTENT (the middle): the actual good part, with nothing wasted: the build-up, the play, the story, the
+       argument, the explanation. Every few seconds something moves it forward (a new line, a twist, rising tension);
+       cut repetition and filler, but keep every line the payoff depends on.
+    3. THE ENDING (last seconds): the payoff fully delivered and the thought CLOSED: the punchline lands, the
+       question is answered, the play finishes, the reaction plays out, the story reaches its end. The viewer
+       should feel "that was the whole thing", not "wait, what happened next?".
+  Ending mid-thought, mid-action ("he's about to...") or before the payoff is the worst mistake a clip can make;
+  a clip that needs the part before it to make sense is broken too. When in doubt, start one sentence earlier and
+  end one sentence later: a slightly longer complete clip always beats a shorter broken one (within the max).
+- Content that LASTS: it holds attention to the end (no slow stretch where people swipe away), still makes sense
+  to someone who finds it weeks later with zero context, and is worth a rewatch or a share. Skip moments that only
+  work live or need inside jokes to understand.
 - Must make sense to someone scrolling who has never seen this creator.
-- The clip must be COMPLETE and make sense ON ITS OWN. Every clip has three parts:
-    1. SETUP: the first line a stranger needs (what's going on / who / what they're trying to do).
-    2. THE MOMENT: the crash, the line, the play, the reveal.
-    3. THE LANDING: the reaction or resolution finishing (the laugh dies down, the answer is given, the chase
-       ends, the joke's punchline lands).
-  Ending mid-thought, mid-action ("he's about to...") or before the punchline is the worst mistake a clip can
-  make; a clip that starts with "and", "but", "so", "that's why", "he" or "it" pointing at something earlier
-  is broken too. When in doubt, start one sentence earlier and end one sentence later: a slightly longer
-  complete clip always beats a shorter broken one (within the max).
 - Start and end exactly on sentence boundaries; never cut someone off mid-word. Every sentence in the
   transcript starts with its [seconds] marker: use those times for "start", and the start of the sentence
   AFTER your last one for "end".
-- SELF-CHECK before you answer, for every clip: read its first sentence (would someone who just scrolled in
-  understand it?) and its last sentence (does the thought close, is the question answered, has the reaction
-  finished?). If not, move the start earlier or the end later until it does.
+- SELF-CHECK before you answer, for every clip: read its first sentence (is it a hook, and would someone who just
+  scrolled in understand it?), skim the middle (is every part worth watching?), and read its last sentence (does the
+  thought close, is the question answered, has the reaction finished?). If not, move the start or the end until it
+  does. Write the clip's actual first and last lines into "hook" and "ending" so you've checked them.
 - Loop-friendly ending: end right after the payoff/reaction lands, not after a fade-out of chatter, so the
   replay starts straight back on the hook (replays count heavily on Shorts/Reels/TikTok).
 - Formats that keep winning: "wait for it" build-ups with a clear payoff, fails and near-misses, clutch plays,
@@ -102,7 +110,8 @@ one niche/community tag, and at most one broad tag (#gaming). No #shorts/#fyp/#v
 Return JSON only:
 {"clips": [{"candidate": <id>, "kind": "short"|"long", "start": <sec>, "end": <sec>,
 "virality": <0-100>, "title": "...", "headline": "...", "description": "...", "hashtags": ["..."],
-"reason": "one line: setup -> moment -> landing, and why it will pop"}]}"""
+"hook": "the clip's first line, as said", "ending": "the clip's last line, as said",
+"reason": "one line: hook -> content -> ending, and why people will watch it to the end"}]}"""
 
 # "hype" mode: only pre-found windows.
 WINDOWS_TASK = """Video title: "{title}"
@@ -132,6 +141,8 @@ Signals per {step}s bucket (0 = normal for this video, 9 = biggest spike). Colum
 - heatmap: YouTube "most replayed". Strong evidence, real viewers rewatched it.
 - chat: live-chat bursts. Strong evidence of a reaction-worthy moment.
 - comments: timestamps viewers wrote in comments. Strong evidence.
+- reaction: where the speaker says surprise / hype words ("oh my god", "no way", "bro", "what the", shouting,
+  laughing). Strong evidence when it lines up with chat or audio in the same spot.
 These are HINTS. If the transcript shows a better moment where the signals are flat, pick it;
 you have the final say.
 
@@ -163,16 +174,56 @@ Clips of the same kind must not overlap. A SHORT and a LONG MAY reuse the same m
 best moment AND a long with the bigger story around it), but only for the very best moments."""
 
 
-LIVE_MIN = 55  # live pieces: picks DeepSeek scores below this are dropped (a dull piece makes no clips)
+LIVE_MIN = 55  # live pieces: extra picks DeepSeek scores below this are dropped; the best one is always kept
 
 
-def live_note(boundary):
-    """Extra instructions for one piece of a live stream. boundary = seconds at the start that are the END of the
-    previous piece (0 for the first piece)."""
-    note = (f"\nThis is one piece of a LIVE stream, not a whole video. The counts above are a MAXIMUM, not a quota: "
-            f"only pick moments that are genuinely worth a clip (virality {LIVE_MIN}+). If nothing in this piece is worth "
-            f"clipping (dead air, menus, waiting, chatting about nothing), return no clips and say why in \"skip\": "
-            f'{{"clips": [], "skip": "why"}}.')
+STREAM_NOTE = """
+THE TRANSCRIPT HAS TWO KINDS OF VOICES mixed together: the STREAMER (talks to chat and to themselves: first person,
+casual, "bro", "chat", "guys", "look at this", reacting, commenting, swearing) and the GAME (characters' scripted
+dialogue, radio, NPCs, cutscenes: names, story lines, full polished sentences). Work out who says each line.
+- The best stream clips are the STREAMER REACTING to the GAME: something happens in the game and the streamer is
+  surprised, shocked, hyped, laughing, or says something interesting / funny / a hot take about it. Clip the cause
+  AND the reaction: start on the game moment that triggers it (the hook), end after the reaction lands.
+- Use the signal graph to confirm: a reaction where chat / audio / reaction spike in the same spot is a real
+  moment; pick it when it also makes sense from the transcript (you understand what happened and why they react).
+- A streamer saying something genuinely interesting (an opinion, a discovery, explaining a detail) is a clip too,
+  even if the graph is flat, as long as it stands on its own.
+- Don't build a clip only from game dialogue with no streamer in it, unless it's a big reveal (see below)."""
+
+FIRST_LOOK_NOTE = """
+This looks like a FIRST LOOK at new gameplay (premiere / reveal / first time playing): viewers want to SEE THE NEW
+GAME. New features, mechanics, the map / city, vehicles, weapons, characters, graphics, and the streamer's first
+reaction to them are clip-worthy on their own, even when the streamer is calm and the graph is flat. Show the peak
+features and gameplay: clip the moment a new thing is shown or tried, and say what it is in the title and headline
+(e.g. "GTA 6 Map Is HUGE", "New Wanted System In GTA 6")."""
+FIRST_LOOK = re.compile(r"premi[eè]re|first look|first time|reveal|gameplay|new game|early access|launch|day one|"
+                        r"\bdemo\b|leak|trailer|first impression|blind", re.I)
+
+
+WOW_NOTE = """
+WOW MOMENTS COME FIRST: for streams the owner wants the moments that are AMAZING to watch, more than the best
+story. A "wow, you can do THAT?!" moment is a top clip on its own: something impressive or unexpected the game lets
+you do (a new mechanic, a crazy stunt, physics, a huge jump, an insane car / weapon / ability), stunning graphics
+or a breathtaking view, a big explosion, chase, crash or fight, a jaw-dropping detail. You can't see the picture,
+so read it from the words: the streamer or chat going "wow", "look at this", "you can do that?", "no way",
+"this looks insane", "the graphics", "how is this real", "bro look", describing what's on screen, laughing in
+disbelief; the game's sounds and lines around it. Prefer these over talky moments even when the talk is good.
+A wow clip doesn't need a punchline: start just before the amazing thing happens, keep it while it plays out,
+end once the reaction lands. Score (virality) it by how impressive it is to watch."""
+
+
+def live_note(boundary, title="", piece=1):
+    """Extra instructions for one piece of a live stream (or of a long video cut into pieces). boundary = seconds at
+    the start that are the END of the previous piece (0 for the first piece)."""
+    note = (f"\nThis is one piece of a LIVE stream, not a whole video. ALWAYS return AT LEAST ONE clip: the single "
+            f"best complete moment in this piece, even if the piece is quiet (score it honestly). The counts above are a "
+            f"MAXIMUM, not a quota: any clip beyond that first one must be genuinely worth a clip (virality {LIVE_MIN}+).")
+    note += STREAM_NOTE + WOW_NOTE
+    if FIRST_LOOK.search(title or ""):
+        note += FIRST_LOOK_NOTE
+        if piece == 1:
+            note += ("\nThis is the FIRST piece: the opening of the new gameplay. Your at-least-one clip should be the "
+                     "first proper look at the game here (the first new feature, area or moment that grabs).")
     if boundary:
         note += (f"\nThe first {boundary:.0f} seconds (0-{boundary:.0f}s) are the END of the PREVIOUS piece, which was "
                  f"already clipped. Only use that part for a moment that STARTS there and CONTINUES past {boundary:.0f}s "
@@ -451,7 +502,8 @@ def test(p):
 
 PROMPT_KEEP_DAYS = 7  # saved prompts (data/logs/prompts/<day>/) older than this are deleted
 PURPOSE = {"clips": "picking the clips", "queries": "writing search queries", "videos": "judging which videos clip well",
-           "topics": "finding today's trends", "lines": "writing the voice-over", "reply": "a test"}
+           "topics": "finding today's trends", "lines": "writing the voice-over", "reply": "a test",
+           "rules": "reading the campaign brief", "plan": "planning the campaign clips", "caption": "writing a campaign caption"}
 
 
 def _save_prompt(system, task, key):
