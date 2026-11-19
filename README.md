@@ -21,6 +21,32 @@ sourced news and fact posts, and it learns from your view counts what to make ne
 Everything runs on your PC. It uses the NVIDIA GPU for transcription and encoding when there is one. The UI uses a
 Vice City sunset look (night purple, pink-to-orange gradients, neon glow, Anton headings).
 
+## Screenshots
+
+**Clips:** every rendered clip with its headline, score, why it was picked, and upload / schedule / edit buttons.
+![Clips page](docs/screenshots/clips.png)
+
+**Create:** paste a link or upload a file and choose what to make.
+![Create page](docs/screenshots/create.png)
+
+**Autopilot:** clips a day, posting slots and today's plan.
+![Auto page](docs/screenshots/auto.png)
+
+**Campaigns:** paid clipping campaigns (Whop): paste the brief and it becomes rules.
+![Campaigns page](docs/screenshots/campaigns.png)
+
+**Socials:** connected platforms, uploads and views.
+![Socials page](docs/screenshots/socials.png)
+
+**Settings:** the main AI model and its fallbacks, background videos, storage.
+![Settings page](docs/screenshots/settings.png)
+
+**Topics, Jobs, News, Reports:**
+![Topics page](docs/screenshots/topics.png)
+![Jobs page](docs/screenshots/jobs.png)
+![News page](docs/screenshots/news.png)
+![Reports page](docs/screenshots/reports.png)
+
 ---
 
 ## Contents
