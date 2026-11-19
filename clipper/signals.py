@@ -71,6 +71,32 @@ def hype_curve(n, audio=None, heatmap=None, chat=None, comments=None):
     return curve, parts
 
 
+# Words / phrases a streamer says when something surprising, funny or hype happens (not game dialogue, which is
+# scripted lines). Matched on the lower-cased transcript; a phrase counts at the second its first word starts.
+REACTIONS = ("oh my god", "oh my gosh", "omg", "no way", "what the", "wtf", "are you kidding", "are you serious",
+             "holy", "bro", "dude", "wow", "whoa", "insane", "crazy", "wait what", "look at that",
+             "look at this", "did you see", "let's go", "lets go", "no no no", "oh no", "oh shit", "shit", "fuck",
+             "damn", "sheesh", "unbelievable", "incredible", "beautiful", "gorgeous", "haha", "hahaha", "lol",
+             "what is that", "what was that")
+
+
+def reactions(words, n):
+    """Streamer reaction curve from the transcript: reaction words per second, smoothed over ~8s, 0..1.
+    words = [{"w", "s", "e"}] (absolute seconds). Shouted / repeated words ("WHAT? WHAT?") count more."""
+    a = np.zeros(n)
+    toks = [(re.sub(r"[^a-z' ]", "", w["w"].lower()).strip(), w["s"], w["w"]) for w in words]
+    single = {r for r in REACTIONS if " " not in r}
+    multi = [r.split() for r in REACTIONS if " " in r]
+    for i, (t, s, raw) in enumerate(toks):
+        hit = t in single or any([x[0] for x in toks[i:i + len(m)]] == m for m in multi)
+        if not hit and not raw.rstrip().endswith(("!", "?!")):
+            continue
+        j = int(s)
+        if 0 <= j < n:
+            a[j] += 1 + (raw.strip(" .,").isupper() and len(t) > 1) + raw.count("!")
+    return norm(smooth(a, 8)) if a.any() else a
+
+
 def _fit(a, n):
     a = np.asarray(a, dtype=float)
     return np.pad(a, (0, max(0, n - len(a))), constant_values=a.min() if len(a) else 0)[:n]

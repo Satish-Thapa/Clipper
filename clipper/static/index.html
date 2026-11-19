@@ -71,12 +71,6 @@
   .score { color:var(--hot); font-weight:700; }
   .dim { color:var(--dim); } a { color:var(--hot); }
   textarea { width:100%; min-height:70px; font:12px/1.4 ui-monospace, monospace; }
-  #chatlog { height:60vh; overflow-y:auto; display:flex; flex-direction:column; gap:10px; padding:4px; }
-  .msg { max-width:75%; padding:10px 14px; border-radius:14px; white-space:pre-wrap; word-break:break-word; }
-  .msg.user { align-self:flex-end; background:var(--hot); color:#fff; border-bottom-right-radius:4px; }
-  .msg.ai { align-self:flex-start; background:var(--bg); border:1px solid var(--line); border-bottom-left-radius:4px; }
-  .msg.err { color:#f66; border-color:#7a2a4a; }
-  .msg small { display:block; margin-top:4px; font-size:11px; opacity:.6; }
   .curves svg { width:100%; height:120px; background:var(--bg); border-radius:6px; display:block; }
   .legend { display:flex; gap:12px; font-size:12px; margin:6px 0 2px; flex-wrap:wrap; align-items:center; }
   .legend label.check { font-size:12px; gap:4px; }
@@ -181,7 +175,43 @@
   .banner { background: linear-gradient(90deg, rgba(122,20,60,.65), rgba(90,20,80,.55)); border-color:#a33a6a; }
   ::selection { background: rgba(255,61,139,.45); }
   html { background:#0b0716; } body { min-height:100vh; background-repeat:no-repeat; background-attachment:fixed; }
-  label.fillwrap[hidden] { display:none; }
+  label.fillwrap[hidden], label.camwrap[hidden] { display:none; }
+  /* Reels viewer (Clips page): full screen, one clip per screen, swipe/scroll to the next */
+  #reels { position:fixed; inset:0; background:#000; z-index:60; color:#fff; }
+  #reels[hidden], #rsheet[hidden] { display:none; }
+  #reelList { height:100%; overflow-y:scroll; scroll-snap-type:y mandatory; overscroll-behavior:contain; scrollbar-width:none; }
+  #reelList::-webkit-scrollbar { display:none; }
+  .reel { height:100vh; height:100dvh; scroll-snap-align:start; scroll-snap-stop:always; position:relative;
+    display:flex; align-items:center; justify-content:center; }
+  .reel video, .reel img { height:100%; max-width:100%; aspect-ratio:9/16; object-fit:contain; background:#000; }
+  .reel .ri { position:absolute; bottom:22px; left:max(14px, calc(50% - 28dvh + 14px)); width:min(calc(56dvh - 100px), calc(100% - 100px));
+    text-shadow:0 1px 4px #000; font-size:14px; pointer-events:none; }
+  .reel .ri a, .reel .ri button { pointer-events:auto; }
+  .reel .ri .t { font-weight:800; font-size:16px; margin:4px 0; }
+  .reel .ri .d { opacity:.85; max-height:3.6em; overflow:hidden; }
+  .reel .ra { position:absolute; bottom:28px; left:min(calc(50% + 28dvh + 12px), calc(100% - 70px));
+    display:flex; flex-direction:column; gap:14px; align-items:center; }
+  .reel .ra button, .reel .ra a { width:52px; height:52px; border-radius:50%; border:0; background:rgba(255,255,255,.16);
+    color:#fff; font-size:20px; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    cursor:pointer; text-decoration:none; backdrop-filter:blur(6px); }
+  .reel .ra small { font-size:9px; margin-top:1px; }
+  .reel .ra button:hover, .reel .ra a:hover { background:rgba(255,255,255,.3); }
+  .reel .paused::after { content:"▶"; position:absolute; font-size:64px; opacity:.8; pointer-events:none; }
+  #reelTop { position:absolute; top:0; left:0; right:0; z-index:2; display:flex; gap:10px; align-items:center;
+    padding:12px 16px; background:linear-gradient(#000a, transparent); }
+  #reelTop button, #reelTop select { background:rgba(255,255,255,.16); color:#fff; border:0; border-radius:20px; padding:7px 12px; }
+  #reelTop select option { color:#000; }
+  #rsheet { position:absolute; left:50%; transform:translateX(-50%); bottom:0; z-index:3; width:min(560px, 100%);
+    max-height:70vh; overflow:auto; background:var(--panel); color:var(--text); border-radius:16px 16px 0 0;
+    padding:16px; box-shadow:0 -8px 30px #000a; }
+  #cf .ask input, #cf .ask select, #cf fieldset.ask { border-color:var(--warn); box-shadow:0 0 0 1px var(--warn); }
+  #cf label.check.ask { outline:1px solid var(--warn); border-radius:8px; padding:4px 8px; }
+  #camdlg { position:fixed; inset:0; background:rgba(0,0,0,.75); display:flex; align-items:center; justify-content:center; z-index:50; padding:16px; }
+  #camdlg[hidden] { display:none; }
+  #camdlg .box { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px; max-width:960px; width:100%; }
+  #camstage { position:relative; user-select:none; touch-action:none; cursor:crosshair; line-height:0; }
+  #camstage img { width:100%; border-radius:6px; }
+  #camrect { position:absolute; border:3px solid var(--hot); background:rgba(255,46,136,.18); pointer-events:none; }
   ::-webkit-scrollbar { width:10px; height:10px; } ::-webkit-scrollbar-thumb { background: linear-gradient(#ff3d8b, #b347ff); border-radius:10px; }
   ::-webkit-scrollbar-track { background: transparent; }
 </style>
@@ -193,16 +223,16 @@
     <a href="#create">Create</a>
     <a href="#auto">Auto<span class="n" id="n-auto"></span></a>
     <a href="#topics">Topics<span class="n" id="n-topics"></span></a>
+    <a href="#campaigns">Campaigns<span class="n" id="n-campaigns"></span></a>
     <a href="#jobs">Jobs<span class="n" id="n-jobs"></span></a>
     <a href="#clips">Clips<span class="n" id="n-clips"></span></a>
     <a href="#socials">Socials<span class="n" id="n-socials"></span></a>
     <a href="#news">News<span class="n" id="n-news"></span></a>
     <a href="#reports">Reports</a>
     <a href="#logs">Logs</a>
-    <a href="#chat">AI Chat</a>
     <a href="#settings">⚙ Settings</a>
   </nav>
-  <div class="yt"><span id="quota"></span><span id="ds"></span><a href="#chat" title="Chat with the AI model to check it works" style="text-decoration:none">💬</a><span id="yt"></span></div>
+  <div class="yt"><span id="quota"></span><span id="ds"></span><span id="yt"></span></div>
 </header>
 <main>
  <div class="banner" id="banner"></div>
@@ -212,7 +242,7 @@
     <form id="f">
       <label>YouTube URL (video or live stream)<input type="url" name="url" placeholder="https://www.youtube.com/watch?v=..."></label>
       <label>…or upload a video file<input type="file" name="file" accept="video/*"></label>
-      <label>Shorts (≤1 min)<input type="number" name="shorts" value="3" min="0" max="20"></label>
+      <label>Shorts (≤1.5 min)<input type="number" name="shorts" value="3" min="0" max="20"></label>
       <label>Long (≤3 min)<input type="number" name="longs" value="1" min="0" max="10"></label>
       <label>Who picks the moments<select name="mode">
         <option value="hype">AI picks from hype curves (fast)</option>
@@ -227,12 +257,15 @@
         <option value="1.7778">Whole frame 16:9 (nothing cut off)</option><option value="split">Split: clip on top + your video below</option>
       </select></label>
       <label class="check"><input type="checkbox" name="subtitles" checked> Headline + subtitles</label>
-      <label class="check" title="Downloads up to 4K instead of 1080p. Sharper, mostly for full-screen 9:16 framing, but about 10x the data, so slower."><input type="checkbox" name="hq"> 4K quality (slower download)</label>
+      <label class="check" title="The message at the top asking viewers to follow (FOLLOW_LINES in config.py)"><input type="checkbox" name="follow" checked> Follow message</label>
+      <label class="check" title="Downloads up to 4K instead of 1440p (the default). Sharper, mostly for full-screen 9:16 framing and facecam crops, but about 4x the data, so slower."><input type="checkbox" name="hq"> 4K quality (slower download)</label>
       <label class="check"><input type="checkbox" name="voiceover"> AI voice-over</label>
+      <label style="flex-basis:100%">Tell the AI (optional)<textarea name="notes" rows="2" maxlength="1000" style="width:min(640px,100%)" placeholder="e.g. only the funny fails and police chases; no swearing in titles; skip the intro"></textarea><span class="dim" style="font-size:12px;display:block">Goes into the AI's prompt as your own instructions: which moments to pick, titles and headlines.</span></label>
       <fieldset class="pf" data-default="youtube"><legend>Upload to (none = don't upload)</legend></fieldset>
       <fieldset class="livef"><legend>If it's a live stream</legend>
         <label>Record it in pieces of<select name="chunk_minutes"><option value="2">2 min</option><option value="5">5 min</option><option value="10">10 min</option><option value="15">15 min</option><option value="20">20 min</option><option value="30">30 min</option><option value="60">60 min</option></select></label>
         <label>Pieces to clip<input type="number" name="max_chunks" value="0" min="0" max="500" title="0 = keep going until the stream ends (or you press Stop)"></label>
+        <label title="After each piece is clipped, upload only its best N clips (by the AI's score), right away while the next piece records; the rest are just clipped and wait in Clips, where you can upload them by hand. Empty = upload every clip as soon as it's made. 0 = upload none.">Upload per piece: best<input type="number" name="upload_best" min="0" max="100" placeholder="all" style="width:60px"> shorts<input type="number" name="upload_best_long" min="0" max="100" placeholder="all" style="width:60px" title="After each piece, upload only its best N long clips. Empty = all of them, 0 = none."> long</label>
         <div class="dim" id="livePlan" style="font-size:12px;align-self:center;max-width:420px"></div>
       </fieldset>
       <button>Start clipping</button>
@@ -258,6 +291,7 @@
     <form id="af" class="apf">
       <div class="grp"><h4>1 · What to post</h4>
         <label>Niche (optional)<input name="niche" style="width:min(420px,100%)" placeholder="empty = anything trending, autopilot decides"></label>
+        <label style="flex-basis:100%">Tell the AI (optional)<textarea name="notes" rows="2" maxlength="1000" style="width:min(640px,100%)" placeholder="e.g. focus on GTA 6 and GTA RP; avoid kids' content; prefer clips with a clear punchline"></textarea><span class="dim" style="font-size:12px;display:block">Goes into the AI's prompt as your own instructions: finding trends, the searches, which videos are worth clipping, the moments and titles (also for watched streamers).</span></label>
         <fieldset class="pf" data-default=""><legend>Post to (none = make clips, don't post)</legend></fieldset>
       </div>
       <div class="grp"><h4>2 · How much and when</h4>
@@ -286,9 +320,37 @@
             <option value="1.7778">Whole frame 16:9 (nothing cut off)</option><option value="split">Split: clip on top + your video below</option>
           </select></label>
           <label class="check"><input type="checkbox" name="subtitles"> Headline + subtitles</label>
+          <label class="check" title="The message at the top asking viewers to follow"><input type="checkbox" name="follow"> Follow message</label>
           <label class="check"><input type="checkbox" name="voiceover"> AI voice-over</label>
           <label class="check"><input type="checkbox" name="hq"> 4K source (sharper, slower)</label>
+          <label class="check" title="Face detection on each candidate video's preview frames: skips videos where a face fills the screen most of the time (podcasts, talking heads). A small streamer facecam in a corner is fine."><input type="checkbox" name="face_check"> Face check: skip videos that are mostly a person talking</label>
         </div>
+        <fieldset class="mixf" style="margin-top:10px"><legend>Mix framings: each topic gets the next one (none ticked = always the Framing above)</legend>
+          <label class="check"><input type="checkbox" name="mix" value="0.5625|"> Full screen 9:16</label>
+          <label class="check"><input type="checkbox" name="mix" value="0.8|"> 4:5</label>
+          <label class="check"><input type="checkbox" name="mix" value="1|"> Square 1:1</label>
+          <label class="check"><input type="checkbox" name="mix" value="1.7778|"> Whole frame 16:9</label>
+          <label class="check"><input type="checkbox" name="mix" value="0.5625|cam:top:auto"> Streamer on top (auto face)</label>
+          <label class="check"><input type="checkbox" name="mix" value="0.5625|cam:bottom:auto"> Streamer below (auto face)</label>
+          <label class="check" title="Uses the background video picked next to Framing"><input type="checkbox" name="mix" value="0.5625|split"> Split + background video</label>
+        </fieldset>
+      </div>
+      <div class="grp"><h4>4 · Streamers to watch</h4>
+        <p class="dim" style="margin:0 0 8px;font-size:13px">Every 3 minutes it checks these YouTube channels. When one goes live, the autopilot
+          <b>pauses</b> (its round and topics stop, scheduled posts are held) and the stream is clipped live as streamer + gameplay,
+          posting to the platforms above. When the stream ends, the held posts go back on schedule and the autopilot carries on.</p>
+        <label class="check"><input type="checkbox" name="watch"> Watch these streamers</label>
+        <label style="display:block;margin-top:8px">Channels (one per line: @name or a channel link)
+          <textarea name="streamers" rows="3" style="width:min(520px,100%)" placeholder="@somestreamer&#10;https://www.youtube.com/@another"></textarea></label>
+        <div class="row" style="align-items:end;margin-top:8px">
+          <label>Their clips look like<select name="live_layout">
+            <option value="cam:top:auto">Streamer on top, gameplay below</option>
+            <option value="cam:bottom:auto">Gameplay on top, streamer below</option>
+            <option value="">Full screen 9:16 (no split)</option></select></label>
+          <label>Record in pieces of<select name="live_chunk"><option value="5">5 min</option><option value="10">10 min</option><option value="15">15 min</option><option value="20">20 min</option><option value="30">30 min</option></select></label>
+          <label>Clips per piece<input type="number" name="live_shorts" min="1" max="10"></label>
+        </div>
+        <div id="apLive" style="margin-top:8px"></div>
       </div>
       <details class="grp"><summary><h4 style="display:inline">Advanced</h4></summary>
         <div class="row" style="align-items:end;margin-top:10px">
@@ -305,7 +367,6 @@
             <option value="ai+hype">AI reads full transcript, curves as hints</option>
             <option value="ai">AI reads full transcript only</option>
           </select></label>
-          <label class="check"><input type="checkbox" name="face_check"> Skip videos that are mostly a person</label>
           <label class="check"><input type="checkbox" name="news_picture"> News posts: use the article's picture</label>
         </div>
       </details>
@@ -341,8 +402,10 @@
         <option value="1.7778">Whole frame 16:9 (nothing cut off)</option><option value="split">Split: clip on top + your video below</option>
       </select></label>
       <label class="check"><input type="checkbox" name="subtitles" checked> Headline + subtitles</label>
-      <label class="check" title="Downloads up to 4K instead of 1080p. Sharper, mostly for full-screen 9:16 framing, but about 10x the data, so slower."><input type="checkbox" name="hq"> 4K quality (slower download)</label>
+      <label class="check" title="The message at the top asking viewers to follow (FOLLOW_LINES in config.py)"><input type="checkbox" name="follow" checked> Follow message</label>
+      <label class="check" title="Downloads up to 4K instead of 1440p (the default). Sharper, mostly for full-screen 9:16 framing and facecam crops, but about 4x the data, so slower."><input type="checkbox" name="hq"> 4K quality (slower download)</label>
       <label class="check"><input type="checkbox" name="voiceover"> AI voice-over</label>
+      <label style="flex-basis:100%">Tell the AI (optional)<textarea name="notes" rows="2" maxlength="1000" style="width:min(640px,100%)" placeholder="e.g. only GTA RP servers, no reaction channels; clips with lots of chaos"></textarea><span class="dim" style="font-size:12px;display:block">Goes into the AI's prompt as your own instructions: the search, which videos are worth clipping, and the moments picked from them.</span></label>
       <label class="check" title="Checks ~30 preview frames per video. Skips videos where a face fills the screen for over 40% of the video (talking heads, close-up podcasts) or the picture is a still image. Small facecams, creators in a box and groups of people are fine."><input type="checkbox" name="face_check" checked> Skip videos that are mostly a person (face check)</label>
       <fieldset class="pf" data-default=""><legend>Upload to (none = don't upload)</legend></fieldset>
       <button>Add to queue</button>
@@ -351,26 +414,54 @@
   </section>
  </div>
 
- <div class="page" id="page-chat">
-  <div class="page-head"><h2>AI Chat</h2><p>Talk to the AI model the app uses (<span id="chatmodel">…</span>) to check it works.</p></div>
+ <div class="page" id="page-campaigns">
+  <div class="page-head"><h2>Campaigns</h2><p>Paid clipping campaigns (Whop, Clipping Culture…). Paste the brief: the AI turns it
+    into rules. Add the official videos: a campaign editor (its own flow, not the viral picker) finds every shot cut, reads the
+    whole narration, gives each clip one feature to show, writes the caption to the rules and ticks every rule off.
+    Clips are clean (only the official picture and sound: no follow message, end card, logo, music or AI voice). Nothing posts by itself.</p></div>
   <section class="panel">
-   <div id="chatlog"></div>
-   <form class="row" onsubmit="sendChat(event)" style="margin-top:12px">
-    <input id="chatin" placeholder="Type a message…" autocomplete="off" style="flex:1">
-    <button id="chatgo">Send</button><button type="button" class="ghost" onclick="clearChat()">Clear</button>
-   </form>
+    <div class="head"><h3 style="margin:0">New campaign</h3>
+      <button class="ghost" onclick="$('#cf').hidden = !$('#cf').hidden">+ New campaign</button></div>
+    <form id="cf" hidden style="margin-top:12px">
+      <label style="flex-basis:100%">The brief<textarea name="brief" rows="10" required minlength="20" style="font:13px/1.4 inherit" oninput="cfStale()"
+        placeholder="Paste the whole campaign page: what to do, caption guidelines, FTC disclosure, required lines (free trial…), on-screen text, editing rules, requirements, not allowed…"></textarea></label>
+      <button type="button" id="cfGo" onclick="analyzeBrief()">Analyze the brief</button> <span id="cfMsg" class="dim"></span>
+      <div id="cfFields" hidden style="flex-basis:100%">
+        <div id="cfFound" style="font-size:13px;margin:6px 0 12px"></div>
+        <div id="cfAsk"></div>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:end">
+          <label data-f="name">Name <span class="src"></span><input name="name" style="width:min(420px,100%)"></label>
+          <label data-f="shorts">Clips per video <span class="src"></span><input type="number" name="shorts" value="3" min="1" max="20"></label>
+          <label data-f="max_seconds">Longest clip (s) <span class="src"></span><input type="number" name="max_seconds" value="60" min="15" max="180"></label>
+          <label data-f="aspect">Framing <span class="src"></span><select name="aspect">
+            <option value="0.5625">Full screen 9:16 (fills the phone)</option>
+            <option value="0.8">4:5 (a bit wider, thin bars)</option>
+            <option value="1">Square 1:1 (more of the picture)</option>
+            <option value="1.7778">Whole frame 16:9 (nothing cut off)</option>
+          </select></label>
+          <label class="check" data-f="subtitles"><input type="checkbox" name="subtitles" checked> Subtitles of what's said <span class="src"></span></label>
+          <label class="check" data-f="onscreen"><input type="checkbox" name="onscreen" checked> On-screen text <span class="src"></span></label>
+          <label class="check" data-f="trial_on_screen"><input type="checkbox" name="trial_on_screen"> Required line on screen too <span class="src"></span></label>
+          <fieldset class="pf" data-default="" data-f="platforms"><legend>Post to <span class="src"></span></legend></fieldset>
+          <label style="flex-basis:100%">Tell the AI (optional)<textarea name="notes" rows="2" maxlength="1000" style="width:min(640px,100%)" placeholder="e.g. focus on the new map X01; no clips of the logo intro"></textarea></label>
+          <button>Create campaign</button>
+        </div>
+      </div>
+    </form>
   </section>
+  <div id="camps" style="display:flex;flex-direction:column;gap:16px;margin-top:16px"></div>
  </div>
 
  <div class="page" id="page-jobs">
   <div class="page-head"><h2>Jobs</h2><p>Every video being clipped: logs, hype curves, and manual cuts.</p></div>
-  <section class="panel"><div id="jobs"></div></section>
+  <section class="panel"><div class="row" id="jobBulk" style="margin-bottom:10px;gap:8px"></div><div id="jobs"></div></section>
  </div>
 
  <div class="page" id="page-clips">
   <div class="page-head"><h2>Clips</h2><p>Rendered clips, newest first. Upload a clip to any connected platform from its card,
     or every clip at once below.</p></div>
-  <section class="panel"><div class="row" id="bulk" style="margin-bottom:14px"></div><div class="clips" id="clips"></div></section>
+  <section class="panel"><div class="row" style="margin-bottom:10px"><button type="button" onclick="openReels()">▶ Watch as reels (full screen)</button></div>
+    <div class="row" id="bulk" style="margin-bottom:14px"></div><div class="clips" id="clips"></div></section>
  </div>
 
  <div class="page" id="page-news">
@@ -397,6 +488,7 @@
         <option value="photo">Photo (Facebook + Instagram)</option></select></label>
       <label class="check"><input type="checkbox" name="picture" checked> Use the article's picture</label>
       <label class="check"><input type="checkbox" name="voiceover"> AI voice-over</label>
+      <label class="check" title="The message at the top asking viewers to follow"><input type="checkbox" name="follow" checked> Follow message</label>
       <label>When<select name="when" onchange="nmWhen()">
         <option value="hold">Make them, I'll post them myself</option>
         <option value="now">Post each right away</option>
@@ -433,6 +525,21 @@
  <div class="page" id="page-settings">
   <div class="page-head"><h2>Settings</h2><p>What's stored, and a clean start. Platform keys live in <code>.env</code>;
     autopilot settings are on the <a href="#auto">Auto</a> page.</p></div>
+  <section class="panel"><h3>🤖 AI models</h3>
+    <p class="dim" style="margin-top:0;font-size:13px">Every AI call (clip picks, titles, voice-over, autopilot, news) goes to
+      the <b>Main</b> AI. If it's down, errors or gives a broken answer, the next one gets the same request. The logs say
+      which one answered. AIs without a key in <code>.env</code> are skipped.</p>
+    <div class="row" style="align-items:center;gap:8px;flex-wrap:wrap">
+     <label>Main <select id="ai0"></select></label>
+     <label>Fallback 1 <select id="ai1"></select></label>
+     <label>Fallback 2 <select id="ai2"></select></label>
+    </div>
+    <div class="row" style="margin-top:8px;align-items:center;gap:8px;flex-wrap:wrap">
+     <label>Local model <select id="aimodel"></select></label>
+     <label>This PC model <select id="pcmodel"></select></label>
+     <button type="button" onclick="useAi()">Save</button>
+    </div>
+    <div id="aistat" style="margin-top:10px"></div></section>
   <section class="panel"><h3>Background videos (split layout)</h3>
     <p class="dim" style="margin-top:0;font-size:13px">For <b>Framing → Split: clip on top + your video below</b>: the follow message and
       headline sit on top, then the clip whole (16:9, nothing cut off), and one of these plays muted below it (from a
@@ -476,9 +583,29 @@
   <div class="socials" id="socials"></div>
  </div>
 </main>
+<div id="reels" hidden>
+  <div id="reelTop"><button type="button" onclick="closeReels()" title="Close (Esc)">✕</button>
+    <b id="reelCount"></b>
+    <select id="reelFilter" onchange="openReels()"><option value="all">All clips</option><option value="unposted">Not posted yet</option>
+      <option value="scheduled">Scheduled</option><option value="posted">Posted</option></select>
+    <span class="dim" style="margin-left:auto;font-size:12px">scroll / ↑ ↓ · space pause · M sound · Esc close</span></div>
+  <div id="reelList"></div>
+  <div id="rsheet" hidden></div>
+</div>
+<div id="camdlg" hidden><div class="box">
+  <h3 style="margin-top:0">Where's the streamer?</h3>
+  <p class="dim" style="margin-top:0;font-size:13px">Drag a box around the streamer's facecam. It becomes the streamer's panel; the rest of the
+    video is the gameplay. <span id="cammsg"></span></p>
+  <div id="camstage"><img id="camimg" alt=""><div id="camrect" hidden></div></div>
+  <div class="row" style="margin-top:12px;gap:8px"><button type="button" onclick="camSave()">Use this box</button>
+    <button type="button" class="ghost" onclick="camOpen(camForm)">New frame</button>
+    <button type="button" class="ghost" onclick="$('#camdlg').hidden = true">Cancel</button></div>
+</div></div>
 <script>
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+// log text, escaped, with each saved AI prompt (/media/logs/prompts/...txt) as a link
+const logHtml = s => esc(s).replace(/\/media\/logs\/prompts\/[\w\-]+\/[\w\-]+\.txt/g, u => `<a href="${u}" target="_blank">open the full prompt + reply</a>`);
 const openLogs = new Set();
 const post = (u, body) => fetch(u, {method:"POST", headers:{"Content-Type":"application/json"}, body: body && JSON.stringify(body)});
 // Pages: #create #topics #jobs #clips #socials (the hash keeps the page on reload).
@@ -515,8 +642,8 @@ const notOn = (s, c, t) => live(s, t).filter(p => !(JSON.parse(c.uploads || "{}"
 $("#f").onsubmit = async e => {
   e.preventDefault();
   const f = new FormData(e.target), file = f.get("file");
-  const opts = {shorts: +f.get("shorts"), longs: +f.get("longs"), ...framing(e.target), hq: f.has("hq"), mode: f.get("mode"), subtitles: f.has("subtitles"), voiceover: f.has("voiceover")};
-  const live = {chunk_minutes: +f.get("chunk_minutes"), max_chunks: +f.get("max_chunks")};
+  const opts = {shorts: +f.get("shorts"), longs: +f.get("longs"), ...framing(e.target), hq: f.has("hq"), mode: f.get("mode"), subtitles: f.has("subtitles"), follow: f.has("follow"), voiceover: f.has("voiceover"), notes: f.get("notes") || ""};
+  const live = {chunk_minutes: +f.get("chunk_minutes"), max_chunks: +f.get("max_chunks"), upload_best: f.get("upload_best") === "" ? null : +f.get("upload_best"), upload_best_long: f.get("upload_best_long") === "" ? null : +f.get("upload_best_long")};
   const btn = e.target.querySelector("button");
   let r;
   if (file && file.size) {
@@ -533,7 +660,7 @@ $("#tf").onsubmit = async e => {
   e.preventDefault();
   const f = new FormData(e.target);
   const r = await post("/api/topics", {topic: f.get("topic"), ...framing(e.target), hq: f.has("hq"), videos: +f.get("videos"), shorts: +f.get("shorts"), longs: +f.get("longs"),
-    mode: f.get("mode"), subtitles: f.has("subtitles"), voiceover: f.has("voiceover"), face_check: f.has("face_check"), platforms: picked(e.target)});
+    mode: f.get("mode"), subtitles: f.has("subtitles"), follow: f.has("follow"), voiceover: f.has("voiceover"), face_check: f.has("face_check"), platforms: picked(e.target), notes: f.get("notes") || ""});
   if (!r.ok) return alertBox(await r.text());
   e.target.topic.value = ""; refresh();
 };
@@ -549,27 +676,42 @@ async function stopTopic(id) { await post(`/api/topics/${id}/stop`); refresh(); 
 async function removeTopic(id) { const r = await fetch(`/api/topics/${id}`, {method: "DELETE"}); if (!r.ok) alertBox((await r.json()).detail); refresh(); }
 const alertBox = msg => { $("#jobs").insertAdjacentHTML("afterbegin", `<p style="color:#f66">${esc(msg)}</p>`); };
 
-// AI Chat page: the conversation lives in this array (gone on reload); the server gets it all each turn.
-let chat = [];
-function drawChat() {
-  $("#chatlog").innerHTML = chat.length ? chat.map(m => `<div class="msg ${m.role}${m.err ? " err" : ""}">${esc(m.text)}${
-    m.secs != null ? `<small>${m.secs}s</small>` : ""}</div>`).join("")
-    : `<p class="dim" style="margin:auto;text-align:center">Say something to check the model answers.</p>`;
-  $("#chatlog").scrollTop = $("#chatlog").scrollHeight;
+// AI order: main + 2 fallbacks; every AI call in the app tries them in this order.
+let aiInfo = {};
+async function loadAi(msg) {
+  aiInfo = await (await fetch("/api/ai/models")).json();
+  const names = aiInfo.providers || {}, order = (aiInfo.order || []).map(o => o.provider);
+  [0, 1, 2].forEach(i => $(`#ai${i}`).innerHTML = (i ? `<option value="">— none —</option>` : "") +
+    Object.entries(names).map(([k, n]) => `<option value="${k}"${order[i] === k ? " selected" : ""}>${esc(n)}</option>`).join(""));
+  const local = (aiInfo.order || []).find(o => o.provider === "local") || {};
+  const models = aiInfo.models || [];
+  $("#aimodel").innerHTML = (models.includes(local.model) || !local.model ? models : [local.model, ...models])
+    .map(n => `<option${n === local.model ? " selected" : ""}>${esc(n)}</option>`).join("") || `<option value="">(none found)</option>`;
+  const pc = (aiInfo.order || []).find(o => o.provider === "pc") || {}, pcm = aiInfo.pc_models || [];
+  $("#pcmodel").innerHTML = (pcm.includes(pc.model) || !pc.model ? pcm : [pc.model, ...pcm])
+    .map(n => `<option${n === pc.model ? " selected" : ""}>${esc(n)}</option>`).join("") || `<option value="">(none found)</option>`;
+  $("#aistat").innerHTML = (aiInfo.order || []).map((o, i) => `<div style="margin:6px 0">${i ? `Fallback ${i}` : "Main"}: <b>${esc(o.name)}</b> ${esc(o.model || "")} ${
+    o.missing ? `<span class="err">· skipped: ${esc(o.missing)}</span>` : `<span style="color:var(--ok)">· ready</span>`}
+    <button type="button" class="ghost" style="padding:2px 10px;font-size:12px" onclick="testAi('${o.provider}', this)">Test</button>
+    <div class="dim" id="aitest-${o.provider}" style="font-size:13px;margin-left:14px"></div></div>`).join("") +
+    (aiInfo.error ? `<div class="err">Local: ${esc(aiInfo.error)}</div>` : "") +
+    (aiInfo.pc_error ? `<div class="err">This PC: ${esc(aiInfo.pc_error)} (is Ollama installed and running here?)</div>` : "") + (msg ? `<div style="color:var(--ok)">${esc(msg)}</div>` : "");
 }
-async function sendChat(e) {
-  e.preventDefault();
-  const box = $("#chatin"), text = box.value.trim();
-  if (!text) return;
-  chat.push({role: "user", text}); box.value = ""; $("#chatgo").disabled = true;
-  chat.push({role: "ai", text: "…"}); drawChat();
-  const r = await post("/api/ai/chat", {messages: chat.slice(0, -1).filter(m => !m.err).slice(-40).map(({role, text}) => ({role, text}))});
+async function useAi() {
+  const order = [0, 1, 2].map(i => $(`#ai${i}`).value).filter(Boolean);
+  const r = await post("/api/ai/use", {order, local_model: $("#aimodel").value || "", pc_model: $("#pcmodel").value || ""});
   const j = await r.json();
-  chat[chat.length - 1] = r.ok ? {role: "ai", text: j.reply, secs: j.seconds} : {role: "ai", text: `Not working: ${j.detail}`, err: true};
-  $("#chatgo").disabled = false; drawChat(); box.focus();
+  if (!r.ok) return loadAi().then(() => $("#aistat").insertAdjacentHTML("beforeend", `<div class="err">${esc(typeof j.detail === "string" ? j.detail : "Bad choice")}</div>`));
+  await loadAi(`✓ Saved. Main AI is now ${j.model}`); refresh();
 }
-function clearChat() { chat = []; drawChat(); }
-drawChat();
+// Test one AI: asks "What model are you?" and shows its answer (saved models are used, so Save first).
+async function testAi(p, btn) {
+  const out = $(`#aitest-${p}`); btn.disabled = true; out.textContent = "asking “What model are you?”…";
+  const r = await post("/api/ai/test", {provider: p}), j = await r.json(); btn.disabled = false;
+  out.innerHTML = r.ok ? `<span style="color:var(--ok)">✓ ${esc(j.model)} in ${j.seconds}s:</span> ${esc(j.reply)}`
+    : `<span class="err">✕ ${esc(typeof j.detail === "string" ? j.detail : "failed")}</span>`;
+}
+loadAi();
 
 async function connectYT(btn) {
   btn.disabled = true; btn.textContent = "Finish sign-in in the new browser tab…";
@@ -591,20 +733,25 @@ async function uploadAll(t, n, btn) {
 }
 async function sendCookies(el) {
   const f = el.files[0]; if (!f) return;
-  const r = await fetch("/api/cookies", {method: "POST", body: await f.text()});
+  const r = await fetch(`/api/cookies?name=${encodeURIComponent(f.name)}`, {method: "POST", body: await f.text()});
+  el.value = "";
   if (!r.ok) return alertBox((await r.json()).detail);
-  alertBox("YouTube cookies saved ✓ Downloads use them from now on (no restart needed)."); refresh();
+  const s = await r.json();
+  alertBox(`YouTube cookies added as ${s.source} ✓ In use now (no restart needed). ${s.sets.length} set(s) in all: if YouTube's bot check blocks one, downloads switch to the next.`); refresh();
 }
-async function dropCookies() { if (confirm("Remove the YouTube cookies?")) { await fetch("/api/cookies", {method: "DELETE"}); refresh(); } }
+async function useCookies(n) { await fetch(`/api/cookies/use?name=${encodeURIComponent(n)}`, {method: "POST"}); refresh(); }
+async function dropCookies(n) { if (confirm(`Remove the YouTube cookies ${n}?`)) { await fetch(`/api/cookies?name=${encodeURIComponent(n)}`, {method: "DELETE"}); refresh(); } }
 let liveMin = null;
 function livePlan() {
-  const f = $("#f"), m = +f.chunk_minutes.value, n = +f.max_chunks.value, sh = +f.shorts.value, lo = +f.longs.value;
+  const f = $("#f"), m = +f.chunk_minutes.value, n = +f.max_chunks.value, sh = +f.shorts.value, lo = +f.longs.value, up = f.upload_best.value, upl = f.upload_best_long.value;
   const per = [sh && `${sh} short${sh > 1 ? "s" : ""}`, lo && `${lo} long`].filter(Boolean).join(" + ") || "no clips";
   $("#livePlan").textContent = `Records ${m}-min pieces and makes ${per} from each, ` + (n
     ? `for ${n} piece${n > 1 ? "s" : ""} (${n * m >= 60 ? (n * m / 60).toFixed(n * m % 60 ? 1 : 0) + " h" : n * m + " min"} of stream, up to ${n * (sh + lo)} clips), then stops.`
-    : `until the stream ends or you press Stop. Clips come out while it's still live.`);
+    : `until the stream ends or you press Stop. Clips come out while it's still live.`)
+    + (up === "" && upl === "" ? " Every clip is uploaded as soon as it's made."
+       : ` After each piece, uploads its best ${up === "" ? "all" : up} short(s) + ${upl === "" ? "all" : upl} long(s) right away; the rest are only clipped.`);
 }
-["chunk_minutes", "max_chunks", "shorts", "longs"].forEach(k => $("#f")[k].addEventListener("input", livePlan));
+["chunk_minutes", "max_chunks", "shorts", "longs", "upload_best", "upload_best_long"].forEach(k => $("#f")[k].addEventListener("input", livePlan));
 $("#f").chunk_minutes.addEventListener("change", e => e.target.dataset.touched = 1);
 const liveSel = (id, v) => `<select id="${id}">${[2, 5, 10, 15, 20, 30, 60].concat([v]).filter((x, i, a) => a.indexOf(x) === i)
   .sort((a, b) => a - b).map(m => `<option value="${m}" ${m === v ? "selected" : ""}>${m} min</option>`).join("")}</select>`;
@@ -615,12 +762,15 @@ function liveCtl(j) {
     · clip <input type="number" id="lm-${j.id}" min="0" max="500" value="${j.max_chunks || 0}" title="0 = until the stream ends"> pieces (0 = until it ends)
     · per piece <input type="number" id="ls-${j.id}" min="0" max="20" value="${j.shorts}"> shorts
     <input type="number" id="ll-${j.id}" min="0" max="10" value="${j.longs}"> long
+    · upload only the best <input type="number" id="lu-${j.id}" min="0" max="100" value="${j.upload_best ?? ""}" placeholder="all" title="After each piece is clipped, upload only its best N shorts right away. Empty = all, 0 = none."> shorts
+      <input type="number" id="lul-${j.id}" min="0" max="100" value="${j.upload_best_long ?? ""}" placeholder="all" title="... and its best N long clips. Empty = all, 0 = none."> long of each piece
     <button class="ghost" onclick="saveLive(${j.id}, this)">Apply</button>
     <span class="dim">length: from the next piece · clips: from this one</span></div>`;
 }
 async function saveLive(id, btn) {
   const v = k => +$(`#${k}-${id}`).value;
-  const r = await post(`/api/jobs/${id}/live`, {chunk_minutes: v("lc"), max_chunks: v("lm"), shorts: v("ls"), longs: v("ll")});
+  const u = $(`#lu-${id}`).value, ul = $(`#lul-${id}`).value;
+  const r = await post(`/api/jobs/${id}/live`, {chunk_minutes: v("lc"), max_chunks: v("lm"), shorts: v("ls"), longs: v("ll"), upload_best: u === "" ? null : +u, upload_best_long: ul === "" ? null : +ul});
   if (!r.ok) return alertBox((await r.json()).detail || "could not save");
   btn.textContent = "Applied ✓"; btn.blur(); setTimeout(refresh, 800);
 }
@@ -634,7 +784,7 @@ async function deleteClip(id) {
 // ---- signal curves graph ----
 const openCurves = new Set(), curveData = new Map(), drafts = new Map(), subsChoice = new Map();
 const hidden = new Set();  // signals unticked in the legend (applies to every graph)
-const COLORS = {hype: "#ececf1", audio: "#5ab0ff", heatmap: "#ffb020", chat: "#ff2e88", comments: "#3ddc97"};
+const COLORS = {hype: "#ececf1", audio: "#5ab0ff", heatmap: "#ffb020", chat: "#ff2e88", comments: "#3ddc97", reaction: "#b98cff"};
 function toggleCurves(id, open) { open ? (openCurves.add(id), loadCurves(id)) : openCurves.delete(id); }
 async function loadCurves(id) {
   const list = await (await fetch(`/api/jobs/${id}/curves`)).json();
@@ -698,7 +848,26 @@ async function submitCuts(id, btn) {
   drafts.delete(id); $(`#cuts-${id}`).value = ""; btn.disabled = false; refresh();
 }
 
-async function stopJob(id) { await post(`/api/jobs/${id}/stop`); refresh(); }
+async function stopJob(id, btn) { if (btn) { btn.disabled = true; btn.textContent = "Stopping…"; } await post(`/api/jobs/${id}/stop`); refresh(); }
+async function retryJob(id, btn) {
+  btn.disabled = true; btn.textContent = "Starting…";
+  const r = await post(`/api/jobs/${id}/retry`);
+  if (!r.ok) { alertBox((await r.json()).detail); btn.disabled = false; btn.textContent = "↻ Retry"; }
+  refresh();
+}
+async function retryFailed(btn) {
+  btn.disabled = true;
+  const j = await (await post("/api/jobs/retry-failed")).json();
+  j.skipped.forEach(x => alertBox(`Job #${x.id}: ${x.why}`)); refresh();
+}
+async function stopAllJobs(btn) { btn.disabled = true; await post("/api/jobs/stop-all"); refresh(); }
+function jobBulk(s) {
+  const live = s.jobs.filter(j => !["done", "failed", "stopped", "interrupted"].includes(j.status)).length;
+  const failed = s.jobs.filter(j => ["failed", "interrupted"].includes(j.status) && !/retried as job #/.test(j.log || "")).length;
+  const html = `<button class="ghost" ${failed ? "" : "disabled"} onclick="retryFailed(this)">↻ Retry all failed (${failed})</button>
+    <button class="ghost danger" ${live ? "" : "disabled"} onclick="stopAllJobs(this)">■ Stop all running (${live})</button>`;
+  if ($("#jobBulk").dataset.k !== `${failed}/${live}`) { $("#jobBulk").innerHTML = html; $("#jobBulk").dataset.k = `${failed}/${live}`; }
+}
 
 // Logs follow the newest line. If you scrolled up to read, the 2s refresh keeps your place instead;
 // scroll back to the bottom and it follows again.
@@ -714,6 +883,10 @@ const toBottom = details => { const p = details.querySelector("pre.log"); if (p)
 
 const ASPECTS = {0.5625: "9:16", 0.8: "4:5", 1: "1:1", 1.7778: "16:9"};
 const aspectName = a => a ? (ASPECTS[a] || `${(+a).toFixed(2)}:1`) : "";
+const layoutName = x => { const l = x.layout || "";
+  return l.startsWith("split:") ? " · split + " + esc(l.slice(6)) : l.startsWith("cam:")
+    ? ` · streamer ${l.split(":")[1] === "top" ? "on top" : "below"} (${{auto: "auto face", tl: "top-left", tr: "top-right", bl: "bottom-left", br: "bottom-right"}[l.split(":")[2]] || "your box"})`
+    : x.aspect ? " · " + aspectName(x.aspect) : ""; };
 let aspectSet = false;
 function defaultAspect(a) {  // pick the option closest to .env CROP_ASPECT, once
   if (aspectSet) return; aspectSet = true;
@@ -729,7 +902,7 @@ async function loadLogs() {
   const f = $("#logfilter").value.trim().toLowerCase(), box = $("#logbox");
   const saved = saveLogs();
   box.innerHTML = j.text.split("\n").filter(l => !f || l.toLowerCase().includes(f)).map(l =>
-    `<span class="${/ ERROR |Traceback|^\s+File |Error:/.test(l) ? "err" : l.includes("[system]") ? "sys" : ""}">${esc(l)}</span>`).join("\n");
+    `<span class="${/ ERROR |Traceback|^\s+File |Error:/.test(l) ? "err" : l.includes("[system]") ? "sys" : ""}">${logHtml(l)}</span>`).join("\n");
   restoreLogs(saved);
 }
 $("#logfilter").oninput = () => { $("#logbox").scrollTop = 1e9; loadLogs(); };
@@ -756,13 +929,20 @@ const dayName = t => new Date(t * 1000).toLocaleDateString([], {weekday: "short"
 const dur = m => m >= 60 ? `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ""}` : `${m} min`;
 let autoLoaded = false, autoSt = null;
 const AUTO_KEYS = ["niche", "posts_per_day", "news_per_day", "news_kind", "news_format", "post_from", "post_to", "shorts", "longs", "choosy", "hour", "mode"];
-const AUTO_CHECKS = ["subtitles", "hq", "voiceover", "face_check", "news_picture"];
+const AUTO_CHECKS = ["subtitles", "follow", "hq", "voiceover", "face_check", "news_picture"];
 function fillAuto(st) {
   const f = $("#af"), a = st.settings;
   for (const k of AUTO_KEYS) f[k].value = a[k];
   for (const k of AUTO_CHECKS) f[k].checked = !!a[k];
-  f.aspect.value = (a.layout || "").startsWith("split:") ? "split" : [...f.aspect.options].filter(o => o.value !== "split")
+  const camL = (a.layout || "").match(/^cam:(top|bottom):(\w+)$/);
+  f.aspect.value = camL ? "cam-" + camL[1] : (a.layout || "").startsWith("split:") ? "split" : [...f.aspect.options].filter(o => !isNaN(+o.value))
     .reduce((b, o) => Math.abs(o.value - a.aspect) < Math.abs(b.value - a.aspect) ? o : b).value;
+  if (camL) f.cam.value = camL[2];
+  const mixKeys = (a.mix || []).map(m => `${+m.aspect}|${(m.layout || "").startsWith("split:") ? "split" : m.layout || ""}`);
+  f.querySelectorAll("input[name=mix]").forEach(i => i.checked = mixKeys.includes(`${+i.value.split("|")[0]}|${i.value.split("|")[1]}`));
+  f.notes.value = a.notes || "";
+  f.watch.checked = !!a.watch; f.streamers.value = (a.streamers || []).join("\n");
+  f.live_layout.value = a.live_layout || ""; f.live_chunk.value = a.live_chunk; f.live_shorts.value = a.live_shorts;
   if (f.filler && a.layout) { fillerWanted = a.layout.slice(6); }
   showFiller(f.aspect);
   f.querySelectorAll("input[name=pf]").forEach(i => i.checked = i.value.split(",").every(p => a.platforms.includes(p)));
@@ -773,6 +953,12 @@ function formAuto() {
   for (const k of AUTO_KEYS.filter(k => !["niche", "mode", "news_kind", "news_format"].includes(k))) o[k] = +d.get(k);
   o.news_kind = d.get("news_kind"); o.news_format = d.get("news_format");
   for (const k of AUTO_CHECKS) o[k] = d.has(k);
+  const split = o.layout.startsWith("split:") ? o.layout : f.filler && f.filler.value ? "split:" + f.filler.value : "";
+  if (d.getAll("mix").includes("0.5625|split") && !split) { alertBox("Mix: pick a background video for Split first (Framing → Split)."); throw new Error("no filler"); }
+  o.mix = d.getAll("mix").map(v => { const [asp, lay] = v.split("|"); return {aspect: +asp, layout: lay === "split" ? split : lay}; });
+  o.notes = d.get("notes") || "";
+  o.watch = d.has("watch"); o.streamers = d.get("streamers").split("\n").map(x => x.trim()).filter(Boolean);
+  o.live_layout = d.get("live_layout"); o.live_chunk = +d.get("live_chunk"); o.live_shorts = +d.get("live_shorts");
   return o;
 }
 function preset(n, from, to) {
@@ -819,6 +1005,13 @@ function showAuto(st, s) {
     + (lim.length ? `<div class="alert ${allLim ? "" : "warn"}">⏱ ${allLim ? "<b>Paused</b>: every platform it posts to is at its upload limit"
       : "Upload limit reached on"} ${lim.map(([p, t]) => `${PLATFORMS[p]} (until ${clock(t.until)})`).join(", ")}.
       ${allLim ? "It resumes by itself when the timers end." : "The autopilot skips it until then."}</div>` : "");
+  const L = st.live || {}, chans = Object.entries(L.channels || {});
+  $("#apLive").innerHTML = chans.length ? `<table>${chans.map(([url, c]) => `<tr><td>${c.live ? "🔴 <b>LIVE</b>" : c.live === false ? "⚫ offline" : "…"}</td>
+      <td><a href="${esc(url)}" target="_blank">${esc(url.replace("https://www.youtube.com/", ""))}</a></td>
+      <td class="dim">${c.job_id && c.live ? `clipping as job <a href="#jobs">#${c.job_id}</a>` : c.checked ? "checked " + clock(c.checked) : ""}
+      ${c.error ? `<span class="err">${esc(c.error)}</span>` : ""}</td></tr>`).join("")}</table>` : "";
+  if (L.paused) $("#apAlerts").insertAdjacentHTML("afterbegin", `<div class="alert warn">🔴 <b>A watched streamer is live.</b>
+    The autopilot is paused and scheduled posts are held while the stream is clipped; everything resumes when it ends.</div>`);
   // today: slots + numbers
   const [w0, w1] = sc.window, every = (w1 - w0) / sc.posts_per_day;
   const nextTxt = !a.enabled ? "off" : !st.scheduled ? (sc.posted_today >= sc.slots.length ? "done for today" : "waiting for clips")
@@ -1063,7 +1256,7 @@ async function loadNewsRuns() {
         ${d.stories ? ` · ${d.stories.length} stories, ${d.stories.filter(x => x.pick).length} picked` : ""}
         ${d.stories && d.stories.length && r.source !== "auto" ? ` <button class="ghost" style="padding:3px 10px;font-size:12px"
           onclick="event.preventDefault(); showRun(${r.id})">Show these stories ↑</button>` : ""}</summary>
-      <pre data-run="${r.id}">${esc(r.log || "starting…")}</pre></details>`;
+      <pre data-run="${r.id}">${logHtml(r.log || "starting…")}</pre></details>`;
   }).join("") : `<p class="empty">No searches yet.</p>`;
   document.querySelectorAll("#nruns pre[data-run]").forEach(p => { if (scroll[p.dataset.run] !== false) p.scrollTop = p.scrollHeight; });
 }
@@ -1091,7 +1284,7 @@ function nmWhen() {
 $("#nm").onsubmit = async e => {
   e.preventDefault();
   const f = new FormData(e.target), stories = [...document.querySelectorAll(".npick:checked")].map(i => nfound.stories[+i.dataset.i]);
-  const body = {stories, kind: nfound.kind, platforms: picked(e.target), picture: f.has("picture"), voiceover: f.has("voiceover"),
+  const body = {stories, kind: nfound.kind, platforms: picked(e.target), picture: f.has("picture"), voiceover: f.has("voiceover"), follow: f.has("follow"),
     when: f.get("when"), at: f.get("at") ? new Date(f.get("at")).getTime() / 1000 : null, every_min: +f.get("every_min"),
     run_id: nfound.run_id || null, format: f.get("format")};
   const r = await post("/api/news/make", body);
@@ -1105,7 +1298,59 @@ async function schedPost(id, btn) {
   const r = await post(`/api/clips/${id}/schedule`, {at: new Date(v).getTime() / 1000});
   if (!r.ok) return alertBox((await r.json()).detail); refresh();
 }
-async function unschedPost(id) { await post(`/api/clips/${id}/schedule`, {at: null}); refresh(); }
+async function unschedPost(id) { await post(`/api/clips/${id}/schedule`, {at: null}); clipKey = ""; refresh(); }
+// Clips page: schedule any clip that isn't posted yet: when + where (the clip keeps its own platforms).
+const schedOpenIds = new Set();
+const canSched = c => c.path && !["rendering", "uploading", "uploaded"].includes(c.status);
+const localInput = t => { const d = new Date(t * 1000); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
+// ✏ Edit on a clip card: title, the topic on the video (headline, re-renders the clip), description, hashtags, caption
+const editOpenIds = new Set();
+function editOpen(id) { editOpenIds.has(id) ? editOpenIds.delete(id) : editOpenIds.add(id); clipKey = ""; refresh(); }
+function editForm(s, c) {
+  const job = s.jobs.find(j => j.id === c.job_id) || {}, posted = Object.values(JSON.parse(c.uploads || "{}")).some(u => u.id);
+  return `<form style="margin-top:8px;display:flex;flex-direction:column;gap:8px;align-items:stretch" onsubmit="editSave(event, ${c.id})">
+    <label>Title<input name="title" maxlength="100" value="${esc(c.title)}"></label>
+    <label>Topic on the video (headline)<input name="headline" maxlength="60" value="${esc(c.headline)}">
+      <span class="dim" style="font-size:11px">Changing it renders the clip again (about as long as the first render).</span></label>
+    ${job.campaign_id ? `<label>Caption (posted exactly like this)<textarea name="caption" rows="4" style="font:13px/1.4 inherit">${esc(c.caption || "")}</textarea></label>`
+      : `<label>Description<textarea name="description" rows="3" style="font:13px/1.4 inherit">${esc(c.description)}</textarea></label>
+    <label>Hashtags (space or comma separated)<input name="tags" value="${esc(JSON.parse(c.tags || "[]").map(t => "#" + t).join(" "))}"></label>`}
+    ${posted ? `<span class="dim" style="font-size:11px">Already posted: edits change the copy here and future posts, not the posts already up.</span>` : ""}
+    <div class="row"><button>Save</button><button type="button" class="ghost" onclick="editOpen(${c.id})">Close</button></div></form>`;
+}
+async function editSave(e, id) {
+  e.preventDefault();
+  const f = new FormData(e.target), body = {title: f.get("title"), headline: f.get("headline")};
+  if (f.has("caption")) body.caption = f.get("caption");
+  else Object.assign(body, {description: f.get("description"), tags: (f.get("tags") || "").split(/[\s,]+/).map(t => t.replace(/^#/, "")).filter(Boolean)});
+  const btn = e.target.querySelector("button"); btn.disabled = true;
+  const r = await fetch(`/api/clips/${id}`, {method: "PATCH", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  btn.disabled = false;
+  if (!r.ok) { e.target.querySelector(".err")?.remove(); return e.target.insertAdjacentHTML("beforeend", `<span class="err">${esc((await r.json()).detail)}</span>`); }
+  editOpenIds.delete(id); document.activeElement.blur(); clipKey = ""; campKey = ""; refresh();
+}
+function schedOpen(id) { schedOpenIds.has(id) ? schedOpenIds.delete(id) : schedOpenIds.add(id); clipKey = ""; refresh(); }
+function schedForm(s, c) {
+  const done = JSON.parse(c.uploads || "{}"), job = s.jobs.find(j => j.id === c.job_id) || {};
+  const want = c.post_to ? JSON.parse(c.post_to) : JSON.parse(job.platforms || "[]");
+  const next = new Date(); next.setHours(next.getHours() + 1, 0, 0, 0);  // default: the next full hour, local time
+  const at = c.status === "timed" && c.post_at ? c.post_at : next.getTime() / 1000;
+  const plats = Object.keys(PLATFORMS).filter(p => s.platforms[p] && !(done[p] || {}).id);
+  return `<form class="row" style="margin-top:8px;gap:8px;align-items:flex-end;flex-wrap:wrap" onsubmit="schedSave(event, ${c.id})">
+    <label>When<input type="datetime-local" name="at" required value="${localInput(at)}" min="${localInput(Date.now() / 1000)}"></label>
+    <span>${plats.length ? plats.map(p => `<label class="check"><input type="checkbox" name="p" value="${p}" ${want.includes(p) ? "checked" : ""}> ${PLATFORMS[p]}</label>`).join(" ")
+      : `<span class="dim">Connect a platform on <a href="#socials">Socials</a> first.</span>`}</span>
+    <button>Save</button><button type="button" class="ghost" onclick="schedOpen(${c.id})">Close</button></form>`;
+}
+async function schedSave(e, id) {
+  e.preventDefault();
+  const f = new FormData(e.target), platforms = f.getAll("p");
+  const say = m => { e.target.querySelector(".err")?.remove(); e.target.insertAdjacentHTML("beforeend", `<span class="err">${esc(m)}</span>`); };
+  if (!platforms.length) return say("Pick at least one platform to post to.");
+  const r = await post(`/api/clips/${id}/schedule`, {at: new Date(f.get("at")).getTime() / 1000, platforms});
+  if (!r.ok) return say((await r.json()).detail);
+  schedOpenIds.delete(id); clipKey = ""; refresh();
+}
 function renderPosts(s) {
   const jobs = Object.fromEntries(s.jobs.filter(j => ["news", "fact"].includes(j.kind)).map(j => [j.id, j]));
   const posts = s.clips.filter(c => jobs[c.job_id]), making = Object.values(jobs).filter(j => !["done", "failed"].includes(j.status));
@@ -1133,18 +1378,67 @@ function renderPosts(s) {
             ${!["rendering", "uploading"].includes(c.status) ? `<button class="ghost danger" onclick="deleteClip(${c.id})">Delete</button>` : ""}</div>
         </div></div>`; }).join("") : making.length ? "" : `<p class="empty">No posts yet. Find some news above.</p>`);
 }
-// ---- Split layout: background videos ----
+// ---- Split layout: background videos, and the facecam layouts ----
 let fillers = [], fillerWanted = "";
 document.querySelectorAll("select.aspect").forEach(sel => {
-  sel.closest("label").insertAdjacentHTML("afterend", `<label class="fillwrap" hidden>Your video below<select name="filler" class="filler"></select></label>`);
+  sel.insertAdjacentHTML("beforeend", `<option value="cam-top">Streamer on top, gameplay below (full screen)</option>
+    <option value="cam-bottom">Gameplay on top, streamer below (full screen)</option>`);
+  const drawable = !!sel.form.url;  // only the Create form has one video to take a frame from
+  sel.closest("label").insertAdjacentHTML("afterend", `<label class="fillwrap" hidden>Your video below<select name="filler" class="filler"></select></label>
+    <label class="camwrap" hidden>Where's the streamer<select name="cam">
+      <option value="auto">Find the face automatically</option><option value="tl">Top-left corner</option>
+      <option value="tr">Top-right corner</option><option value="bl">Bottom-left corner</option><option value="br">Bottom-right corner</option>
+      ${drawable ? `<option value="box">I'll draw a box…</option>` : ""}</select>${drawable ? `<span class="dim camboxinfo" style="font-size:12px"></span>` : ""}</label>`);
   sel.addEventListener("change", () => showFiller(sel));
+  sel.form.cam.addEventListener("change", e => { if (e.target.value === "box") camOpen(sel.form); });
 });
 function showFiller(sel) {
   const w = sel.closest("label").nextElementSibling;
   if (w && w.classList.contains("fillwrap")) w.hidden = sel.value !== "split";
+  const c = sel.form.querySelector("label.camwrap");
+  if (c) c.hidden = !sel.value.startsWith("cam-");
+}
+// Draw a box: a real frame of the video (or the live edge of the stream), drag a rectangle on it.
+let camForm = null, camDrag = null, camBox = null;
+async function camOpen(form) {
+  camForm = form;
+  const url = (form.url && form.url.value || "").trim();
+  if (!/^https?:\/\//.test(url)) { form.cam.value = "auto"; return alertBox("Paste the video or live stream link first, then pick “I'll draw a box”."); }
+  $("#camdlg").hidden = false; $("#camrect").hidden = true; camBox = null;
+  $("#cammsg").textContent = "Getting a frame from the video…"; $("#camimg").removeAttribute("src");
+  const r = await fetch("/api/frame?url=" + encodeURIComponent(url));
+  if (!r.ok) { $("#cammsg").innerHTML = `<span class="err">${esc((await r.json()).detail)}</span>`; return; }
+  $("#camimg").src = URL.createObjectURL(await r.blob()); $("#cammsg").textContent = "";
+}
+function camPoint(e) {
+  const b = $("#camstage").getBoundingClientRect();
+  return [Math.min(Math.max((e.clientX - b.left) / b.width, 0), 1), Math.min(Math.max((e.clientY - b.top) / b.height, 0), 1)];
+}
+$("#camstage").addEventListener("pointerdown", e => { if (!$("#camimg").src) return; camDrag = camPoint(e); $("#camstage").setPointerCapture(e.pointerId); });
+$("#camstage").addEventListener("pointermove", e => {
+  if (!camDrag) return;
+  const [x2, y2] = camPoint(e), [x1, y1] = camDrag;
+  camBox = [Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1)];
+  Object.assign($("#camrect").style, {left: camBox[0] * 100 + "%", top: camBox[1] * 100 + "%", width: camBox[2] * 100 + "%", height: camBox[3] * 100 + "%"});
+  $("#camrect").hidden = false;
+});
+$("#camstage").addEventListener("pointerup", () => { camDrag = null; });
+function camSave() {
+  if (!camBox || camBox[2] < 0.03 || camBox[3] < 0.03) return $("#cammsg").innerHTML = `<span class="err">Drag a box around the streamer first.</span>`;
+  camForm.dataset.cambox = camBox.map(v => v.toFixed(3)).join(",");
+  camForm.querySelector(".camboxinfo").textContent = ` ✓ box set (${Math.round(camBox[2] * 100)}% × ${Math.round(camBox[3] * 100)}% of the frame)`;
+  $("#camdlg").hidden = true;
 }
 function framing(form) {  // -> {aspect, layout} for the API
   const v = form.aspect.value;
+  if (v.startsWith("cam-")) {
+    let where = form.cam.value;
+    if (where === "box") {
+      if (!form.dataset.cambox) { alertBox("Draw the streamer's box first (Where's the streamer → I'll draw a box)."); throw new Error("no box"); }
+      where = form.dataset.cambox;
+    }
+    return {aspect: 0.5625, layout: `cam:${v.slice(4)}:${where}`};
+  }
   if (v !== "split") return {aspect: +v, layout: ""};
   const name = form.filler && form.filler.value;
   if (!name) { alertBox("Add a background video first (Settings → Background videos)."); throw new Error("no filler"); }
@@ -1267,8 +1561,8 @@ window.addEventListener("hashchange", loadReports);
 let clipKey = "";
 async function refresh() {
   const s = await (await fetch("/api/state")).json();
+  lastState = s; reelSync(s);
   const ds = s.deepseek || {}, b = (ds.balances || [])[0];
-  $("#chatmodel").textContent = ds.model ? `${ds.model} at ${ds.url}` : "DeepSeek";
   $("#ds").innerHTML = ds.model ? `<span style="color:var(--ok)" title="${esc(ds.url)}">AI: ${esc(ds.model)}</span>`
     : ds.error ? `<span style="color:#f66" title="${esc(ds.error)}">DeepSeek balance: error</span>`
     : b ? `<span style="color:${!ds.available || +b.total < 1 ? "#f66" : +b.total < 3 ? "var(--warn)" : "var(--ok)"}"
@@ -1317,10 +1611,15 @@ async function refresh() {
       ${s.youtube_cookies.bot_check_at ? `<div style="color:#f66;font-size:13px">YouTube's bot check hit at ${hhmm(s.youtube_cookies.bot_check_at)}: add cookies to fix it.</div>` : ""}
       <div class="dim" style="font-size:13px">Fixes "Sign in to confirm you're not a bot". In Chrome, install the extension
         <b>Get cookies.txt LOCALLY</b>, open youtube.com signed in (a spare Google account is safest), click the extension → Export,
-        then pick that file here. Cookies last weeks to months; add new ones when the bot check comes back.</div>
-      <div class="row"><label class="ghost" style="cursor:pointer;color:var(--hot);font-size:14px">📄 Choose cookies.txt
-        <input type="file" accept=".txt" style="display:none" onchange="sendCookies(this)"></label>
-        ${s.youtube_cookies.source === "cookies.txt" ? `<button class="ghost danger" onclick="dropCookies()">Remove</button>` : ""}</div>
+        then pick that file here. Works from any computer that opens this page (e.g. over your tunnel): each file is
+        <b>added</b> as its own set (give them different names, e.g. <i>cookies laptop.txt</i>; the same name replaces it).
+        If YouTube's bot check blocks one set, downloads switch to the next. Cookies last weeks to months.</div>
+      ${(s.youtube_cookies.sets || []).map(c => `<div class="row" style="font-size:13px;gap:8px">
+        <span>${c.active ? "✅ <b>in use</b>" : "⚪"} ${esc(c.name)} · ${c.cookies} youtube.com cookies · added ${new Date(c.added * 1000).toLocaleString()}</span>
+        ${c.active ? "" : `<button class="ghost" onclick='useCookies(${JSON.stringify(c.name)})'>Use</button>`}
+        <button class="ghost danger" onclick='dropCookies(${JSON.stringify(c.name)})'>Remove</button></div>`).join("")}
+      <div class="row"><label class="ghost" style="cursor:pointer;color:var(--hot);font-size:14px">📄 Add cookies.txt
+        <input type="file" accept=".txt" style="display:none" onchange="sendCookies(this)"></label></div>
     </div>` + `
     <div class="social"><h3><span class="dot ${s.whatsapp ? "ok" : ""}"></span>WhatsApp report</h3>
       <div class="${s.whatsapp ? "" : "dim"}">${s.whatsapp ? `Every ${s.report_minutes} min: views per platform, best platform, top clips`
@@ -1349,6 +1648,9 @@ async function refresh() {
   loadAuto(s);
   renderPosts(s);
   loadNewsRuns();
+  jobBulk(s);
+  renderCamps(s);
+  $("#n-campaigns").textContent = (s.campaigns || []).length || "";
   const logScroll = saveLogs();
   $("#topics").innerHTML = s.topics.length ? s.topics.map(t => {
     const running = !["done","failed","stopped","interrupted","queued"].includes(t.status);
@@ -1357,13 +1659,13 @@ async function refresh() {
     const jobs = s.jobs.filter(j => j.topic_id === t.id).map(j => `#${j.id}`).reverse().join(" ");
     return `<div class="job"><div class="row">
       <b>T${t.id}</b> <span>${esc(t.topic)}</span> <span class="badge ${cls}">${esc(t.status)}</span>
-      <span class="dim">${t.videos} videos × (${t.shorts} shorts + ${t.longs} long) · ${esc(t.mode)} · ${esc(plats)}${t.voiceover ? " · voice-over" : ""}${t.face_check ? " · face check" : " · no face check"}${(t.layout || "").startsWith("split:") ? " · split + " + esc(t.layout.slice(6)) : t.aspect ? " · " + aspectName(t.aspect) : ""}${t.hq ? " · 4K" : ""}</span>
+      <span class="dim">${t.videos} videos × (${t.shorts} shorts + ${t.longs} long) · ${esc(t.mode)} · ${esc(plats)}${t.voiceover ? " · voice-over" : ""}${t.face_check ? " · face check" : " · no face check"}${layoutName(t)}${t.hq ? " · 4K" : ""}${(t.notes || "").trim() ? ` · <span title="${esc(t.notes)}">📝 your AI instructions</span>` : ""}</span>
       ${jobs ? `<span class="dim">jobs ${jobs}</span>` : ""}
       ${running || t.status === "queued" ? `<button class="ghost" onclick="stopTopic(${t.id})">${running ? "Stop" : "Cancel"}</button>`
         : `<button class="ghost danger" onclick="removeTopic(${t.id})">Remove</button>`}
     </div>
     <details ${openLogs.has("t" + t.id) ? "open" : ""} ontoggle="this.open ? (openLogs.add('t${t.id}'), toBottom(this)) : openLogs.delete('t${t.id}')">
-      <summary>queries + log</summary><pre class="log" data-log="t${t.id}">${esc(JSON.parse(t.queries || "[]").join("\n"))}\n\n${esc(t.log)}</pre></details></div>`;
+      <summary>queries + log</summary><pre class="log" data-log="t${t.id}">${esc(JSON.parse(t.queries || "[]").join("\n"))}\n\n${logHtml(t.log)}</pre></details></div>`;
   }).join("") : `<p class="empty">No topics queued.</p>`;
 
   // Don't wipe the jobs list while you're typing cuts into it or hovering a graph.
@@ -1375,13 +1677,16 @@ async function refresh() {
       <b>#${j.id}</b> ${j.is_live ? '<span class="badge live">LIVE</span>' : ""}
       <span>${esc(j.title || j.url)}</span>
       <span class="badge ${cls}">${esc(j.status)}</span>
-      <span class="dim">${j.mode === "manual" ? "manual cuts" : `${j.shorts} shorts · ${j.longs} long · ${esc(j.mode || "hype")}`}${j.voiceover ? " · voice-over" : ""}${(j.layout || "").startsWith("split:") ? " · split + " + esc(j.layout.slice(6)) : j.aspect ? " · " + aspectName(j.aspect) : ""}${j.hq ? " · 4K" : ""}
-        · ${esc(j.auto_upload ? JSON.parse(j.platforms || '["youtube"]').map(p => PLATFORMS[p]).join(", ") : "no auto-upload")}${j.topic_id ? ` · topic T${j.topic_id}` : ""}</span>
-      ${running ? `<button class="ghost" onclick="stopJob(${j.id})">Stop</button>` : ""}
+      <span class="dim">${j.mode === "manual" ? "manual cuts" : `${j.shorts} shorts · ${j.longs} long · ${esc(j.mode || "hype")}`}${j.voiceover ? " · voice-over" : ""}${layoutName(j)}${j.hq ? " · 4K" : ""}
+        · ${esc(j.auto_upload ? JSON.parse(j.platforms || '["youtube"]').map(p => PLATFORMS[p]).join(", ") : "no auto-upload")}${j.topic_id ? ` · topic T${j.topic_id}` : ""}${(j.notes || "").trim() ? ` · <span title="${esc(j.notes)}">📝 your AI instructions</span>` : ""}</span>
+      ${running ? `<button class="ghost danger" onclick="stopJob(${j.id}, this)" title="Stops at the next step; clips already made stay">■ Stop</button>` : ""}
+      ${["failed", "interrupted", "stopped"].includes(j.status) && !/retried as job #/.test(j.log || "")
+        ? `<button class="ghost" onclick="retryJob(${j.id}, this)" title="Run it again as a new job with the same settings">↻ Retry</button>` : ""}
+      ${(j.log || "").match(/retried as job #(\d+)/) ? `<span class="dim">↻ retried as #${(j.log || "").match(/retried as job #(\d+)/)[1]}</span>` : ""}
     </div>
     ${j.is_live && running ? liveCtl(j) : ""}
     <details ${openLogs.has(j.id) ? "open" : ""} ontoggle="this.open ? (openLogs.add(${j.id}), toBottom(this)) : openLogs.delete(${j.id})">
-      <summary>log</summary><pre class="log" data-log="j${j.id}">${esc(j.log)}</pre></details>
+      <summary>log</summary><pre class="log" data-log="j${j.id}">${logHtml(j.log)}</pre></details>
     <details class="curves" ${openCurves.has(j.id) ? "open" : ""} ontoggle="toggleCurves(${j.id}, this.open)">
       <summary>loudness / hype curves</summary><div id="curves-${j.id}">${curvesHtml(j.id)}</div></details>
     ${!j.is_live && !running ? `<details ${j.mode === "manual" ? "open" : ""}><summary>cut it yourself</summary>
@@ -1405,8 +1710,9 @@ async function refresh() {
       ${t === "instagram" && igMax ? `title="only clips up to ${igMax}s: Instagram's API rejects longer Reels right now"` : ""}>${TARGET_NAMES[t]}${
       t === "instagram" && igMax ? ` ≤${igMax}s` : ""} (${n})</button>`).join("")
     : `<span class="dim">Connect a platform on the <a href="#socials">Socials</a> page to upload.</span>`;
-  const key = JSON.stringify([s.platforms, igMax, s.clips.map(c => [c.id, c.status, c.path, c.uploads, c.views])]);
+  const key = JSON.stringify([s.platforms, igMax, [...schedOpenIds], [...editOpenIds], s.clips.map(c => [c.id, c.status, c.path, c.uploads, c.views, c.post_at, c.post_to, c.title, c.headline, c.description, c.tags, c.caption])]);
   if (key === clipKey) return;
+  if ($("#clips").contains(document.activeElement) && document.activeElement.matches("input, textarea, select")) return;  // you're typing
   clipKey = key;
   $("#clips").innerHTML = s.clips.length ? s.clips.map(c => {
     const tags = JSON.parse(c.tags || "[]").map(t => "#" + t).join(" ");
@@ -1415,21 +1721,25 @@ async function refresh() {
       ? `<a href="${esc(u.url)}" target="_blank">▶ ${PLATFORMS[p] || p}${p in JSON.parse(c.views || "{}") ? ` · ${JSON.parse(c.views)[p].toLocaleString()} views` : ""}</a>` : `<span class="err">✕ ${PLATFORMS[p] || p}</span>`).join("");
     return `<div class="clip ${c.kind}">
       ${c.path ? (isPhoto(c) ? `<img src="/media/${esc(c.path)}" style="width:100%;aspect-ratio:4/5;object-fit:contain;background:#000">`
-        : `<video src="/media/${esc(c.path)}" controls preload="metadata"></video>`) : `<div style="aspect-ratio:9/16;display:grid;place-items:center" class="dim">${c.status.startsWith("uploaded") ? "file deleted locally (still online)" : esc(c.status) + "…"}</div>`}
+        : clipVideo(c, "controls")) : `<div style="aspect-ratio:9/16;display:grid;place-items:center" class="dim">${c.status.startsWith("uploaded") ? "file deleted locally (still online)" : esc(c.status) + "…"}</div>`}
       <div class="body">
         <div class="row"><span class="score">${Math.round(c.score)}</span><span class="badge">${c.kind}</span>
           <span class="dim">job #${c.job_id} · ${fmt(c.start)}–${fmt(c.end)}</span></div>
         <div class="title">${esc(c.title)}</div>
         ${c.headline ? `<div><span class="badge">${esc(c.headline)}</span></div>` : ""}
         <div class="dim">${esc(c.reason)}</div>
+        ${whyHtml(c)}
         <div class="dim">${esc(tags)}</div>
         ${Object.entries(JSON.parse(c.uploads || "{}")).filter(([, u]) => u.error).map(([p, u]) =>
           `<div style="color:#f88;font-size:12px"><b>${PLATFORMS[p] || p} error:</b> ${esc(u.error)}</div>`).join("")}
         <div class="row">
-          ${c.status === "timed" ? `<span class="chip">⏰ posts ${new Date(c.post_at * 1000).toLocaleString([], {dateStyle: "short", timeStyle: "short"})}</span>` : ""}
+          ${c.status === "timed" ? `<span class="chip">⏰ posts ${new Date(c.post_at * 1000).toLocaleString([], {dateStyle: "short", timeStyle: "short"})}${
+            c.post_to ? " to " + JSON.parse(c.post_to).map(p => PLATFORMS[p] || p).join(", ") : ""}</span>
+            <button class="ghost" onclick="schedOpen(${c.id})">Change</button><button class="ghost" onclick="unschedPost(${c.id})" title="Take it off the schedule: it stays here, not posted">Don't post</button>` : ""}
           ${ups ? `<span class="ups">${ups}</span>` : c.youtube_id ? `<a href="https://youtu.be/${esc(c.youtube_id)}" target="_blank">▶ on YouTube</a>` : `<span class="dim">${esc(c.status)}</span>`}
           ${canUpload ? `<button class="ghost" onclick="uploadClip(${c.id}, this)" title="to the job's platforms; only retries the ones not done yet">${ups ? "Retry upload" : "Upload"}</button>` : ""}
           ${c.path ? `<a href="/media/${esc(c.path)}" target="_blank">Open</a>` : ""}
+          ${c.path ? `<button class="ghost" onclick="openReels(${c.id})" title="Watch full screen, swipe to the next">⛶ Reels</button>` : ""}
         </div>
         <div class="row">
           ${ready(c) ? Object.keys(TARGETS).filter(t => notOn(s, c, t).length).map(t =>
@@ -1437,12 +1747,413 @@ async function refresh() {
               onclick="uploadTo(${c.id}, '${notOn(s, c, t).join(",")}', this)">↑ ${TARGET_NAMES[t]}</button>`).join("") : ""}
           ${ready(c) && igRisky(s, c) ? `<button class="ig-risk" onclick="uploadTo(${c.id}, 'instagram', this, true)"
               title="${Math.round(c.end - c.start)}s is over ${igMax}s: Instagram's API often rejects Reels this long (ProcessingFailedError). It retries once by itself.">↑ Instagram (${Math.round(c.end - c.start)}s, may fail)</button>` : ""}
+          ${c.status === "scheduled" ? `<span class="chip">⏰ waiting for an autopilot slot</span>` : ""}
+          ${c.status === "paused (streamer live)" ? `<span class="chip">⏸ held while a streamer is live</span>` : ""}
+          ${["scheduled", "paused (streamer live)"].includes(c.status) ? `<button class="ghost" onclick="unschedPost(${c.id})" title="Take it off the schedule: it stays here, not posted">Don't post</button>` : ""}
+          ${canSched(c) && c.status !== "timed" ? `<button class="ghost" onclick="schedOpen(${c.id})">⏰ Schedule</button>` : ""}
+          ${!["rendering", "uploading"].includes(c.status) ? `<button class="ghost" onclick="editOpen(${c.id})" title="Title, the topic on the video, description, hashtags">✏ Edit</button>` : ""}
           ${!["rendering","uploading"].includes(c.status) ? `<button class="ghost danger" onclick="deleteClip(${c.id})">Delete</button>` : ""}
         </div>
+        ${schedOpenIds.has(c.id) ? schedForm(s, c) : ""}
+        ${editOpenIds.has(c.id) ? editForm(s, c) : ""}
       </div></div>`;
   }).join("") : `<p class="empty">Clips will appear here as they render.</p>`;
 }
 const fmt = s => `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;
+// ---- Campaigns (campaign.py): the brief -> rules -> official videos -> clips with captions built to the rules ----
+const campOpen = new Set(), campErr = {};
+let campKey = "";
+const lines = v => String(v || "").split("\n").map(x => x.trim()).filter(Boolean);
+const csv = v => String(v || "").split(/[,\n]/).map(x => x.trim()).filter(Boolean);
+// New campaign: paste the brief -> Analyze -> every field the brief answers is filled (✓ from the brief), the rest
+// are highlighted with a question and a default -> Create (the analysed rules are kept, the brief isn't read twice).
+let cfRules = null;
+function cfStale() { if (cfRules) { cfRules = null; $("#cfFields").hidden = true; $("#cfMsg").textContent = "The brief changed: analyze it again."; } }
+async function analyzeBrief() {
+  const form = $("#cf"), brief = form.brief.value.trim(), btn = $("#cfGo");
+  if (brief.length < 20) return $("#cfMsg").textContent = "Paste the whole brief first.";
+  btn.disabled = true; btn.textContent = "Analyzing…"; $("#cfMsg").textContent = "the AI is reading the brief (up to a minute)";
+  const r = await post("/api/campaigns/analyze", {brief});
+  btn.disabled = false; btn.textContent = "Analyze again";
+  if (!r.ok) return $("#cfMsg").textContent = "Couldn't analyze: " + (await r.text());
+  const a = await r.json(), rl = a.rules;
+  cfRules = rl;
+  const asks = [];
+  for (const [k, v] of Object.entries(a.fields)) {
+    const box = form.querySelector(`[data-f="${k}"]`);
+    if (!box) continue;
+    if (k === "platforms") box.querySelectorAll("input[name=pf]").forEach(i => i.checked = i.value.split(",").some(p => v.value.includes(p)));
+    else if (form[k].type === "checkbox") form[k].checked = !!v.value;
+    else if (k === "aspect") form.aspect.value = String(v.value === 1 ? 1 : v.value);
+    else form[k].value = v.value;
+    box.classList.toggle("ask", !v.found);
+    box.querySelector(".src").innerHTML = v.found ? `<span class="ok" title="${esc(v.why)}">✓ from the brief</span>` : `<span style="color:var(--warn)">? your call</span>`;
+    if (!v.found) asks.push(v.ask);
+  }
+  const chip = (t, ok = true) => `<span class="chip" style="${ok ? "" : "border-color:var(--warn)"}">${t}</span>`;
+  $("#cfFound").innerHTML = `<b>Found in the brief</b> ${a.by_ai ? "" : '<span class="dim">(the AI was unavailable: read without it, check the rules after creating)</span>'}<div class="row" style="gap:6px;margin-top:6px">
+    ${(rl.tags || []).length ? chip("Tag " + esc(rl.tags.join(" "))) : chip("no @tag found", false)}
+    ${chip(esc((rl.disclosures || ["#Ad"])[0]) + " first, own line")}
+    ${rl.extra_hashtags_max != null ? chip(`+${rl.extra_hashtags_max} hashtags max`) : chip("hashtag limit not stated", false)}
+    ${(rl.required_lines || [])[0] ? chip("Required: “" + esc(rl.required_lines[0]) + "”") : ""}
+    ${rl.min_seconds ? chip(`≥ ${rl.min_seconds}s`) : chip("no minimum length", false)}
+    ${rl.keep_live_days ? chip(`keep up ${rl.keep_live_days} days`) : ""}
+    ${rl.no_music ? chip("no music") : ""}${rl.no_ai_voice ? chip("no AI voice") : ""}${rl.official_footage_only ? chip("official footage only") : ""}
+    ${rl.content_folder ? chip(`<a href="${esc(rl.content_folder)}" target="_blank">content folder</a>`) : ""}</div>`;
+  $("#cfAsk").innerHTML = asks.length ? `<div class="panel" style="border-color:var(--warn);margin-bottom:12px"><b>Not in the brief: your call</b>
+    (highlighted below, a default is picked)<ul style="margin:6px 0 0">${asks.map(q => `<li>${esc(q)}</li>`).join("")}</ul></div>`
+    : `<p class="ok">Everything needed was in the brief. Check and create.</p>`;
+  $("#cfMsg").textContent = "";
+  $("#cfFields").hidden = false;
+}
+$("#cf").onsubmit = async e => {
+  e.preventDefault();
+  if (!cfRules) return analyzeBrief();
+  const f = new FormData(e.target), btn = e.target.querySelector("#cfFields button");
+  btn.disabled = true;
+  const r = await post("/api/campaigns", {brief: f.get("brief"), name: f.get("name") || "", shorts: +f.get("shorts"),
+    max_seconds: +f.get("max_seconds") || null, aspect: +f.get("aspect"), subtitles: f.has("subtitles"), onscreen: f.has("onscreen"),
+    trial_on_screen: f.has("trial_on_screen"), platforms: picked(e.target), notes: f.get("notes") || "", rules: cfRules});
+  btn.disabled = false;
+  if (!r.ok) return $("#cfMsg").textContent = await r.text();
+  const {id} = await r.json(); campOpen.add("v" + id);
+  e.target.reset(); cfRules = null; $("#cfFields").hidden = true; $("#cfGo").textContent = "Analyze the brief";
+  e.target.hidden = true; campKey = ""; refresh();
+};
+function campAlert(id, msg) { campErr[id] = msg; campKey = ""; if (lastState) renderCamps(lastState); }
+function campRules(c) { try { return JSON.parse(c.rules || "{}"); } catch (e) { return {}; } }
+function campClipHtml(s, c, camp) {
+  const w = (() => { try { return JSON.parse(c.why || "{}"); } catch (e) { return {}; } })(), cw = w.campaign || {};
+  const ups = JSON.parse(c.uploads || "{}"), plats = JSON.parse(camp.platforms || "[]");
+  const days = cw.keep_live_days || campRules(camp).keep_live_days;
+  const posted = Object.entries(ups).filter(([, u]) => u.id).map(([p, u]) => `<div>✓ <a href="${esc(u.url)}" target="_blank">${PLATFORMS[p] || p}</a>
+      <span class="dim">${new Date(u.at * 1000).toLocaleDateString()}${days ? ` · keep it up until <b>${new Date((u.at + days * 86400) * 1000).toLocaleDateString()}</b>` : ""}${u.manual ? " · posted by hand" : ""}</span></div>`).join("");
+  const errs = Object.entries(ups).filter(([, u]) => u.error).map(([p, u]) => `<div style="color:#f88;font-size:12px"><b>${PLATFORMS[p] || p}:</b> ${esc(u.error)}</div>`).join("");
+  const checks = (cw.checks || []).map(x => `<div style="font-size:12px">${x.ok ? '<span class="ok">✓</span>' : '<span class="no">✕</span>'} ${esc(x.rule)}${x.note ? ` <span class="dim">(${esc(x.note)})</span>` : ""}</div>`).join("");
+  const ready = c.path && !["rendering", "uploading"].includes(c.status);
+  const api = ready ? plats.filter(p => s.platforms[p] && !(ups[p] || {}).id).map(p =>
+    `<button class="ghost" onclick="uploadTo(${c.id}, '${p}', this, true)" title="Posts with this exact caption${p === "tiktok" ? ". TikTok's API posts privately until TikTok audits your app: campaigns need public posts, so post by hand then" : ""}">↑ ${PLATFORMS[p]}</button>`).join("") : "";
+  return `<div class="clip short">
+    ${c.path ? clipVideo(c, "controls") : `<div style="aspect-ratio:9/16;display:grid;place-items:center" class="dim">${esc(c.status)}…</div>`}
+    <div class="body">
+      <div class="row"><span class="score">${Math.round(c.score)}</span><span class="dim">#${c.id} · ${fmt(c.start)}–${fmt(c.end)} · ${Math.round(c.end - c.start)}s</span></div>
+      ${cw.shows ? `<div><b>Shows:</b> ${esc(cw.shows)}</div>` : ""}
+      ${c.headline || cw.onscreen_line ? `<div class="dim" style="font-size:12px">On screen: ${esc([c.headline, cw.onscreen_line].filter(Boolean).join(" / "))}</div>` : ""}
+      <label>Caption (posted exactly like this)<textarea id="cap-${c.id}" rows="4" style="font:13px/1.4 inherit">${esc(c.caption || "")}</textarea></label>
+      <div class="row" style="gap:6px">
+        <button class="ghost" onclick="saveCaption(${c.id}, this)">Save + check</button>
+        <button class="ghost" onclick="rewriteCaption(${c.id}, this)" title="The AI writes a new caption (to the rules, not a repeat)">✨ Rewrite</button>
+        <button class="ghost" onclick="copyCaption(${c.id}, this)">📋 Copy</button>
+        ${c.path ? `<a href="/media/${esc(c.path)}" download="clip_${c.id}.mp4">⬇ Download</a>` : ""}
+      </div>
+      <div style="margin:4px 0">${checks}</div>
+      <div class="dim" style="font-size:12px">${esc(c.reason)}</div>
+      ${errs}${posted}
+      ${ready ? `<div class="row" style="gap:6px">${api}</div>
+      <div class="row" style="gap:6px"><select id="pp-${c.id}">${plats.concat(Object.keys(PLATFORMS).filter(p => !plats.includes(p))).map(p => `<option value="${p}">${PLATFORMS[p]}</option>`).join("")}</select>
+        <input id="pu-${c.id}" type="url" placeholder="post link (posted by hand)" style="flex:1;min-width:120px">
+        <button class="ghost" onclick="markPosted(${c.id}, this)">Save link</button></div>` : ""}
+      ${!["rendering", "uploading"].includes(c.status) ? `<div class="row"><button class="ghost danger" onclick="deleteClip(${c.id})">Delete</button></div>` : ""}
+    </div></div>`;
+}
+function campRulesForm(c) {
+  const r = campRules(c), v = x => esc(x ?? ""), ln = x => esc((x || []).join("\n"));
+  return `<form id="cr-${c.id}" onsubmit="saveRules(event, ${c.id})" style="margin-top:8px">
+    <label>Tag in every caption<input name="tags" value="${v((r.tags || []).join(", "))}" placeholder="@brand"></label>
+    <label>Disclosure (first = used)<input name="disclosures" value="${v((r.disclosures || []).join(", "))}" placeholder="#Ad"></label>
+    <label>More hashtags allowed<input type="number" name="extra_hashtags_max" min="0" max="10" value="${v(r.extra_hashtags_max)}"></label>
+    <label>Min length (s)<input type="number" name="min_seconds" min="0" max="180" value="${v(r.min_seconds)}"></label>
+    <label>Max length (s)<input type="number" name="max_seconds" min="0" max="180" value="${v(r.max_seconds)}"></label>
+    <label>Keep up (days)<input type="number" name="keep_live_days" min="0" max="365" value="${v(r.keep_live_days)}"></label>
+    <label>Required line may be<select name="required_where">${["caption", "either", "onscreen"].map(x => `<option ${r.required_where === x ? "selected" : ""} value="${x}">${{caption: "in the caption", either: "caption or on screen", onscreen: "on screen"}[x]}</option>`).join("")}</select></label>
+    <label style="flex-basis:100%">Required line (every post; the first is used)<textarea name="required_lines" rows="2">${ln(r.required_lines)}</textarea></label>
+    <label style="flex-basis:100%">What to clip<textarea name="what_to_clip" rows="2">${v(r.what_to_clip)}</textarea></label>
+    <label style="flex-basis:100%">Content to show (features, maps, modes)<input name="focus" value="${v(r.focus)}"></label>
+    <label style="flex:1;min-width:240px">Caption examples (one per line)<textarea name="caption_examples" rows="3">${ln(r.caption_examples)}</textarea></label>
+    <label style="flex:1;min-width:240px">On-screen examples (one per line)<textarea name="onscreen_examples" rows="3">${ln(r.onscreen_examples)}</textarea></label>
+    <label style="flex-basis:100%">Not allowed (one per line)<textarea name="dont" rows="3">${ln(r.dont)}</textarea></label>
+    <label style="flex-basis:100%">Tone<input name="tone" value="${v(r.tone)}"></label>
+    <label class="check"><input type="checkbox" name="no_music" ${r.no_music ? "checked" : ""}> No added music</label>
+    <label class="check"><input type="checkbox" name="no_ai_voice" ${r.no_ai_voice ? "checked" : ""}> No AI voice</label>
+    <label class="check"><input type="checkbox" name="official_footage_only" ${r.official_footage_only ? "checked" : ""}> Official footage only</label>
+    <input type="hidden" name="keep" value="${v(JSON.stringify({name: r.name, brand: r.brand, platforms: r.platforms, language: r.language, content_folder: r.content_folder}))}">
+    <button>Save rules</button><button type="button" class="ghost" onclick="rereadCamp(${c.id}, this)">Read the brief again</button>
+  </form>`;
+}
+function renderCamps(s) {
+  const camps = s.campaigns || [];
+  const el = $("#camps");
+  if (el.contains(document.activeElement) && document.activeElement.matches("textarea, input, select")) return;
+  const jobs = s.jobs.filter(j => j.campaign_id), clips = s.clips.filter(c => jobs.some(j => j.id === c.job_id));
+  const key = JSON.stringify([camps, jobs.map(j => [j.id, j.status, j.log.length]), clips.map(c => [c.id, c.status, c.path, c.caption, c.uploads, c.why]),
+    s.platforms, [...campOpen], campErr]);
+  if (key === campKey) return;
+  campKey = key;
+  const logScroll = saveLogs();
+  el.innerHTML = camps.length ? camps.map(c => {
+    const r = campRules(c), js = jobs.filter(j => j.campaign_id === c.id), cl = clips.filter(x => js.some(j => j.id === x.job_id));
+    const posted = cl.filter(x => Object.values(JSON.parse(x.uploads || "{}")).some(u => u.id)).length;
+    const plats = JSON.parse(c.platforms || "[]").map(p => PLATFORMS[p] || p).join(", ") || "?";
+    const tog = k => `ontoggle="this.open ? campOpen.add('${k}${c.id}') : campOpen.delete('${k}${c.id}')" ${campOpen.has(k + c.id) ? "open" : ""}`;
+    return `<section class="panel">
+      <div class="row"><h3 style="margin:0">${esc(c.name)}</h3> <span class="badge ${c.status === "failed" ? "failed" : ""}">${esc(c.status)}</span>
+        <span class="dim">${esc(plats)} · ${js.length} video(s) · ${cl.length} clip(s) · ${posted} posted</span>
+        <button class="ghost danger" style="margin-left:auto" onclick="deleteCamp(${c.id})" title="Its clips stay on the Clips page">Delete campaign</button></div>
+      ${campErr[c.id] ? `<p style="color:#f66">${esc(campErr[c.id])}</p>` : ""}
+      ${r.tags ? `<div style="margin:8px 0;font-size:13px">Every caption: <b>${esc((r.tags || []).join(" "))}</b> · <b>${esc((r.disclosures || [])[0] || "#Ad")}</b> first on its own line
+        · ${r.extra_hashtags_max ?? 3} more hashtags max${(r.required_lines || [])[0] ? ` · “${esc(r.required_lines[0])}”` : ""}${r.min_seconds ? ` · ≥${r.min_seconds}s` : ""}${r.keep_live_days ? ` · keep up ${r.keep_live_days} days` : ""}</div>` : ""}
+      ${r.content_folder ? `<div style="font-size:13px">Official content: <a href="${esc(r.content_folder)}" target="_blank">${esc(r.content_folder)}</a></div>` : ""}
+      <details ${tog("r")}><summary>Rules (read from the brief, edit if needed)</summary>${c.status === "reading the brief" ? `<p class="dim">The AI is reading the brief…</p>` : campRulesForm(c)}</details>
+      <details ${tog("b")}><summary>The brief</summary><pre class="log">${esc(c.brief)}</pre></details>
+      <details ${tog("v")} ${!js.length && c.status === "ready" ? "open" : ""}><summary>Add the official videos</summary>
+        <form onsubmit="addCampVideos(event, ${c.id})" style="margin-top:8px">
+          <label style="flex-basis:100%">Video links (one per line: YouTube, direct .mp4…)<textarea name="urls" rows="2"></textarea></label>
+          <label style="flex:1;min-width:260px">Or a folder on this PC (the downloaded content folder)<input name="folder" placeholder="C:\\Users\\you\\Downloads\\DMZ briefing"></label>
+          <label>Or files<input type="file" name="files" multiple accept="video/*"></label>
+          <button>Add + clip</button>
+        </form>
+        <div class="dim" style="font-size:12px">Review sites (MediaSilo, Frame.io, Drive) usually can't be downloaded from a link: download the files there, then add the folder or the files here. Only use the official footage.</div>
+      </details>
+      <details ${tog("s")}><summary>Settings</summary>
+        <form onsubmit="saveCampSettings(event, ${c.id})" style="margin-top:8px">
+          <label>Clips per video<input type="number" name="shorts" min="1" max="20" value="${c.shorts}"></label>
+          <label>Longest clip (s)<input type="number" name="max_seconds" min="0" max="180" value="${c.max_seconds || ""}" placeholder="60"></label>
+          <label class="check"><input type="checkbox" name="subtitles" ${c.subtitles ? "checked" : ""}> Subtitles</label>
+          <label class="check"><input type="checkbox" name="onscreen" ${c.onscreen ? "checked" : ""}> On-screen text</label>
+          <label class="check"><input type="checkbox" name="trial_on_screen" ${c.trial_on_screen ? "checked" : ""}> Required line on screen too</label>
+          <fieldset><legend>Post to</legend>${Object.keys(PLATFORMS).map(p => `<label class="check"><input type="checkbox" name="cp" value="${p}" ${JSON.parse(c.platforms || "[]").includes(p) ? "checked" : ""}> ${PLATFORMS[p]}</label>`).join("")}</fieldset>
+          <label style="flex-basis:100%">Tell the AI<textarea name="notes" rows="2" maxlength="1000">${esc(c.notes || "")}</textarea></label>
+          <button>Save</button><span class="dim" style="font-size:12px">Applies to videos added from now on.</span>
+        </form></details>
+      ${js.length ? `<div style="margin-top:8px">${js.map(j => `<div class="row" style="font-size:13px"><b>#${j.id}</b> ${esc(j.title || j.url)}
+        <span class="badge ${j.status === "done" ? "done" : j.status === "failed" ? "failed" : ""}">${esc(j.status)}</span>
+        ${!["done", "failed", "stopped", "interrupted"].includes(j.status) ? `<button class="ghost danger" onclick="stopJob(${j.id}, this)">■ Stop</button>` : ""}
+        ${["failed", "interrupted", "stopped"].includes(j.status) && !/retried as job #/.test(j.log || "") ? `<button class="ghost" onclick="retryJob(${j.id}, this)">↻ Retry</button>` : ""}
+        <details ${openLogs.has(j.id) ? "open" : ""} ontoggle="this.open ? (openLogs.add(${j.id}), toBottom(this)) : openLogs.delete(${j.id})" style="flex-basis:100%">
+          <summary>log</summary><pre class="log" data-log="j${j.id}">${logHtml(j.log)}</pre></details></div>`).join("")}</div>` : ""}
+      ${cl.length ? `<div class="clips" style="margin-top:12px">${cl.map(x => campClipHtml(s, x, c)).join("")}</div>` : ""}
+      <details ${tog("l")}><summary>campaign log</summary><pre class="log">${logHtml(c.log)}</pre></details>
+    </section>`;
+  }).join("") : `<section class="panel"><p class="empty">No campaigns yet. Paste a brief above.</p></section>`;
+  restoreLogs(logScroll);
+}
+async function saveRules(e, id) {
+  e.preventDefault();
+  const f = new FormData(e.target), num = k => f.get(k) === "" ? null : +f.get(k);
+  const rules = {...JSON.parse(f.get("keep") || "{}"), tags: csv(f.get("tags")), disclosures: csv(f.get("disclosures")),
+    extra_hashtags_max: num("extra_hashtags_max"), min_seconds: num("min_seconds"), max_seconds: num("max_seconds"),
+    keep_live_days: num("keep_live_days"), required_where: f.get("required_where"), required_lines: lines(f.get("required_lines")),
+    what_to_clip: f.get("what_to_clip"), focus: f.get("focus"), caption_examples: lines(f.get("caption_examples")),
+    onscreen_examples: lines(f.get("onscreen_examples")), dont: lines(f.get("dont")), tone: f.get("tone"),
+    no_music: f.has("no_music"), no_ai_voice: f.has("no_ai_voice"), official_footage_only: f.has("official_footage_only")};
+  const r = await fetch(`/api/campaigns/${id}`, {method: "PATCH", headers: {"Content-Type": "application/json"}, body: JSON.stringify({rules})});
+  campAlert(id, r.ok ? "" : await r.text()); document.activeElement.blur(); campKey = ""; refresh();
+}
+async function saveCampSettings(e, id) {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  const body = {shorts: +f.get("shorts"), max_seconds: +f.get("max_seconds") || 0, subtitles: f.has("subtitles"), onscreen: f.has("onscreen"),
+    trial_on_screen: f.has("trial_on_screen"), platforms: f.getAll("cp"), notes: f.get("notes") || ""};
+  const r = await fetch(`/api/campaigns/${id}`, {method: "PATCH", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  campAlert(id, r.ok ? "" : await r.text()); document.activeElement.blur(); campKey = ""; refresh();
+}
+async function rereadCamp(id, btn) { btn.disabled = true; await post(`/api/campaigns/${id}/reread`); campKey = ""; refresh(); }
+async function deleteCamp(id) {
+  if (!confirm("Delete this campaign? Its clips stay on the Clips page.")) return;
+  const r = await fetch(`/api/campaigns/${id}`, {method: "DELETE"});
+  campAlert(id, r.ok ? "" : (await r.json()).detail); refresh();
+}
+async function addCampVideos(e, id) {
+  e.preventDefault();
+  const form = e.target, f = new FormData(form), btn = form.querySelector("button"), files = [...form.files.files];
+  const urls = lines(f.get("urls")), folder = (f.get("folder") || "").trim();
+  if (!urls.length && !folder && !files.length) return campAlert(id, "Add a link, a folder or files.");
+  btn.disabled = true; let err = "";
+  if (urls.length || folder) {
+    btn.textContent = folder ? "Copying the folder…" : "Adding…";
+    const r = await post(`/api/campaigns/${id}/videos`, {urls, folder});
+    if (!r.ok) err = (await r.json()).detail;
+  }
+  for (const [i, file] of files.entries()) {
+    btn.textContent = `Uploading ${i + 1}/${files.length}…`;
+    const r = await fetch(`/api/campaigns/${id}/file?` + new URLSearchParams({filename: file.name}), {method: "POST", body: file});
+    if (!r.ok) err = (await r.json()).detail;
+  }
+  btn.disabled = false; btn.textContent = "Add + clip";
+  campAlert(id, err); if (!err) form.reset(); refresh();
+}
+async function saveCaption(id, btn) {
+  btn.disabled = true;
+  const r = await fetch(`/api/clips/${id}/caption`, {method: "PUT", headers: {"Content-Type": "application/json"}, body: JSON.stringify({caption: $("#cap-" + id).value})});
+  btn.disabled = false; if (!r.ok) alert(await r.text()); campKey = ""; refresh();
+}
+async function rewriteCaption(id, btn) {
+  btn.disabled = true; btn.textContent = "Writing…";
+  const r = await post(`/api/clips/${id}/caption/rewrite`);
+  btn.disabled = false; btn.textContent = "✨ Rewrite"; if (!r.ok) alert(await r.text()); campKey = ""; refresh();
+}
+async function copyCaption(id, btn) {
+  const t = $("#cap-" + id).value;
+  try { await navigator.clipboard.writeText(t); } catch (e) { $("#cap-" + id).select(); document.execCommand("copy"); }
+  btn.textContent = "✓ Copied"; setTimeout(() => btn.textContent = "📋 Copy", 1500);
+}
+async function markPosted(id, btn) {
+  const url = $("#pu-" + id).value.trim();
+  if (!/^https?:\/\//.test(url)) return alert("Paste the post's link (https://…)");
+  btn.disabled = true;
+  const r = await post(`/api/clips/${id}/posted`, {platform: $("#pp-" + id).value, url});
+  btn.disabled = false; if (!r.ok) alert(await r.text()); campKey = ""; refresh();
+}
+
+
+// ---- Reels viewer: every clip full screen, one per screen; the visible one plays, actions on the right ----
+let lastState = null, reelMuted = true, reelObs = null, reelKeys = {};
+const reelFilters = {
+  all: c => c.path,
+  unposted: c => c.path && !Object.values(JSON.parse(c.uploads || "{}")).some(u => u.id),
+  scheduled: c => c.path && ["scheduled", "timed", "paused (streamer live)"].includes(c.status),
+  posted: c => c.path && Object.values(JSON.parse(c.uploads || "{}")).some(u => u.id),
+};
+function reelStatus(c) {
+  const ups = Object.entries(JSON.parse(c.uploads || "{}")).map(([p, u]) => u.id
+    ? `<a href="${esc(u.url)}" target="_blank" style="color:#7fffc4">✓ ${PLATFORMS[p] || p}</a>` : `<span style="color:#ff8a8a">✕ ${PLATFORMS[p] || p}</span>`).join(" ");
+  const when = c.status === "timed" ? `⏰ posts ${new Date(c.post_at * 1000).toLocaleString([], {dateStyle: "short", timeStyle: "short"})}${
+      c.post_to ? " to " + JSON.parse(c.post_to).map(p => PLATFORMS[p] || p).join(", ") : ""}`
+    : c.status === "scheduled" ? "⏰ waiting for an autopilot slot" : c.status === "paused (streamer live)" ? "⏸ held while a streamer is live" : "";
+  return [when, ups, !ups && !when ? esc(c.status) : ""].filter(Boolean).join(" · ");
+}
+function reelInfo(c) {
+  return `<div class="ri"><span class="badge">${esc(c.kind)}</span> <span class="badge">${Math.round(c.score)}</span>
+    <div class="t">${esc(c.title)}</div>${c.headline ? `<div>${esc(c.headline)}</div>` : ""}
+    <div class="d">${esc(c.reason)}</div><div style="margin-top:6px">${reelStatus(c)}</div></div>`;
+}
+function reelActions(s, c) {
+  const can = canSched(c), sched = ["scheduled", "timed", "paused (streamer live)"].includes(c.status);
+  return `<div class="ra">
+    <button onclick="reelMute()" title="Sound on/off (M)">${reelMuted ? "🔇" : "🔊"}<small>${reelMuted ? "muted" : "sound"}</small></button>
+    ${reelReady(c) ? `<button onclick="reelSheet(${c.id}, 'post')" title="Post now to a platform">⬆<small>post</small></button>` : ""}
+    ${can ? `<button onclick="reelSheet(${c.id}, 'sched')" title="Schedule: when and where">⏰<small>${c.status === "timed" ? "change" : "schedule"}</small></button>` : ""}
+    ${sched ? `<button onclick="unschedPost(${c.id})" title="Take it off the schedule (it stays here)">⊘<small>don't post</small></button>` : ""}
+    <button onclick="reelSheet(${c.id}, 'why')" title="Why this clip?">ℹ<small>why</small></button>
+    <a href="/media/${esc(c.path)}" target="_blank" title="Open the file">⬇<small>open</small></a>
+    ${!["rendering", "uploading"].includes(c.status) ? `<button onclick="reelDelete(${c.id})" title="Delete this clip">🗑<small>delete</small></button>` : ""}
+  </div>`;
+}
+// In-app players use a light preview (540 wide, ~1/10 the data: fast over a tunnel) with a poster image, and only
+// load it when you play it. Download / Open / uploads use the full-quality file (/media/...).
+const clipVer = c => encodeURIComponent(`${c.path}|${c.headline || ""}`);
+const clipVideo = (c, attrs) => `<video src="/api/clips/${c.id}/preview?v=${clipVer(c)}" poster="/api/clips/${c.id}/poster?v=${clipVer(c)}" preload="none" ${attrs}></video>`;
+const reelReady = c => c.path && !["rendering", "uploading"].includes(c.status);
+const reelKey = c => JSON.stringify([c.status, c.uploads, c.post_at, c.post_to, c.title]);
+function reelHtml(s, c) {
+  const media = isPhoto(c) ? `<img src="/media/${esc(c.path)}" alt="">`
+    : clipVideo(c, `loop playsinline ${reelMuted ? "muted" : ""} onclick="reelToggle(this)"`);
+  return `<section class="reel" data-id="${c.id}">${media}<div class="rx">${reelInfo(c)}${reelActions(s, c)}</div></section>`;
+}
+function openReels(startId) {
+  const s = lastState; if (!s) return;
+  const f = reelFilters[$("#reelFilter").value] || reelFilters.all;
+  const list = s.clips.filter(f);
+  $("#reels").hidden = false; document.body.style.overflow = "hidden"; $("#rsheet").hidden = true;
+  $("#reelList").innerHTML = list.length ? list.map(c => reelHtml(s, c)).join("")
+    : `<section class="reel"><p>No clips here yet.</p></section>`;
+  reelKeys = Object.fromEntries(list.map(c => [c.id, reelKey(c)]));
+  reelObs && reelObs.disconnect();
+  reelObs = new IntersectionObserver(es => es.forEach(e => {
+    const v = e.target.querySelector("video");
+    if (e.isIntersecting) {
+      const all = [...$("#reelList").children];
+      $("#reelCount").textContent = `${all.indexOf(e.target) + 1} / ${all.length}`;
+      if (v) { v.muted = reelMuted; v.currentTime = 0; v.play().catch(() => {}); v.parentElement.classList.remove("paused"); }
+      const nv = e.target.nextElementSibling?.querySelector("video");
+      if (nv) nv.preload = "auto";  // the next reel loads while you watch this one
+    } else if (v) v.pause();
+  }), {threshold: 0.6});
+  $("#reelList").querySelectorAll(".reel").forEach(r => reelObs.observe(r));
+  const at = startId && $(`#reelList .reel[data-id="${startId}"]`);
+  (at || $("#reelList").firstElementChild)?.scrollIntoView({behavior: "instant", block: "start"});
+}
+function closeReels() {
+  $("#reels").hidden = true; document.body.style.overflow = "";
+  reelObs && reelObs.disconnect();
+  $("#reelList").querySelectorAll("video").forEach(v => v.pause());
+  $("#reelList").innerHTML = "";
+}
+function reelToggle(v) { v.paused ? v.play() : v.pause(); v.parentElement.classList.toggle("paused", v.paused); }
+function reelMute() {
+  reelMuted = !reelMuted;
+  $("#reelList").querySelectorAll("video").forEach(v => v.muted = reelMuted);
+  if (lastState) reelSync(lastState, true);
+}
+function reelCurrent() {
+  const h = $("#reelList").clientHeight;
+  return [...$("#reelList").children][Math.round($("#reelList").scrollTop / h)];
+}
+// status/actions of the open reels follow the state (posted, scheduled...), without restarting the videos
+function reelSync(s, force) {
+  if ($("#reels").hidden) return;
+  const byId = Object.fromEntries(s.clips.map(c => [c.id, c]));
+  $("#reelList").querySelectorAll(".reel[data-id]").forEach(r => {
+    const c = byId[r.dataset.id];
+    if (!c || !c.path) { reelObs.unobserve(r); r.remove(); return; }
+    if (force || reelKeys[c.id] !== reelKey(c)) { r.querySelector(".rx").innerHTML = reelInfo(c) + reelActions(s, c); reelKeys[c.id] = reelKey(c); }
+  });
+  const sh = $("#rsheet");
+  if (!sh.hidden && sh.dataset.id && !byId[sh.dataset.id]) sh.hidden = true;
+}
+function reelSheet(id, what) {
+  const s = lastState, c = s.clips.find(x => x.id === id), sh = $("#rsheet");
+  if (!c) return;
+  const close = `<button type="button" class="ghost" style="float:right" onclick="$('#rsheet').hidden = true">✕</button>`;
+  let body = "";
+  if (what === "post") {
+    const btns = Object.keys(TARGETS).filter(t => notOn(s, c, t).length).map(t =>
+      `<button class="ghost" onclick="uploadTo(${c.id}, '${notOn(s, c, t).join(",")}', this)">↑ ${TARGET_NAMES[t]}</button>`).join(" ");
+    body = `<h3 style="margin-top:0">Post now</h3>${btns || `<p class="dim">Already on every connected platform${igRisky(s, c) ? "" : ""}.</p>`}
+      ${igRisky(s, c) ? `<div style="margin-top:8px"><button class="ig-risk" onclick="uploadTo(${c.id}, 'instagram', this, true)">↑ Instagram (${Math.round(c.end - c.start)}s, may fail)</button></div>` : ""}
+      <p class="dim" style="font-size:12px">${reelStatus(c)}</p>`;
+  } else if (what === "sched") {
+    body = `<h3 style="margin-top:0">Schedule</h3>${schedForm(s, c)}`;
+  } else {
+    whyOpen.add(c.id);
+    body = `<h3 style="margin-top:0">${esc(c.title)}</h3>${whyHtml(c) || `<p>${esc(c.reason)}</p>`}`;
+  }
+  sh.dataset.id = id; sh.innerHTML = close + body; sh.hidden = false;
+}
+async function reelDelete(id) {
+  if (!confirm("Delete this clip file? (Copies already posted stay online.)")) return;
+  const r = await fetch(`/api/clips/${id}`, {method: "DELETE"});
+  if (!r.ok) return alertBox((await r.json()).detail);
+  refresh();
+}
+document.addEventListener("keydown", e => {
+  if ($("#reels").hidden || /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;
+  const cur = reelCurrent();
+  if (e.key === "Escape") { $("#rsheet").hidden ? closeReels() : $("#rsheet").hidden = true; }
+  else if (["ArrowDown", "j", "PageDown"].includes(e.key)) { e.preventDefault(); cur?.nextElementSibling?.scrollIntoView({behavior: "smooth"}); }
+  else if (["ArrowUp", "k", "PageUp"].includes(e.key)) { e.preventDefault(); cur?.previousElementSibling?.scrollIntoView({behavior: "smooth"}); }
+  else if (e.key === " ") { e.preventDefault(); const v = cur?.querySelector("video"); v && reelToggle(v); }
+  else if (e.key.toLowerCase() === "m") reelMute();
+});
+// Clips page: "Why this clip?" (worker._why): the AI's reasoning, who picked it + its prompt, signals, first/last line
+const SIG_NAMES = {heatmap: "YouTube most-replayed", chat: "chat speed", comments: "timestamped comments", audio: "loudness"};
+const whyOpen = new Set();
+function whyHtml(c) {
+  let w = {}; try { w = JSON.parse(c.why || "{}"); } catch (e) {}
+  if (!Object.keys(w).length) return "";
+  const bar = v => `<span class="meter" style="width:90px;display:inline-block;vertical-align:middle"><span style="width:${Math.round(Math.min(v, 1) * 100)}%"></span></span>`;
+  const sig = Object.entries(w.signals || {}).sort((a, b) => b[1] - a[1]).map(([k, v]) =>
+    `<div>${bar(v)} ${SIG_NAMES[k] || esc(k)} <span class="dim">${v >= 0.95 ? "· top 5% of the video" : v >= 0.6 ? "· well above normal" : v >= 0.3 ? "· a bit above normal" : "· normal"}</span></div>`).join("");
+  return `<details class="why" ${whyOpen.has(c.id) ? "open" : ""} ontoggle="this.open ? whyOpen.add(${c.id}) : whyOpen.delete(${c.id})" style="font-size:13px;margin:4px 0">
+    <summary>Why this clip?</summary>
+    <div style="margin:6px 0">${esc(c.reason)}${w.stretched ? ` <span class="badge">stretched for context</span>` : ""}</div>
+    <div>Virality score <b>${Math.round(w.score ?? c.score)}</b>/100${w.piece ? ` · from live/long-video piece ${w.piece}` : ""}${w.joined ? " · joined across two pieces" : ""}</div>
+    ${w.by ? `<div>Picked by <b>${esc(w.by)}</b>${w.mode ? ` <span class="dim">(${esc(w.mode)})</span>` : ""}${w.prompt ? ` · <a href="${esc(w.prompt)}" target="_blank">open the prompt + reply</a>` : ""}</div>` : ""}
+    ${sig ? `<div style="margin-top:6px"><b>Audience signals in this stretch</b>${sig}</div>` : ""}
+    ${w.opening ? `<div style="margin-top:6px"><b>Opens with:</b> “${esc(w.opening)}”</div>` : ""}
+    ${w.closing ? `<div><b>Ends with:</b> “${esc(w.closing)}”</div>` : ""}
+  </details>`;
+}
 refresh(); setInterval(refresh, 2000);
 </script>
 </body>

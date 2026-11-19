@@ -84,26 +84,29 @@ def snap(ws, start, end, reach=6.0):
     while 0 <= j < len(ws) - 1 and not ends(ws[j]) and ws[j + 1]["e"] <= end + reach:  # walk on to sentence end
         j += 1
     if j >= 0:
-        end = max(end, ws[j]["e"] + 0.5)  # small tail so the last word/reaction isn't clipped
+        end = max(end, ws[j]["e"])  # the room after the last word is added by the caller (CLIP_PAD_AFTER)
     return start, end
 
 
 def text_with_times(ws, start, end, every=5.0):
-    """'[12.0] hello there [17.1] next bit' — readable for the LLM, keeps timing info."""
-    out, last = [], -1e9
+    """'[12.0] hello there. [14.3] Next bit' — readable for the LLM, keeps timing info. A marker at EVERY sentence
+    start (so the AI can pick real sentence boundaries, not guess between markers) and at least every `every` s."""
+    out, last, new_sentence = [], -1e9, True
     for w in ws:
         if start <= w["s"] < end:
-            if w["s"] - last >= every:
+            if new_sentence and w["s"] - last >= 1.0 or w["s"] - last >= every:
                 out.append(f"[{w['s']:.1f}]")
                 last = w["s"]
             out.append(w["w"])
+        new_sentence = w["w"].endswith((".", "?", "!"))
     return " ".join(out)
 
 
 if __name__ == "__main__":
     W = lambda t, w: {"w": w, "s": t, "e": t + 0.4}
     ws = [W(0, "Hi."), W(1, "So"), W(2, "the"), W(3, "cops"), W(4, "came."), W(5, "Then"), W(6, "boom."), W(9, "Wow.")]
-    assert snap(ws, 2.5, 5.5) == (0.8, 6.9), snap(ws, 2.5, 5.5)       # mid-sentence both ends -> widened
-    assert snap(ws, 0.9, 4.6) == (0.9, 4.9), snap(ws, 0.9, 4.6)       # already clean: only the small tail
+    assert snap(ws, 2.5, 5.5) == (0.8, 6.4), snap(ws, 2.5, 5.5)       # mid-sentence both ends -> widened
+    assert snap(ws, 0.9, 4.6) == (0.9, 4.6), snap(ws, 0.9, 4.6)       # already clean: unchanged
+    assert text_with_times(ws, 0, 10).startswith("[0.0] Hi. [1.0] So"), text_with_times(ws, 0, 10)
     assert snap(ws, 2.5, 5.5, reach=1)[0] == 1.8                      # never walks back more than reach
     print("transcribe ok")

@@ -2,6 +2,7 @@ import logging
 import logging.handlers
 import re
 import sqlite3
+import threading
 import time
 import traceback
 from contextlib import contextmanager
@@ -52,6 +53,12 @@ CREATE TABLE IF NOT EXISTS news_runs (
 CREATE TABLE IF NOT EXISTS limit_hits (
   platform TEXT PRIMARY KEY, hit_at REAL, message TEXT
 );
+CREATE TABLE IF NOT EXISTS campaigns (
+  id INTEGER PRIMARY KEY, name TEXT, brief TEXT, rules TEXT DEFAULT '{}', platforms TEXT DEFAULT '[]',
+  shorts INTEGER DEFAULT 3, max_seconds INTEGER, aspect REAL, layout TEXT DEFAULT '', subtitles INTEGER DEFAULT 1,
+  onscreen INTEGER DEFAULT 1, trial_on_screen INTEGER DEFAULT 0, notes TEXT DEFAULT '',
+  status TEXT DEFAULT 'ready', log TEXT DEFAULT '', created REAL
+);
 CREATE TABLE IF NOT EXISTS topics (
   id INTEGER PRIMARY KEY, topic TEXT, videos INTEGER, shorts INTEGER, longs INTEGER, mode TEXT,
   subtitles INTEGER, voiceover INTEGER, platforms TEXT DEFAULT '[]', queries TEXT DEFAULT '[]',
@@ -76,9 +83,14 @@ def init():
                            ("jobs", "aspect REAL"), ("topics", "aspect REAL"),
                            ("jobs", "hq INTEGER DEFAULT 0"), ("topics", "hq INTEGER DEFAULT 0"),
                            ("topics", "source TEXT DEFAULT 'manual'"), ("topics", "pool INTEGER"),
-                           ("jobs", "chunk_minutes INTEGER"), ("jobs", "max_chunks INTEGER DEFAULT 0"),
+                           ("jobs", "chunk_minutes INTEGER"), ("jobs", "max_chunks INTEGER DEFAULT 0"), ("jobs", "upload_best INTEGER"), ("jobs", "upload_best_long INTEGER"),
                            ("jobs", "kind TEXT DEFAULT 'video'"), ("clips", "post_at REAL"), ("news", "run_id INTEGER"),
-                           ("jobs", "layout TEXT DEFAULT ''"), ("topics", "layout TEXT DEFAULT ''")):  # columns added after v0.1
+                           ("jobs", "layout TEXT DEFAULT ''"), ("topics", "layout TEXT DEFAULT ''"),
+                           ("jobs", "follow INTEGER DEFAULT 1"), ("topics", "follow INTEGER DEFAULT 1"),
+                           ("clips", "post_to TEXT"),
+                           ("jobs", "notes TEXT DEFAULT ''"), ("topics", "notes TEXT DEFAULT ''"),
+                           ("clips", "why TEXT DEFAULT '{}'"),
+                           ("jobs", "campaign_id INTEGER"), ("clips", "caption TEXT DEFAULT ''")):  # campaign.py  # why: the Clips page "Why this clip?"  # post_to: platforms for a clip scheduled by hand  # columns added after v0.1
             try:
                 c.execute(f"ALTER TABLE {table} ADD COLUMN {col}")
             except sqlite3.OperationalError:
@@ -87,6 +99,7 @@ def init():
         c.execute("UPDATE jobs SET status='interrupted' WHERE status NOT IN ('done','failed','stopped')")
         # Topics still 'queued' are picked up again by topics.loop(); only a half-done one is interrupted.
         c.execute("UPDATE topics SET status='interrupted' WHERE status NOT IN ('queued','done','failed','stopped')")
+        c.execute("UPDATE campaigns SET status='ready' WHERE status='reading the brief'")  # its thread died
 
 
 def insert(table, **row):
@@ -167,13 +180,33 @@ def syslog(msg, exc=False):
     _file.log(logging.ERROR if exc else logging.INFO, f"[system] {msg}" + (f"\n{scrub(traceback.format_exc())}" if exc else ""))
 
 
+_ctx = threading.local()  # where this thread's AI calls log: the running step's job/topic, or a run's own log
+
+
+def here(msg):
+    """Log into whatever this thread is working on (see log_to / step), or the system log when nothing."""
+    sink = getattr(_ctx, "sink", None)
+    sink(msg) if sink else syslog(msg)
+
+
+@contextmanager
+def log_to(fn):
+    """Inside the block, here() lines go to fn (e.g. a News run's log)."""
+    prev, _ctx.sink = getattr(_ctx, "sink", None), fn
+    try:
+        yield
+    finally:
+        _ctx.sink = prev
+
+
 @contextmanager
 def step(job_id, what, table="jobs"):
     """Log `what`, run the block, log how long it took (or that it failed, with the traceback in the file)."""
     t = time.time()
     log(job_id, f"{what}...", table)
     try:
-        yield
+        with log_to(lambda m: log(job_id, m, table)):
+            yield
     except Exception:
         log(job_id, f"{what} FAILED after {time.time() - t:.1f}s", table, exc=True)
         raise

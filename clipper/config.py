@@ -15,14 +15,26 @@ DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-pro")
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "").rstrip("/")
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")  # empty is fine for local servers
 LLM_MODEL = os.getenv("LLM_MODEL", "")
+# A small model on THIS computer (Ollama installed here), the last fallback when everything else fails
+PC_LLM_BASE_URL = os.getenv("PC_LLM_BASE_URL", "http://localhost:11434/v1").rstrip("/")
+PC_LLM_MODEL = os.getenv("PC_LLM_MODEL", "qwen3.5:2b")
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "small")
 LIVE_CHUNK_SECONDS = int(os.getenv("LIVE_CHUNK_SECONDS", "600"))
+# Videos at least this long are clipped like a live stream: in pieces (LIVE_CHUNK_SECONDS, or the job's piece
+# length), each piece picked and rendered on its own, two at a time. 0 = never.
+LONG_VIDEO_MINUTES = float(os.getenv("LONG_VIDEO_MINUTES", "60"))
 # The downloaded/uploaded source video (0.5-2 GB) and live recordings are deleted once a job finishes; clips stay.
 # KEEP_SOURCES=1 keeps them (needed to cut more clips from that video later by hand).
 KEEP_SOURCES = os.getenv("KEEP_SOURCES", "0").lower() in ("1", "true", "yes")
 SHORT_HARD_MAX = 180  # YouTube Shorts can't be longer than 3 min; no clip of any kind ever exceeds it
-SHORT_MIN, SHORT_MAX = int(os.getenv("SHORT_MIN", "15")), min(int(os.getenv("SHORT_MAX", "60")), SHORT_HARD_MAX)
-LONG_MIN, LONG_MAX = int(os.getenv("LONG_MIN", "60")), min(int(os.getenv("LONG_MAX", "180")), SHORT_HARD_MAX)
+SHORT_MIN, SHORT_MAX = int(os.getenv("SHORT_MIN", "20")), min(int(os.getenv("SHORT_MAX", "90")), SHORT_HARD_MAX)
+LONG_MIN, LONG_MAX = int(os.getenv("LONG_MIN", "90")), min(int(os.getenv("LONG_MAX", "180")), SHORT_HARD_MAX)
+# Breathing room around every clip, after it is snapped to whole sentences: a little lead-in before the first word
+# and room after the last word for the reaction to land (seconds). SNAP_REACH = how far (s) a clip edge may move
+# to reach the start/end of a sentence.
+CLIP_PAD_BEFORE = float(os.getenv("CLIP_PAD_BEFORE", "0.8"))
+CLIP_PAD_AFTER = float(os.getenv("CLIP_PAD_AFTER", "1.5"))
+SNAP_REACH = float(os.getenv("SNAP_REACH", "8"))
 _logo = os.getenv("LOGO", str(ROOT / "clipper" / "assets" / "logo.png"))
 LOGO = Path(_logo) if _logo else None  # watermark on every clip; LOGO= (empty) in .env turns it off
 END_CARD = os.getenv("END_CARD", "FOLLOW")

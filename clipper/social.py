@@ -132,9 +132,15 @@ def connected():
             "tiktok": bool(TIKTOK_CLIENT_KEY and TIKTOK_CLIENT_SECRET and (TIKTOK_TOKEN.exists() or TIKTOK_REFRESH_TOKEN))}
 
 
-def upload(platform, path, title, description, tags, seconds):
+def upload(platform, path, title, description, tags, seconds, caption=None):
+    """caption: the exact caption to post (campaign clips: built to the brand's rules), as is, no hashtags added."""
     if not connected().get(platform):
         raise RuntimeError(f"{platform} not connected (see README)")
+    if caption:
+        if platform == "youtube":
+            vid = youtube.upload(path, (title or caption.splitlines()[0])[:100], caption, [], short=True)
+            return {"id": vid, "url": f"https://youtu.be/{vid}"}
+        return {"facebook": facebook, "instagram": instagram, "tiktok": tiktok}[platform](path, title, caption, seconds)
     # Hashtags per platform: few and specific works best. YouTube: 3 + #Shorts (upload.py adds it; title and
     # description carry the search). Instagram/TikTok: 5. Facebook: 3.
     tags = tags[:HASHTAGS[platform]]
