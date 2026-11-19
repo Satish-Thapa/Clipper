@@ -1,5 +1,6 @@
 """Background pipeline: download/record -> signals -> transcribe -> DeepSeek pick -> render -> upload."""
 import json
+import re
 from pathlib import Path
 import threading
 import time
@@ -27,7 +28,7 @@ def check(job_id):
 
 def start(job_id):
     STOPS[job_id] = threading.Event()
-    threading.Thread(target=_run, args=(job_id,), daemon=True).start()
+    threading.Thread(target=_run, args=(job_id,), daemon=True, name=f"job-{job_id}").start()
 
 
 def run(job_id):
@@ -51,6 +52,44 @@ def stop(job_id):
         db.log(job_id, "stopped (it wasn't running)")
 
 
+def restart(job_id):
+    """Start over: stop the job if it's running (waits for it), delete its clips that went nowhere yet (posted ones
+    stay), and run it again from scratch on the same video. The downloaded source is kept, so it doesn't download
+    again; a live stream's old recording is dropped and it records again from now."""
+    job = db.get("jobs", job_id)
+    if not job:
+        return
+    stop(job_id)
+    for _ in range(240):  # a clip already in the encoder finishes first: up to 2 min
+        if (db.get("jobs", job_id) or {}).get("status") in FINISHED and not _running(job_id):
+            break
+        time.sleep(0.5)
+    else:
+        db.log(job_id, "start over: it didn't stop in time, try again in a minute")
+        return
+    d = DATA / "jobs" / str(job_id)
+    gone = 0
+    for c in db.all("clips", "job_id=?", (job_id,)):
+        if any(u.get("id") for _, u in social.entries(json.loads(c.get("uploads") or "{}"))):
+            continue  # already posted somewhere: kept
+        for f in (d / "clips").glob(f"{c['id']}.*"):
+            f.unlink(missing_ok=True)
+        db.delete("clips", c["id"])
+        gone += 1
+    if job.get("is_live"):
+        for f in list(d.glob("live_*.ts")) + list(d.glob("curves_live_*.json")):
+            f.unlink(missing_ok=True)
+    db.log(job_id, f"———— started over by you: {gone} unposted clip(s) deleted, finding clips again ————")
+    db.update("jobs", job_id, status="queued", progress=0)
+    start(job_id)
+
+
+def _running(job_id):
+    """Its pipeline thread is still alive (e.g. finishing a clip after a stop)."""
+    return any(t.is_alive() and t.name == f"job-{job_id}" for t in threading.enumerate())
+
+
+@config.in_brand(lambda job_id: config.brand_of_category((db.get("jobs", job_id) or {}).get("category_id")))
 def _run(job_id):
     job = db.get("jobs", job_id)
     d = DATA / "jobs" / str(job_id)
@@ -88,9 +127,12 @@ def _run(job_id):
             db.update("jobs", job_id, status="stopped")
             db.log(job_id, f"job stopped by you after {(time.time() - t0) / 60:.1f} min")
             return
-        if download.bot_checked(e):
+        if download.age_restricted(e):
+            db.log(job_id, "skipped: the video is age-restricted (YouTube only shows it to signed-in, age-verified "
+                           "accounts). The topic moves on to the next video.")
+        elif download.bot_checked(e):
             db.log(job_id, "ERROR: YouTube bot check ('Sign in to confirm you're not a bot'). YouTube wants a signed-in "
-                           "browser: add YouTube cookies on the Socials page, then run it again.")
+                           "browser: add YouTube cookies in Settings → Downloads, then run it again.")
         else:
             db.log(job_id, f"ERROR: {e!r}", exc=True)
         db.update("jobs", job_id, status="failed")
@@ -138,8 +180,13 @@ def _vod(job, i, d):
         meta = ex.submit(download.info, url, True)
         chat = ex.submit(download.chat_replay_times, url)
         h = download.height_for(job.get("hq"))
-        with db.step(jid, f"downloading video (up to {h}p, {download.FRAGMENTS} chunks at once)"):
-            download.download_vod(url, d / "source.%(ext)s", h, STOPS[jid], progress=_progress("jobs", jid))
+        have = [f for f in d.glob("source.*") if f.name.count(".") == 1  # not source.f137.mp4 / .part leftovers
+                and f.suffix not in (".part", ".ytdl") and f.stat().st_size > 1e6]
+        if have:  # started over: the video is already here
+            db.log(jid, f"video already downloaded ({have[0].name}): using it")
+        else:
+            with db.step(jid, f"downloading video (up to {h}p, {download.FRAGMENTS} chunks at once)"):
+                download.download_vod(url, d / "source.%(ext)s", h, STOPS[jid], progress=_progress("jobs", jid))
         check(jid)
         with db.step(jid, "waiting for comments + chat replay"):
             comments = download.comment_times(meta.result().get("comments"))
@@ -147,7 +194,8 @@ def _vod(job, i, d):
     db.log(jid, f"heatmap: {'yes' if i.get('heatmap') else 'no'}, chat msgs: {len(chat)}, timestamped comments: {len(comments)}")
     src = next(d.glob("source.*"))
     db.log(jid, f"source file: {src.name}, {src.stat().st_size / 1e6:.0f} MB, {_describe(src)}")
-    caps = _captions(jid, i, src)
+    caps = _captions(jid, i, src) if job.get("mode") != "nostalgia" else None  # nostalgia clips have no words
+    job["_channel"] = i.get("channel") or i.get("uploader") or ""  # its own overlay isn't another channel's watermark
     _process(job, src, i.get("title", ""), d, heatmap=i.get("heatmap"), chat=chat, comments=comments, captions=caps)
 
 
@@ -256,6 +304,30 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None, caption
                     cuts, visual = [], None
         n = len(audio)
         db.log(jid, f"shot changes: {len(cuts)}")
+        topic = db.get("topics", job["topic_id"]) if job.get("topic_id") else None
+        found = bool(topic and topic.get("source") == "auto")  # a video the automation found (not one you gave it)
+        if found and mode != "manual" and _watermarked(jid, src, n, job.get("_channel", "")):  # another creator's video: not ours to post
+            return
+        if mode == "nostalgia":  # calm moments + a feelings caption + music: its own short path (nostalgia.py)
+            return _nostalgia(job, src, title, d, n, cuts, visual, status)
+        cam = None
+        try:  # a streamer's facecam box: clips get it on top, full width, with the gameplay below
+            from . import vision
+            cam = vision.facecam_box(src)
+            if cam:  # only stacked when it stays sharp: never enlarged past CAM_MAX_ZOOM; too small -> normal layout
+                strip, _ = render.stack_geom(src, cam)
+                cam_px = int(render._dims(src)[1] * cam[3])
+                if not render.cam_fits(src, cam):
+                    db.log(jid, f"facecam found at {cam} but only {cam_px}px tall: too small to show sharp, normal layout")
+                    cam = None
+                else:
+                    db.log(jid, f"facecam: found at {cam}, {cam_px}px -> {strip}px strip "
+                                f"({strip / max(cam_px, 1):.1f}x, stacked layout)")
+            else:
+                db.log(jid, "facecam: none")
+        except Exception as e:
+            db.log(jid, f"facecam check skipped ({e!r})")
+        job = {**job, "_cam": cam}
 
         # STEP 2: Hype curve. Each signal becomes a per-second array, gets normalised to 0..1
         # (median -> 0, 95th percentile -> 1, so different units are comparable), then they are summed
@@ -287,6 +359,9 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None, caption
         # start and end. In "ai" modes these are only used as a fallback if DeepSeek fails.
         # First cap the requested counts by what this video can hold (a 1-min video -> 1 short, no long).
         asked = {"short": job["shorts"], "long": job["longs"]}
+        if live:  # a live chunk: only its best few moments
+            cap = max(1, int(config.LIVE_CLIPS_PER_CHUNK or 3))
+            asked = {"short": min(asked["short"], cap), "long": min(asked["long"], 1)}
         counts = pick.fit_counts(asked, n)
         if counts != asked:
             db.log(jid, f"video is {n}s: making {counts['short']} short / {counts['long']} long "
@@ -365,6 +440,12 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None, caption
         except Exception as e:
             db.log(jid, f"DeepSeek failed ({e!r}), using raw hype windows")
             chosen = pick.fallback(cands, counts, title)
+        floor = int(config.MIN_CLIP_SCORE or 0)
+        weak = [c for c in chosen if c["score"] < floor]
+        if weak:  # pickier: only moments the AI rates as genuinely strong
+            db.log(jid, f"dropped {len(weak)} weaker moment(s) under score {floor}: "
+                        + ", ".join(f"\"{c['title']}\" ({c['score']:.0f})" for c in weak))
+            chosen = [c for c in chosen if c["score"] >= floor]
         for c in chosen:
             db.log(jid, f"picked {c['kind']} {_mmss(c['start'])}-{_mmss(c['end'])} score {c['score']}: "
                         f"\"{c['title']}\" [{c.get('headline', '')}] {' '.join('#' + t for t in c['tags'])} | {c['reason']}")
@@ -378,6 +459,11 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None, caption
                             f"({e - s:.0f}s) \"{c['title']}\"")
             c["start"], c["end"] = s, e
             c["signals"] = _sig_means(parts, s, e)  # kept with the clip: what learn.update() learns from
+        # STEP 5b: the truth check: the AI watches each final clip and drops weak ones / fixes or drops a mismatch
+        if chosen:
+            status("AI checking clips")
+            with db.step(jid, f"STEP 5b truth check on {len(chosen)} clip(s)"):
+                chosen = _truth_check(jid, src, chosen, words, ctx, floor)
         _save_curves(d, src, curve, parts, chosen)  # now with the picked clips marked on the graph
         status(f"rendering {len(chosen)} clip(s)")
 
@@ -392,16 +478,120 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None, caption
         db.log(jid, f"ERROR processing {src.name}: {e!r}", exc=True)
 
 
+WATERMARK_ASK = """These are 4 frames spread over one video. Is a creator's or channel's own name / watermark stamped over
+the picture in most of them (e.g. semi-transparent text like "Gar Studio" across the middle, or "@somechannel")?
+Answer false for: the game's own HUD and menus, esports broadcast graphics (scoreboard, tournament logo, player cams,
+caster names), and subtitles. Reply as JSON: {"watermark": true or false, "text": "the watermark text, or empty"}"""
+
+
+def _watermarked(jid, src, n, channel=""):
+    """True (and logged) when the vision model sees another channel's watermark on the video: a reupload or someone
+    else's edit. channel: who uploaded it (a streamer's own name / socials on their stream overlay are fine).
+    No vision model / any error: False (the video goes ahead)."""
+    if not config.VISION_MODEL.strip() or n < 20:
+        return False
+    ask = WATERMARK_ASK + (f'\nThis video was uploaded by the channel "{channel}" itself. Its OWN name, logo, socials or '
+                           "stream overlay (a streamer's facecam frame, alerts, their @handle in a corner) are NOT "
+                           "another channel's watermark: answer false for those. Only a DIFFERENT channel's name counts."
+                           if channel else "")
+    try:
+        imgs = [(f"frame {k + 1}:", render.frame_b64(src, n * f, width=640)) for k, f in enumerate((0.15, 0.38, 0.62, 0.85))]
+        r = pick._ask(ask, "You check videos before they are clipped.", "watermark", config.VISION_MODEL.strip(),
+                      images=[x for x in imgs if x[1]])
+        mark = r is True or (isinstance(r, str) and r.lower() == "true")
+    except Exception as e:
+        db.log(jid, f"watermark check skipped ({e!r})")
+        return False
+    if mark:
+        db.log(jid, "skipped: another channel's watermark is on this video (a reupload or someone else's edit), "
+                    "so nothing is clipped from it")
+    return mark
+
+
+FILLER = {"oh", "ah", "uh", "um", "umm", "hmm", "huh", "ha", "haha", "wow", "yeah", "yes", "no", "ok", "okay", "hey",
+          "sorry", "here", "what", "go", "come", "on", "the", "a", "i", "you", "it", "so", "and", "music", "applause"}
+
+
+def real_speech(words, seconds):
+    """Is there actual talking in these caption words, or is it Whisper guessing at noise ("here. sorry. oh")?
+    Talking: at least 6 real words and half a real word a second."""
+    real = [w for w in words if re.sub(r"[^\w']", "", w["w"].lower()) not in FILLER and re.search(r"[^\W\d_]{2}", w["w"])]  # any script
+    return len(real) >= 6 and len(real) >= 0.5 * max(seconds, 1)
+
+
 def _sig_means(parts, s, e):
     """How strongly each signal spiked inside [s, e): {name: 0..1}."""
     a, b = int(max(s, 0)), int(max(e, s + 1))
     return {k: round(float(v[a:b].mean()), 3) for k, v in parts.items() if len(v[a:b])}
 
 
+VERIFY_FRAMES = 6  # frames across a picked clip for its truth check
+PICK_FRAMES = 16   # frames in all when the AI picks among the candidates
+
+
+def _truth_check(jid, src, chosen, words, ctx, floor):
+    """Each picked clip, as finally trimmed: the AI sees VERIFY_FRAMES frames across it + its speech + its headline /
+    title / description (pick.verify). Weak moment -> dropped. Headline or title not matching what happens ->
+    rewritten from what's really there and checked again; still not matching -> dropped. Nothing goes out with a
+    caption the clip doesn't show. If the AI can't be reached, the clip keeps no headline (no claim to get wrong)."""
+    bar = max(50, floor - 10)  # the checker scores harshly (average 55-70): 10 under the picker's floor
+    vision = bool(config.VISION_MODEL.strip())
+    kept = []
+    for c in chosen:
+        check(jid)
+        span = c["end"] - c["start"]
+        tr = transcribe.text_with_times(words, c["start"], c["end"])
+        imgs = None
+        if vision:
+            ts = [c["start"] + span * (k + 0.5) / VERIFY_FRAMES for k in range(VERIFY_FRAMES)]
+            with ThreadPoolExecutor(VERIFY_FRAMES) as ex:
+                b64s = list(ex.map(lambda t: render.frame_b64(src, t, 512), ts))
+            imgs = [(f"frame {k + 1} of {VERIFY_FRAMES} ({_mmss(t)})", b) for k, (t, b) in enumerate(zip(ts, b64s)) if b]
+        name = f"{_mmss(c['start'])} \"{c.get('headline') or c['title']}\""
+        v = None
+        for attempt in range(2):
+            try:
+                v = pick.verify(c, tr, imgs, ctx)
+                break
+            except Exception as e:
+                db.log(jid, f"truth check {name}: AI error ({e!r})" + (", trying again" if not attempt else ""))
+        if v is None:
+            db.log(jid, f"truth check {name}: couldn't check it, so it keeps no headline (nothing to get wrong)")
+            kept.append({**c, "headline": ""})
+            continue
+        db.log(jid, f"truth check {name}: moment {v['moment']:.0f}, {'matches' if v['match'] else 'DOES NOT MATCH'}"
+                    f" | seen: {str(v.get('happens', ''))[:200]}" + (f" | problem: {v['problems']}" if v.get("problems") else ""))
+        if v["moment"] < bar:
+            db.log(jid, f"dropped {name}: the clip itself is not strong enough ({v['moment']:.0f} < {bar})")
+            continue
+        if not v["match"]:
+            new = {k: str(v.get(k) or "").strip() for k in ("headline", "title", "description")}
+            if not new["headline"] or not new["title"]:
+                db.log(jid, f"dropped {name}: its caption doesn't match the clip and no true one was offered")
+                continue
+            fixed = {**c, **new}
+            try:
+                v2 = pick.verify(fixed, tr, imgs, ctx)
+            except Exception as e:
+                v2 = {"match": False, "problems": repr(e)}
+            if not v2["match"]:
+                db.log(jid, f"dropped {name}: even the rewritten caption \"{new['headline']}\" doesn't match "
+                            f"({v2.get('problems', '')})")
+                continue
+            db.log(jid, f"caption fixed to match the clip: \"{c.get('headline', '')}\" -> \"{new['headline']}\"; "
+                        f"title \"{new['title']}\"")
+            c = fixed
+        c["reason"] = f"{c.get('reason', '')} | seen: {str(v.get('happens', ''))[:300]}".strip(" |")
+        kept.append(c)
+    return kept
+
+
 def _frames(src, cands):
-    """2 small frames per candidate (a third and two thirds in), fetched in parallel, for a vision model."""
+    """Small frames per candidate (up to 3, evenly inside it), fetched in parallel, for a vision model. At most
+    PICK_FRAMES in all: more and the local model refuses the request ("Failed to tokenize prompt")."""
+    per = max(1, min(3, PICK_FRAMES // max(len(cands), 1)))
     jobs = [(f"candidate {c['id']} at {_mmss(t)}", t) for c in cands
-            for t in (c["start"] + (c["end"] - c["start"]) / 3, c["start"] + 2 * (c["end"] - c["start"]) / 3)]
+            for t in (c["start"] + (c["end"] - c["start"]) * k / (per + 1) for k in range(1, per + 1))][:PICK_FRAMES]
     with ThreadPoolExecutor(6) as ex:
         b64s = list(ex.map(lambda j: render.frame_b64(src, j[1]), jobs))
     return [(label, b) for (label, _), b in zip(jobs, b64s) if b]
@@ -415,13 +605,23 @@ def _render_clips(job, src, d, chosen, words, subtitles):
             f.result()  # re-raise the first failure so _process logs it
 
 
+@config.in_brand(lambda job, *a, **k: config.brand_of_category(job.get("category_id")))
 def _render_one(job, src, d, c, words, subtitles):
     jid = job["id"]
     check(jid)  # clips not started yet are skipped after Stop
     clip_words = [w for w in words if c["start"] <= w["s"] < c["end"]]  # kept: other shapes are rendered later
+    if subtitles and clip_words and not real_speech(clip_words, c["end"] - c["start"]):
+        # no real talking: Whisper's guesses at noise would be burned in ("HERE. SORRY. OH"): no captions, and a
+        # headline built from them gives way to the title
+        heard = " ".join(w["w"].lower() for w in clip_words)
+        db.log(jid, f"{c['title']}: no real speech in it, so no captions")
+        if c.get("headline") and all(t in heard for t in re.findall(r"[a-z']+", c["headline"].lower())):
+            c["headline"] = " ".join(c["title"].split()[:6])
+        words, clip_words = [w for w in words if not (c["start"] <= w["s"] < c["end"])], []
     cta = engage.clip_cta(job.get("category_id"))  # which follow prompt (learned from clips' views)
+    cam = job.get("_cam")
     cid = db.insert("clips", job_id=jid, kind=c["kind"], start=c["start"], end=c["end"], score=c["score"],
-                    features=json.dumps({"cta": cta}),
+                    features=json.dumps({"cta": cta, **({"cam": list(cam)} if cam else {})}),
                     title=c["title"], description=c["description"], tags=json.dumps(c["tags"]),
                     reason=c["reason"], headline=c.get("headline", ""), status="rendering",
                     category_id=job.get("category_id"), targets=job.get("targets") or "[]", words=json.dumps(clip_words),
@@ -431,26 +631,208 @@ def _render_one(job, src, d, c, words, subtitles):
     try:
         with db.step(jid, f"STEP 6 rendering {c['kind']} #{cid} ({c['end'] - c['start']:.0f}s, {render.encoder_name()}): "
                           f"{c['title']}"):
-            render.cut(src, out, c["start"], c["end"], "9:16", words if subtitles else (),
-                       c.get("headline", "") if subtitles else "", voice, job.get("aspect"), progress=_progress("clips", cid),
-                       end_text=end_text(db.get("clips", cid)))
+            args = (src, out, c["start"], c["end"], "9:16", words if subtitles else (),
+                    c.get("headline", "") if subtitles else "", voice, job.get("aspect"))
+            kw = dict(progress=_progress("clips", cid), end_text=end_text(db.get("clips", cid)), cam=cam,
+                      side=side_logo(job.get("category_id"), out) if cam else None)
+            render.cut(*args, **kw)
+        # the finished video itself: a picture that stops moving (a decoder hiccup) never goes out
+        bad = render.frozen(out)
+        if bad:
+            db.log(jid, f"clip #{cid}: the video FREEZES ({bad}): rendering it again on the CPU")
+            render.cut(*args, **kw, force_cpu=True)
+            bad = render.frozen(out)
+            if bad:
+                db.log(jid, f"clip #{cid}: still frozen after a second render ({bad}): dropped")
+                raise RuntimeError(f"clip #{cid}: the rendered video freezes ({bad})")
+            db.log(jid, f"clip #{cid}: second render plays fine")
     except Exception:
         db.update("clips", cid, status="render failed")
         raise
     finally:
         for wav, _ in voice:
             wav.unlink(missing_ok=True)  # voice lines are baked into the mp4 now
+    if config.COLD_OPEN and c.get("peak") and c["kind"] == "short":
+        try:  # open on the payoff for a moment ("WAIT FOR IT..."), then play from the start
+            render.cold_open(out, c["peak"] - c["start"])
+            db.log(jid, f"clip #{cid}: cold open from {c['peak'] - c['start']:.1f}s")
+        except Exception as e:
+            err = (getattr(e, "stderr", b"") or b"")
+            err = err.decode(errors="replace") if isinstance(err, bytes) else str(err)
+            db.log(jid, f"clip #{cid}: cold open skipped ({type(e).__name__}: {err.strip()[-300:] or e!r})")
+        bad = render.frozen(out)
+        if bad:  # the cold open's re-encode broke it: the clip without one is safer than none
+            db.log(jid, f"clip #{cid}: frozen after the cold open ({bad}): rendering it again without one")
+            try:
+                render.cut(*args, **kw, force_cpu=True)
+            except Exception as e:
+                db.update("clips", cid, status="render failed")
+                raise RuntimeError(f"clip #{cid}: re-render failed: {e!r}")
+            if render.frozen(out):
+                db.update("clips", cid, status="render failed")
+                raise RuntimeError(f"clip #{cid}: the rendered video freezes")
     db.log(jid, f"clip #{cid} ready: {out.name}, {out.stat().st_size / 1e6:.1f} MB")
+    _rendered(job, cid, out)
+
+
+def _rendered(job, cid, out):
+    """A clip's file is done: save it, then publish / schedule it the way the job asked."""
+    jid = job["id"]
     db.update("clips", cid, path=str(out.relative_to(DATA)), status="rendered", progress=1)
+    topic = db.get("topics", job["topic_id"]) if job.get("topic_id") else None
+    by_hand = not (topic and topic.get("source") == "auto")
+    if by_hand and (job["auto_upload"] or json.loads(job.get("targets") or "[]")) and _plan_on(job.get("category_id")):
+        # a clip you started (a link, a live stream) on a page with a plan: the queue, ahead of the automatic clips,
+        # so a stream's clips go out one slot at a time instead of all at once
+        feats = json.loads(db.get("clips", cid).get("features") or "{}")
+        db.update("clips", cid, status="scheduled", features=json.dumps({**feats, "priority": True}))
+        db.log(jid, f"clip #{cid} queued first: it goes out on the page's next free slot (see Scheduled)")
+        return
     if json.loads(job.get("targets") or "[]"):  # destinations chosen up front (Create → "publish when ready")
-        publish_clip(cid)
+        dests = json.loads(db.get("clips", cid).get("targets") or "[]") or json.loads(job["targets"])
+        if not _spaced(jid, cid, dests):
+            publish_clip(cid, dests, skip_limited=True)
     elif job["auto_upload"]:
-        topic = db.get("topics", job["topic_id"]) if job.get("topic_id") else None
-        if topic and topic.get("source") == "auto":  # autopilot.upload_tick() posts it on its slot of the day
+        if not by_hand:  # autopilot.upload_tick() posts it on its slot of the day
             db.update("clips", cid, status="scheduled")
             db.log(jid, f"clip #{cid} scheduled: the autopilot posts it on the next free slot")
         else:
-            upload_clip(cid)
+            c = db.get("clips", cid)
+            dests = destinations_for(c, json.loads(job.get("platforms") or '["youtube"]') or ["youtube"])
+            if not _spaced(jid, cid, dests):
+                publish_clip(cid, dests, skip_limited=True)
+
+
+_CLAIMS, _CLAIM_LOCK = {}, threading.Lock()  # account id -> the latest time a just-rendered clip took for it
+
+
+def _spaced(jid, cid, dests):
+    """A clip that would go up the moment it's rendered (a stream makes several in a row): if its accounts got a post
+    less than Settings → "Minutes between posts" ago, or another clip is already timed for them, give it the next free
+    time instead (posted by publish_due), so a stream can't flood a page (Instagram blocks bursts as spam).
+    -> True if it was given a later time."""
+    gap = int(config.POST_GAP_MIN or 0) * 60
+    ids = {d["account"] for d in dests}
+    if not gap or not ids:
+        return False
+    with _CLAIM_LOCK:  # clips rendered at the same moment: each claims its time before the next one looks
+        now = time.time()
+        t = max(now, social.last_post_at(ids) + gap, social.paused_until(ids, now),
+                *[_CLAIMS.get(a, 0) + gap for a in ids])
+        taken = sorted(c["publish_at"] for c in db.all("clips", "status='scheduled' AND publish_at IS NOT NULL AND id != ?", (cid,))
+                       if ids & {d.get("account") for d in json.loads(c.get("targets") or "[]")})
+        for at in taken:  # step past every timed clip closer than the gap
+            if abs(at - t) < gap:
+                t = at + gap
+        for a in ids:
+            _CLAIMS[a] = t
+    if t <= now + 5:
+        return False
+    db.update("clips", cid, status="scheduled", publish_at=t, targets=json.dumps(dests))
+    db.log(jid, f"clip #{cid} timed for {time.strftime('%H:%M', time.localtime(t))}: keeps "
+                f"{gap // 60} min between posts on the same accounts")
+    return True
+
+
+def side_logo(category_id, out):
+    """What goes beside a streamer's facecam: the category's own logo (Categories → Upload its own logo), else its
+    name drawn big (e.g. "GTA 6"). -> a PNG path, or None."""
+    from . import categories
+    c = categories.get(category_id) if category_id else None
+    if not c or c["name"] == categories.UNCATEGORIZED:
+        return None
+    if c.get("logo_file") and (DATA / c["logo_file"]).exists():
+        return DATA / c["logo_file"]
+    from .nostalgia import _Writer, TEXT_FONTS, _wrap
+    from PIL import Image
+    name = render.plain(c["name"]).upper()
+    img = Image.new("RGBA", (900, 520), (0, 0, 0, 0))
+    for size in (170, 140, 110, 90, 70):
+        wr = _Writer(size, TEXT_FONTS, stroke=max(4, size // 18))
+        lines = _wrap(wr, name, 860)
+        if len(lines) <= 3 and int(size * 1.05) * len(lines) <= 500:
+            break
+    y = (520 - int(size * 1.05) * len(lines)) // 2
+    for ln in lines:
+        wr.draw(img, (900 - wr.width(ln)) / 2, y, ln, fill=(255, 214, 10))
+        y += int(size * 1.05)
+    img = img.crop(img.getbbox() or (0, 0, 900, 520))
+    path = out.with_name(out.stem + "_name.png")
+    img.save(path)
+    return path
+
+
+def _plan_on(category_id):
+    """Does this category's brand have its page plan switched on (so the planner posts its clips)?"""
+    from . import page
+    bid = config.brand_of_category(category_id)
+    return bool(bid and page.plan(bid)["on"] and category_id in {c["id"] for c in page.cats(bid)})
+
+
+def _nostalgia(job, src, title, d, n, cuts, motion, status):
+    """Mode "nostalgia": the calmest unbroken stretches -> the AI picks the most scenic and writes a feelings caption
+    for each -> rendered with a track from the music library (nostalgia.py)."""
+    from . import categories, learn, nostalgia, page
+    jid, want = job["id"], max(1, int(job.get("shorts") or 1))
+    r = page.recipe(job["category_id"]) if job.get("category_id") else {}
+    day_only, grade = r.get("light") == "day", r.get("look", "")
+    cands = nostalgia.moments(n, cuts, motion, want * (10 if day_only else 5))
+    if day_only:  # bright daytime only: night / dusk / dark moments never reach the AI
+        bright = [c for c in cands if nostalgia.daylight(src, c["start"], c["end"])]
+        db.log(jid, f"nostalgia: {len(bright)} of {len(cands)} calm moments are bright daytime")
+        cands = bright[:want * 5]
+    clean = [c for c in cands if not nostalgia.facecam(src, c["start"], c["end"])]
+    if len(clean) < len(cands):
+        db.log(jid, f"nostalgia: {len(cands) - len(clean)} moment(s) dropped: a face (facecam) on screen")
+    cands = clean
+    if not cands:
+        db.log(jid, "nostalgia: no calm, unbroken moment of "
+                    f"{nostalgia.LENGTH}s in this video (too short, or cut every few seconds)")
+        return
+    db.log(jid, f"nostalgia: {len(cands)} calm moments: " + ", ".join(f"{_mmss(c['start'])}" for c in cands))
+    status("AI writing captions")
+    images = None
+    if config.VISION_MODEL.strip():
+        images = [(f"candidate {c['id']} ({'start' if k == 0 else 'end'}):", render.frame_b64(src, t, width=512))
+                  for c in cands for k, t in enumerate((c["start"] + 2.5, c["end"] - 2.5))]  # two frames each
+        images = [x for x in images if x[1]]
+    with db.step(jid, f"nostalgia: the AI picks {want} and writes the captions"):
+        picks = nostalgia.write(title, cands, want, categories.scope(job.get("category_id")),
+                                learn.examples(job.get("category_id")), images, [t["name"] for t in engage.tracks()], day_only)
+    if not picks:
+        db.log(jid, "nostalgia: the AI picked nothing usable, no clips from this video")
+        return
+    status(f"rendering {len(picks)} clip(s)")
+    by_id = {c["id"]: c for c in cands}
+    for p in picks:
+        check(jid)
+        c = by_id[p["id"]]
+        t = nostalgia.track(job.get("category_id"), p.get("music", ""))
+        desc = p["description"] + (f"\n\n{t['credit']}" if t and t.get("credit") else "")  # CC BY needs the credit
+        if p.get("scene"):
+            db.log(jid, f"on screen at {_mmss(c['start'])}: {p['scene']}")
+        db.log(jid, f"picked {_mmss(c['start'])}-{_mmss(c['end'])}: \"{p['caption']}\" ({p['game']}) · music: "
+                    f"{t['name'] if t else 'none (game sound)'}")
+        cid = db.insert("clips", job_id=jid, kind="short", start=c["start"], end=c["end"], score=0,
+                        features=json.dumps({"style": "nostalgia", "game": p["game"], "music": t["name"] if t else ""}),
+                        title=p["title"], description=desc, tags=json.dumps(p["tags"]), reason="nostalgia: calm moment",
+                        headline=p["caption"], status="rendering", category_id=job.get("category_id"),
+                        targets=job.get("targets") or "[]", words="[]", signals="{}")
+        out = d / "clips" / f"{cid}.mp4"
+        try:
+            with db.step(jid, f"rendering nostalgia clip #{cid} ({render.encoder_name()})"):
+                nostalgia.render(src, out, c["start"], c["end"], p["caption"], p["game"],
+                                 engage.MUSIC / t["file"] if t else None, progress=_progress("clips", cid), grade=grade)
+        except Exception as e:
+            db.update("clips", cid, status="render failed")
+            db.log(jid, f"nostalgia render #{cid} failed: {e!r}", exc=True)
+            continue
+        db.log(jid, f"clip #{cid} ready: {out.name}, {out.stat().st_size / 1e6:.1f} MB")
+        _rendered(job, cid, out)
+
+
+def is_nostalgia(c):
+    return json.loads(c.get("features") or "{}").get("style") == "nostalgia"
 
 
 def _voiceover(job, c, words, out):
@@ -556,6 +938,7 @@ def end_text(c):
     return engage.fill(variants[min(int(k), len(variants) - 1)], categories.get(c.get("category_id")) or {})
 
 
+@config.in_brand(lambda cid: config.brand_of_category(db.get("clips", cid)["category_id"]))
 def recaption(cid):
     """Re-do a clip's burned-in captions with Whisper (e.g. made from wrong YouTube captions): the clip's span is
     transcribed again and re-rendered, replacing its file. The source video is used if it's still there, else just
@@ -564,7 +947,7 @@ def recaption(cid):
     job = db.get("jobs", c["job_id"]) or {}
     if json.loads(c.get("uploads") or "{}"):
         raise ValueError("this clip is already published somewhere: its captions can't be changed there")
-    if not job.get("subtitles", 1):
+    if not job.get("subtitles", 1) or is_nostalgia(c):
         raise ValueError("this clip was made without captions")
     d, pad = DATA / "jobs" / str(c["job_id"]), 2.0
     src, offset, tmp = next(d.glob("source.*"), None), 0.0, None
@@ -586,7 +969,9 @@ def recaption(cid):
         out.parent.mkdir(parents=True, exist_ok=True)
         with db.step(c["job_id"], f"#{cid}: rendering with the new captions"):
             render.cut(src, out, s, e, "9:16", words, c.get("headline", ""), (), job.get("aspect"),
-                       progress=_progress("clips", cid), end_text=end_text(c))
+                       progress=_progress("clips", cid), end_text=end_text(c),
+                       cam=json.loads(c.get("features") or "{}").get("cam"),
+                       side=side_logo(c.get("category_id"), out) if json.loads(c.get("features") or "{}").get("cam") else None)
         for f in [old] + [DATA / r for r in json.loads(c.get("renders") or "{}").values()]:
             if f and f != out:
                 f.unlink(missing_ok=True)  # other shapes had the old captions: made again when needed
@@ -600,10 +985,11 @@ def recaption(cid):
             shutil.rmtree(tmp, ignore_errors=True)
 
 
+@config.in_brand(lambda c, *a: config.brand_of_category(c.get("category_id")))
 def ensure_render(c, aspect):
     """The clip's file in `aspect` ("9:16", "4:5", "1:1", "16:9"), rendering it from the source if it isn't there yet.
     Needs the source video (autopilot deletes sources after clipping unless "keep source videos" is on)."""
-    if aspect == "9:16" and c["path"]:
+    if (aspect == "9:16" or is_nostalgia(c)) and c["path"]:  # nostalgia clips are made for 9:16 only
         return DATA / c["path"]
     renders = json.loads(c.get("renders") or "{}")
     if renders.get(aspect) and (DATA / renders[aspect]).exists():
@@ -634,10 +1020,30 @@ def dest_key(d):
     return f"{d['format']}@{d['account']}"
 
 
+_publishing, _pub_guard = set(), threading.Lock()  # clips being uploaded right now: one attempt at a time
+
+
+@config.in_brand(lambda cid, *a, **k: config.brand_of_category(db.get("clips", cid)["category_id"]))
 def publish_clip(cid, dests=None, skip_limited=False):
     """Publish a clip to destinations [{"account": id, "format": "instagram_reel" | ...}] (default: the ones chosen for
     it). Each destination gets its own result in uploads["<format>@<account>"], so some can succeed while others
-    fail; running it again retries only the ones that didn't work. Expired accounts are refused (reconnect first)."""
+    fail; running it again retries only the ones that didn't work. Expired accounts are refused (reconnect first).
+    One attempt per clip at a time: a second one (Retry pressed again, the autopilot's slot) is skipped, so two
+    uploads never race and overwrite each other's results."""
+    with _pub_guard:
+        if cid in _publishing:
+            c = db.get("clips", cid)
+            db.log(c["job_id"], f"#{cid} is already uploading: this attempt was skipped")
+            return c
+        _publishing.add(cid)
+    try:
+        return _publish_clip(cid, dests, skip_limited)
+    finally:
+        with _pub_guard:
+            _publishing.discard(cid)
+
+
+def _publish_clip(cid, dests=None, skip_limited=False):
     from . import accounts
     c = db.get("clips", cid)
     dests = dests if dests is not None else json.loads(c.get("targets") or "[]")
@@ -665,6 +1071,12 @@ def publish_clip(cid, dests=None, skip_limited=False):
         if skip_limited and (platform in limited or accounts.limited(a)):
             db.log(c["job_id"], f"#{cid} not sent to {a['name']} ({fmt}) by autopilot: upload limit reached")
             continue
+        cap = int(config.YT_MAX_PER_DAY or 0)
+        if skip_limited and platform == "youtube" and cap and \
+                len([x for x in social.upload_times("youtube") if x > time.time() - 86400]) >= cap:
+            db.log(c["job_id"], f"#{cid} not sent to YouTube by autopilot: {cap} uploads in the last 24 h already "
+                                "(Settings → YouTube → Most uploads a day)")
+            continue
         if platform == "instagram":  # a Page of the brand can host the Reel as a link (needed / fallback)
             fb = next((x for x in accounts.all(secret=True, platform="facebook", brand_id=a.get("brand_id"))
                        if not x["error"]), None)
@@ -682,8 +1094,9 @@ def publish_clip(cid, dests=None, skip_limited=False):
             done[key] = {**entry, "error": msg, "at": time.time()}  # shown as-is in the UI
             db.log(c["job_id"], f"upload #{cid} to {a['name']} ({fmt}) failed after {time.time() - t0:.0f}s: {msg}", exc=True)
             accounts.token_error(a["id"], msg)
-            if social.note_limit(platform, str(e)):
-                db.log(c["job_id"], f"{platform} says the upload limit is exceeded: 24h timer started")
+            if social.note_limit(platform, str(e), a["id"]):
+                db.log(c["job_id"], f"{platform} says the limit is reached: {a['name']} paused for 24 h "
+                                    "(automatic posts skip it, other accounts carry on)")
         db.update("clips", cid, uploads=json.dumps(done))
     tried = [k for k in done]
     ok = [k for k in tried if done[k].get("id")]
@@ -745,10 +1158,13 @@ def sweep(now=None):
         if j["id"] in busy:
             continue
         srcs = [f for f in (DATA / "jobs" / str(j["id"])).glob("source.*")]
-        if not srcs or now - max(f.stat().st_mtime for f in srcs) < keep:
+        if not srcs:
             continue
         t = db.get("topics", j["topic_id"]) if j.get("topic_id") else None
-        if t and t.get("source") == "auto" and (autopilot.settings(t.get("autopilot_id")) or {}).get("keep_sources"):
+        auto = bool(t and t.get("source") == "auto")
+        if auto and (autopilot.settings(t.get("autopilot_id")) or {}).get("keep_sources"):
+            continue
+        if not auto and now - max(f.stat().st_mtime for f in srcs) < keep:  # yours: kept a while for cutting by hand
             continue
         size = sum(f.stat().st_size for f in srcs)
         for f in srcs:
@@ -795,8 +1211,14 @@ def upload_clip(cid, platforms=None, force=False):
 def publish_due(now=None):
     """Clips scheduled for a time (Create → Publish → Schedule): publish the ones whose time has come."""
     for c in db.all("clips", "status='scheduled' AND publish_at IS NOT NULL AND publish_at <= ?", (now or time.time(),)):
+        until = social.paused_until([d.get("account") for d in json.loads(c.get("targets") or "[]")])
+        if until:  # every account it goes to is paused by a limit: wait for the pause to end, don't lose it
+            db.update("clips", c["id"], publish_at=until + 60)
+            db.log(c["job_id"], f"#{c['id']}: its accounts are paused by a limit; moved to "
+                                f"{time.strftime('%d %b %H:%M', time.localtime(until + 60))}")
+            continue
         try:
-            publish_clip(c["id"])
+            publish_clip(c["id"], skip_limited=True)
         except Exception as e:
             db.log(c["job_id"], f"scheduled clip #{c['id']} failed: {e!r}", exc=True)
             db.update("clips", c["id"], status="upload failed")

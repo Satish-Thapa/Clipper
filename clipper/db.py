@@ -103,7 +103,7 @@ def init():
         for table, col in (("jobs", "mode TEXT DEFAULT 'hype'"), ("jobs", "subtitles INTEGER DEFAULT 1"),
                            ("clips", "headline TEXT DEFAULT ''"), ("jobs", "voiceover INTEGER DEFAULT 0"),
                            ("jobs", "topic_id INTEGER"), ("jobs", """platforms TEXT DEFAULT '["youtube"]'"""),
-                           ("clips", "uploads TEXT DEFAULT '{}'"), ("clips", "views TEXT DEFAULT '{}'"), ("topics", "face_check INTEGER DEFAULT 1"),
+                           ("clips", "uploads TEXT DEFAULT '{}'"), ("clips", "views TEXT DEFAULT '{}'"), ("topics", "face_check INTEGER DEFAULT 1"), ("topics", "style TEXT DEFAULT ''"),
                            ("jobs", "aspect REAL"), ("topics", "aspect REAL"),
                            ("jobs", "hq INTEGER DEFAULT 0"), ("topics", "hq INTEGER DEFAULT 0"),
                            ("topics", "source TEXT DEFAULT 'manual'"), ("topics", "pool INTEGER"),
@@ -137,7 +137,13 @@ def init():
         c.executescript(INDEXES)  # after the ALTERs: jobs.topic_id / posts.category_id may be new columns
         # Threads die with the server; don't show them as still running.
         c.execute("UPDATE jobs SET status='interrupted' WHERE status NOT IN ('done','failed','stopped')")
+        # A clip cut off mid-render / mid-upload by the restart: say so (Retry / re-render), not "rendering" forever.
+        c.execute("UPDATE clips SET status='render failed' WHERE status='rendering'")
+        c.execute("UPDATE clips SET status='upload failed' WHERE status='uploading'")
+        c.execute("UPDATE posts SET status='failed' WHERE status IN ('making','posting')")
         # Topics still 'queued' are picked up again by topics.loop(); only a half-done one is interrupted.
+        # An autopilot topic cut off by the restart runs again (it skips videos it already clipped); others wait for you.
+        c.execute("UPDATE topics SET status='queued' WHERE source='auto' AND status NOT IN ('queued','done','failed','stopped','interrupted')")
         c.execute("UPDATE topics SET status='interrupted' WHERE status NOT IN ('queued','done','failed','stopped')")
         c.execute("UPDATE posts SET status='failed' WHERE status IN ('making','posting')")
 

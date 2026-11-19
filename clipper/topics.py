@@ -4,6 +4,7 @@ Up to Settings → "Automations at once" topics run side by side (several autopi
 inside a topic the videos are clipped one after another (worker.run). Queued topics survive a server restart;
 loop() picks them up again."""
 import json
+import re
 import threading
 import time
 
@@ -65,6 +66,10 @@ def _run_one(t):
         WAKE.set()  # a slot is free: start the next queued topic
 
 
+FAKE_TITLE = re.compile(r"\bconcepts?\b|fan[ -]?made|\bai[ -]generated\b|\bai\b (video|gameplay|trailer)|unreal engine|"
+                        r"\bue ?5\b|\bwhat if\b|\bimagined\b|\breimagined\b|\bfake\b|\bre-?upload", re.I)
+
+
 def choose_videos(entries, n, used):
     """Most-viewed eligible videos: right length, not live/upcoming, not clipped before. entries: flat yt-dlp results."""
     lo, hi = config.TOPIC_MIN_MINUTES * 60, config.TOPIC_MAX_MINUTES * 60
@@ -82,7 +87,11 @@ def _judge(tid, topic, videos, face_check=True):
     try:
         with db.step(tid, f"DeepSeek judging {len(videos)} videos", "topics"):
             t = db.get("topics", tid) or {}
-            verdicts = pick.clippable(topic, videos, categories.scope(t.get("category_id")))
+            scope = categories.scope(t.get("category_id"))
+            if t.get("mode") == "nostalgia":
+                from . import nostalgia
+                scope += "\n" + nostalgia.VIDEO_RULE
+            verdicts = pick.clippable(topic, videos, scope)
     except Exception as e:
         db.log(tid, f"clippability check failed ({e!r}), using views only", "topics", exc=True)
         verdicts = {}
@@ -115,16 +124,24 @@ def _look(tid, v, verdict):
     return verdict[0], f"{verdict[1]} (person on screen {a['person']:.0%})"
 
 
+@config.in_brand(lambda t: config.brand_of_category(t.get("category_id")))
 def _run(t):
     tid = t["id"]
     db.log(tid, f"topic started: '{t['topic']}' | {t['videos']} videos x ({t['shorts']} shorts + {t['longs']} long), "
-                f"mode {t['mode']}, face check {'on' if t.get('face_check', 1) else 'off'}, "
+                f"mode {t['mode']}" + (f", sources: {t['style']}" if t.get("style") else "")
+                + f", face check {'on' if t.get('face_check', 1) else 'off'}, "
                 f"{'4K' if t.get('hq') else '1080p'}, upload to {t['platforms']}", "topics")
     STOPS[tid] = threading.Event()
     try:
         db.update("topics", tid, status="searching")
         try:
             queries = pick.search_queries(t["topic"], categories.scope(t.get("category_id")))
+            if t.get("mode") == "nostalgia":  # calm footage without a voice over it
+                queries = [q if "commentary" in q.lower() else f"{q} no commentary" for q in queries]
+            elif t.get("style") == "streamer":  # a streamer playing live: their facecam goes above the game
+                queries = [f"{q} streamer live facecam" for q in queries]
+            elif t.get("style") == "clean":  # the game itself, no streamer cam
+                queries = [q if "gameplay" in q.lower() else f"{q} gameplay" for q in queries]
         except Exception as e:
             db.log(tid, f"DeepSeek failed ({e!r}), searching the topic itself", "topics")
             queries = [t["topic"]]
@@ -145,10 +162,22 @@ def _run(t):
                     continue
                 db.log(tid, f"search '{q}' failed: {e!r}", "topics")
                 if download.bot_checked(e):
-                    raise RuntimeError("YouTube bot check: add YouTube cookies on the Socials page") from None
+                    raise RuntimeError("YouTube bot check: add YouTube cookies in Settings → Downloads") from None
             rejected = {i for i, (score, _) in judged.items() if score < MIN_CLIPPABLE}
             # how many candidates get judged: the topic's "research" size (autopilot setting), else 3x the clips wanted
+            if t.get("mode") == "nostalgia":  # obvious commentary / stream / subtitled / wrong-game titles: never judged
+                from . import nostalgia
+                entries = [e for e in entries if not nostalgia.bad_title(e.get("title"))]
+            entries = [e for e in entries if not FAKE_TITLE.search(str(e.get("title") or ""))]  # concept / AI / reuploads
             pool = choose_videos(entries, max(t.get("pool") or t["videos"] * 3, t["videos"]), used | rejected)
+            if t.get("mode") == "nostalgia":  # variety: one video per channel (their videos look alike)
+                seen_ch, kept = set(), []
+                for v in pool:
+                    ch = v.get("channel") or v.get("uploader") or v["id"]
+                    if ch not in seen_ch:
+                        seen_ch.add(ch)
+                        kept.append(v)
+                pool = kept
             judged.update(_judge(tid, t["topic"], [v for v in pool if v["id"] not in judged], t.get("face_check", 1)))
             videos = [v for v in pool if judged[v["id"]][0] >= MIN_CLIPPABLE][:t["videos"]]
             if len(videos) >= t["videos"]:
@@ -165,6 +194,9 @@ def _run(t):
             if STOPS[tid].is_set():
                 break
             t = db.get("topics", tid)  # read again: autopilot settings saved meanwhile apply to the next video
+            if db.all("jobs", "url=?", (f"https://www.youtube.com/watch?v={v['id']}",)):  # another topic took it meanwhile
+                db.log(tid, f"video {k}/{len(videos)} skipped: already clipped ({v.get('title')})", "topics")
+                continue
             platforms = json.loads(t["platforms"] or "[]")
             db.update("topics", tid, status=f"clipping {k}/{len(videos)}")
             jid = db.insert("jobs", url=f"https://www.youtube.com/watch?v={v['id']}", title=v.get("title"),
@@ -179,7 +211,7 @@ def _run(t):
             if t.get("source") == "auto":
                 _tidy(tid, jid)
             if float(db.get_setting("yt_bot_check") or 0) >= t0:  # every next video would hit the same wall
-                db.log(tid, "YouTube bot check: stopping this topic. Add YouTube cookies on the Socials page.", "topics")
+                db.log(tid, "YouTube bot check: stopping this topic. Add YouTube cookies in Settings → Downloads.", "topics")
                 STOPS[tid].set()
         db.update("topics", tid, status="stopped" if STOPS[tid].is_set() else "done")
     except Exception as e:

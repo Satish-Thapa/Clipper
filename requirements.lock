@@ -164,6 +164,8 @@ packaging==26.3
     # via
     #   huggingface-hub
     #   onnxruntime
+pillow==13.0.0
+    # via clipper (pyproject.toml)
 proto-plus==1.29.0
     # via google-api-core
 protobuf==7.36.2

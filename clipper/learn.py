@@ -80,6 +80,11 @@ def update():
     db.set_setting("learned", json.dumps(out))
     if out["weights"]:
         db.syslog(f"learned signal weights from {len(rows)} clips: {out['weights']}")
+    try:  # facecam vs clean clips: shift each category's source mix toward what gets more views
+        from . import page
+        out["styles"] = page.learn_styles()
+    except Exception as e:
+        db.syslog(f"learning the facecam / clean mix failed: {e!r}")
     return out
 
 

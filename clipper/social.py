@@ -114,7 +114,12 @@ def error_text(err):
         why = ", ".join(d.get("reason", "") for d in details if isinstance(d, dict)) if isinstance(details, list) else ""
         status = getattr(getattr(err, "resp", None), "status", "")
         return f"HTTP {status}: {reason}" + (f" ({why})" if why else "")
-    return explain(str(err))
+    msg = str(err)
+    if "<!DOCTYPE html" in msg or "<html" in msg[:200]:  # Meta / Google's own error page instead of an API answer
+        code = re.search(r"HTTP (\d{3})", msg)
+        return (f"HTTP {code.group(1) if code else '5xx'}: the platform's servers were temporarily unavailable (it sent an "
+                "error page, not an answer). Usually fixes itself: press Retry in a few minutes.")
+    return explain(msg)
 
 
 # Meta's permission errors, in plain words (the raw message stays after it, for reference).
@@ -135,22 +140,40 @@ def explain(msg):
     return msg
 
 
-# When a platform's API says the upload limit is exceeded, remember when (table limit_hits) so the UI can count down
-# 24 hours from that moment. Information only: uploads are never held back.
+# When a platform's API says the upload limit is exceeded, remember when (table limit_hits, for the UI's countdown) and
+# pause THAT account for 24 h (accounts.limited_until): automatic posting skips it, the other accounts carry on.
+# YouTube's quota belongs to the Google project, shared by every channel, so a YouTube hit pauses the whole platform.
 LIMIT_RE = re.compile(r"uploadLimitExceeded|exceeded the number of videos|quotaExceeded|dailyLimitExceeded|"
                       r"spam_risk_too_many_posts|too many posts|request limit reached|publishing limit|"
-                      r"reached the (?:maximum|limit)|rate.?limit", re.I)
+                      r"reached the (?:maximum|limit)|rate.?limit|"
+                      r"We limit how often you can post|\"code\":\s*368\b|\"code\":\s*(?:4|17|32|613)\b", re.I)
+# ^ Meta: code 368 = "We limit how often you can post" (an anti-spam block on the account: keep posting and it lasts
+#   longer); 4 / 17 / 32 / 613 = API rate limits
 
 
-def note_limit(platform, message):
-    """If `message` is a limit error, store/refresh the time it happened. Returns True if it was one."""
+def note_limit(platform, message, account_id=None):
+    """If `message` is a limit error, store/refresh the time it happened and pause the account that got it.
+    Returns True if it was one."""
     from . import db
     if not LIMIT_RE.search(message):
         return False
     with db.conn() as c:
         c.execute("INSERT OR REPLACE INTO limit_hits (platform, hit_at, message) VALUES (?, ?, ?)",
                   (platform, time.time(), message[:500]))
+        if account_id:
+            c.execute("UPDATE accounts SET limited_until=? WHERE id=?", (time.time() + DAY, account_id))
     return True
+
+
+def paused_until(account_ids, now=None):
+    """When every one of these accounts is paused by a limit: the moment the first pause ends; else 0."""
+    from . import accounts
+    now = now or time.time()
+    accs = [accounts.get(i) for i in {int(x) for x in account_ids}]
+    accs = [a for a in accs if a]
+    if not accs or not all(accounts.limited(a, now) for a in accs):
+        return 0
+    return min(a["limited_until"] for a in accs)
 
 
 def backfill_limit_hits():
@@ -170,11 +193,55 @@ def backfill_limit_hits():
 
 
 def limit_timers():
-    """{platform: {"hit_at", "until", "message"}} for limit hits less than 24h old."""
+    """{platform: {"hit_at", "until", "message"}} for platforms that can't take automatic posts now: YouTube after a
+    limit hit less than 24h old (its quota is shared), any other platform only while ALL its accounts are paused."""
+    from . import accounts, db
+    now = time.time()
+    with db.conn() as c:
+        rows = [dict(r) for r in c.execute("SELECT * FROM limit_hits WHERE hit_at > ?", (now - DAY,))]
+    out = {}
+    for r in rows:
+        if r["platform"] == "youtube":
+            out["youtube"] = {**r, "until": r["hit_at"] + DAY}
+            continue
+        accs = accounts.all(platform=r["platform"])
+        if accs and all(accounts.limited(a, now) for a in accs):
+            out[r["platform"]] = {**r, "until": min(a["limited_until"] for a in accs)}
+    return out
+
+
+def last_post_at(account_ids):
+    """When any of these accounts last got a post (clip or photo/text post, by any automation): seconds, or 0."""
+    from . import db
+    ids, last = {int(x) for x in account_ids}, 0.0
+    for c in db.all("clips", "uploads != '{}' AND uploads != ''"):
+        for u in json.loads(c["uploads"] or "{}").values():
+            if isinstance(u, dict) and u.get("id") and u.get("account") in ids:
+                last = max(last, u.get("at") or 0)
+    for p in db.all("posts", "uploads != '{}' AND uploads != ''"):
+        for k, u in json.loads(p["uploads"] or "{}").items():
+            if isinstance(u, dict) and u.get("id") and k.isdigit() and int(k) in ids:
+                last = max(last, u.get("at") or 0)
+    return last
+
+
+def gap_wait(account_ids, now=None):
+    """Seconds still to wait before one of these accounts may get another automated post (Settings → Minutes
+    between posts on one account), 0 when it may go now."""
+    from . import config
+    gap = int(config.POST_GAP_MIN or 0) * 60
+    if not gap or not account_ids:
+        return 0
+    return max(0.0, last_post_at(account_ids) + gap - (now or time.time()))
+
+
+def clear_limit(platform):
+    """You decided to try again before the 24 h are up: drop the platform's pause (and its accounts' own pause)."""
     from . import db
     with db.conn() as c:
-        rows = [dict(r) for r in c.execute("SELECT * FROM limit_hits WHERE hit_at > ?", (time.time() - DAY,))]
-    return {r["platform"]: {**r, "until": r["hit_at"] + DAY} for r in rows}
+        c.execute("DELETE FROM limit_hits WHERE platform=?", (platform,))
+        c.execute("UPDATE accounts SET limited_until=0 WHERE platform=?", (platform,))
+    db.syslog(f"{platform}: upload pause lifted by you")
 
 
 def upload_status():
@@ -237,31 +304,33 @@ def _ok(r):
     return r.json()
 
 
-CHUNK = 16 * 1024 * 1024  # bytes per upload request
-CHUNK_TIMEOUT = httpx.Timeout(30, read=300, write=120)  # a stalled chunk fails within minutes (one big POST could hang)
+UPLOAD_TIMEOUT = httpx.Timeout(30, read=300, write=300)  # per network operation: a stalled upload fails in minutes
 
 
-def _rupload(url, token, path):
-    """Meta's resumable upload host (rupload.facebook.com), in chunks: each POST says where it starts (offset) and the
-    whole size (file_size); Meta answers 206 until the last one. A chunk that times out is sent again (up to 3 times)
-    instead of the whole upload hanging on one slow connection."""
+def _rupload(url, token, path, tries=3):
+    """Meta's resumable upload host (rupload.facebook.com): the whole file in one POST (Meta doesn't reliably keep
+    partial chunks: it answers "Maximum accepted offset: 0" to the second one). A timeout or a retriable error is
+    tried again; when Meta says how much it already has ("Maximum accepted offset: N"), the rest is sent from N."""
+    import re
     data = Path(path).read_bytes()
-    size, off, r = len(data), 0, None
-    while off < size:
-        piece = data[off:off + CHUNK]
-        for attempt in range(3):
-            try:
-                r = httpx.post(url, content=piece, timeout=CHUNK_TIMEOUT,
-                               headers={"Authorization": f"OAuth {token}", "offset": str(off), "file_size": str(size)})
-                break
-            except SLOW:
-                if attempt == 2:
-                    raise
-                time.sleep(5 * (attempt + 1))
-        if r.status_code != 206:  # 206 = "got it, send the rest"; anything else is the final answer (or an error)
+    size, off, last = len(data), 0, None
+    for attempt in range(tries):
+        try:
+            r = httpx.post(url, content=data[off:], timeout=UPLOAD_TIMEOUT,
+                           headers={"Authorization": f"OAuth {token}", "offset": str(off), "file_size": str(size)})
+        except SLOW as e:
+            last = e
+            time.sleep(5 * (attempt + 1))
+            continue
+        if r.is_success:
+            return r.json()
+        m = re.search(r"Maximum accepted offset: (\d+)", r.text)
+        retriable = r.status_code >= 500 or m or '"retriable":true' in r.text.replace(" ", "")
+        if not retriable or attempt == tries - 1:
             return _ok(r)
-        off += len(piece)
-    return _ok(r)
+        off = int(m.group(1)) if m else 0
+        time.sleep(5 * (attempt + 1))
+    raise last if last else RuntimeError("upload failed")
 
 
 def facebook(account, path, title, caption, reel=True):
@@ -281,12 +350,19 @@ def facebook(account, path, title, caption, reel=True):
     return {"id": vid, "url": f"https://www.facebook.com/reel/{vid}"}
 
 
+def _temporary(e):
+    """Worth one more try: Instagram's random processing failures, Meta's 5xx error pages, a dropped connection."""
+    s = str(e)
+    return ("ProcessingFailedError" in s or "processing failed" in s or isinstance(e, SLOW)
+            or bool(re.search(r"HTTP 5\d\d", s)) or "<!DOCTYPE html" in s)
+
+
 def instagram(account, path, caption):
-    """Instagram's ProcessingFailedError is often random (the same file goes through on a second try): retry once."""
+    """Instagram often fails at random (the same file goes through on a second try): retry once after a pause."""
     try:
         return _instagram(account, path, caption)
     except Exception as e:
-        if "ProcessingFailedError" not in str(e) and "processing failed" not in str(e):
+        if not _temporary(e):
             raise
         time.sleep(20)
         return _instagram(account, path, caption)

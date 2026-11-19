@@ -84,7 +84,13 @@ clip answers (a curiosity gap), never a flat label of the topic. Ways that work:
 TEAM"), a bold claim the clip proves ("GTA 6 LOOKS TOO REAL"), a specific number or name ("$162M FOR THIS?",
 "1 HP CLUTCH"), a direct question to the viewer ("WOULD YOU TAKE THIS?"), something to watch for ("WATCH THE LEFT
 DOOR"). Specific beats generic: "MINI-GAME CHAOS" is weak, "THIS MINI-GAME BROKE THEM" is a hook. Don't give away the
-payoff, don't promise what the clip doesn't show, no "wait for it". Not the same as the title.
+payoff, don't promise what the clip doesn't show, no "wait for it", no emoji (it's drawn in a font that has none).
+Not the same as the title. When the content is sensational (a launch, drama, chaos, a reveal), go harder: urgency
+and stakes ("NOBODY WAS READY FOR THIS", "ROCKSTAR ACTUALLY DID IT", "THIS SHOULDN'T BE LEGAL", "HE WASN'T SUPPOSED
+TO SEE THIS"), always true to what the clip shows.
+Peak: the second (absolute, like start/end) where the payoff lands: the crash, the punchline, the biggest reaction.
+It's flashed for a moment before the clip plays (a cold open), so choose the single most striking instant.
+Virality is your honest score: most moments are 40-75; 85+ only for a moment a stranger would stop, rewatch and share.
 Description: 1-2 lines. First line keyword-rich (game/topic + what happens); end with a short question that makes
 people comment (e.g. "Would you have bailed?"). Hashtags: exactly 4-5, specific beats broad: the game, sport or
 topic itself, the moment type (#funnymoments, #fails, #clutch), one niche/community tag, and at most one broad tag.
@@ -92,7 +98,7 @@ No #shorts/#fyp/#viral (added per platform).
 
 Return JSON only:
 {"clips": [{"candidate": <id>, "kind": "short"|"long", "start": <sec>, "end": <sec>,
-"virality": <0-100>, "title": "...", "headline": "...", "description": "...", "hashtags": ["..."],
+"virality": <0-100>, "peak": <sec>, "title": "...", "headline": "...", "description": "...", "hashtags": ["..."],
 "reason": "one line: what happens and why it will pop"}]}"""
 
 def system_prompt(context="", examples=""):
@@ -176,7 +182,7 @@ def choose(title, candidates, counts, context="", examples="", images=None):
     system = system_prompt(context, examples)
     if images and config.VISION_MODEL.strip():
         try:
-            return validate(_ask(task + "\n\nFrames from the candidates follow (2 per candidate, labelled): use what you "
+            return validate(_ask(task + "\n\nFrames from the candidates follow (a few per candidate, labelled with its id): use what you "
                                         "see (action, faces, on-screen text) as well as what is said.", system,
                                  model=config.VISION_MODEL.strip(), images=images), candidates, counts)
         except Exception as e:
@@ -272,6 +278,9 @@ Bad sources (people need the whole video for any part to make sense, or there is
 - trailers, music videos, official teasers, very short or already-edited highlight videos
 - slideshow/news-reading videos with no reactions, static "tier list" or ranking videos that need the full list
 - anything that is mostly menus, ads, or one long calm explanation
+- fakes and reuploads: fan-made "concept" gameplay, AI-generated or Unreal Engine "what if" renders, fake "leaks",
+  mods presented as another game, and reuploads of someone else's video (score these 0: they're not the real thing and
+  usually carry another channel's watermark)
 - videos where the PICTURE is mostly a person: talking-head vlogs, "my thoughts on...", sit-down podcasts and
   interviews, people reacting on camera with little of the thing they react to. The channel wants clips that are
   mostly gameplay or real scenes; a small streamer facecam in the corner over gameplay is fine.
@@ -362,10 +371,86 @@ def _deepseek():
     return _client[0][1]
 
 
-def _ask(task, system=SYSTEM, key="clips", model=None, images=None):
+LAST_CALL = [0.0]  # when the AI was last asked (the local model is kept loaded while Clipper is busy)
+WARM_EVERY, WARM_FOR = 4 * 60, 30 * 60
+
+
+def _busy():
+    """Clipper is (about to be) using the AI: a call in the last 30 min, or an automation on and inside its hours."""
+    if time.time() - LAST_CALL[0] < WARM_FOR:
+        return True
+    from . import autopilot, posts
+    h = time.localtime().tm_hour
+    return any(a["enabled"] and a["post_from"] <= h < a["post_to"] for a in list(autopilot.profiles()) + posts.autos())
+
+
+def keep_warm_loop():
+    """Ollama unloads a model after 5 idle minutes, and reloading ~18 GB onto the GPU adds ~15 s to the next request.
+    While Clipper is busy, touch each model it uses every 4 min (keep_alive 10 min, nothing generated); when it goes
+    quiet the model unloads as usual, freeing the GPU for others on a shared server."""
+    import httpx
+    while True:
+        try:
+            if _local() and config.OLLAMA_KEEP_WARM and _busy():
+                base = config.LLM_BASE_URL.strip().rstrip("/").removesuffix("/v1")
+                for m in {config.DEEPSEEK_MODEL, config.POST_MODEL, config.VISION_MODEL} - {""}:
+                    httpx.post(f"{base}/api/generate", json={"model": m, "keep_alive": "10m"}, timeout=120)
+        except Exception as e:
+            from . import db
+            db.syslog(f"keeping the local model loaded failed: {e!r}")
+        time.sleep(WARM_EVERY)
+
+
+VERIFY_SYSTEM = """You are the last check before a short clip is posted. You get frames from across the ACTUAL clip
+(in order), what is said in it, and the headline / title / description written for it. Be strict and honest:
+
+1. "happens": in 1-2 plain sentences, what really happens in this clip: what you SEE in the frames and what is SAID.
+   Only what is there; no guessing beyond the evidence.
+2. "match": true only if the headline AND title describe what really happens: every claim in them is visible in the
+   frames or said in the clip (the right game, the right action, the right outcome, the right people). An exaggerated
+   but TRUE hook is fine ("HE ACTUALLY DID IT"); a claim the clip doesn't show is not (it says "jet" and there is no
+   jet; it says "1v5 clutch" and nobody wins; it names a player or a place the clip doesn't show or mention).
+   A headline or title with a swear word or slur (fuck, shit, bitch...) is also match=false: rewrite it clean.
+3. "moment": 0-100, how strong this is as a stand-alone clip for a stranger scrolling: a clear hook, something that
+   actually happens, a payoff or reaction. Menus, loading, idle walking, talking about nothing, or the payoff cut off
+   = under 50. A screen recording of a web browser, a YouTube / social media page, a desktop or a phone screen instead
+   of the game itself = under 30. A picture that doesn't change across the frames (frozen) = under 20. Be harsh: average is 55-70; only genuinely great moments get 80+.
+4. If match is false: "headline" (max 7 words, ALL CAPS, punchy, TRUE to the clip), "title" and "description" rewritten
+   from what really happens, same language and style. If match is true, repeat the originals unchanged.
+
+Reply as JSON: {"verdict": {"happens": "...", "match": true|false, "problems": "what doesn't match, or empty",
+"moment": <0-100>, "headline": "...", "title": "...", "description": "..."}}"""
+
+
+def verify(clip, transcript, images, context=""):
+    """The truth check on a picked clip: frames across it + its speech + what was written for it ->
+    {"happens", "match", "problems", "moment", "headline", "title", "description"}. Uses the vision model when set
+    (with the frames), else the main model on the speech alone."""
+    task = (f"{context}\nHeadline: {clip.get('headline', '')}\nTitle: {clip.get('title', '')}\n"
+            f"Description: {clip.get('description', '')}\n\nWhat is said in the clip (seconds in brackets):\n"
+            f"{transcript[:3000] or '(nothing said)'}")
+    vm = config.VISION_MODEL.strip()
+    if images and vm:
+        v = _ask(task + f"\n\n{len(images)} frames from the clip follow, in order.", VERIFY_SYSTEM, "verdict", vm,
+                 images, think=True)
+    else:
+        v = _ask(task + "\n\n(no frames: judge from the speech alone, and say match=false when the headline claims "
+                        "something the speech doesn't support)", VERIFY_SYSTEM, "verdict", think=True)
+    if not isinstance(v, dict):
+        raise ValueError(f"bad verdict: {v!r}")
+    try:
+        v["moment"] = max(0, min(100, float(v.get("moment", 0))))
+    except (TypeError, ValueError):
+        v["moment"] = 0
+    v["match"] = v.get("match") is True or str(v.get("match")).lower() == "true"
+    return v
+
+
+def _ask(task, system=SYSTEM, key="clips", model=None, images=None, think=False):
     """Send one request to the AI provider (OpenAI-compatible API) in JSON mode; return the raw `key` list.
     model: default config.DEEPSEEK_MODEL (clip picking); posts pass the faster POST_MODEL.
     images: [(label, jpeg base64)] for a vision model: each sent as a labelled picture after the text."""
+    LAST_CALL[0] = time.time()
     if not config.DEEPSEEK_API_KEY and not _local():
         raise RuntimeError("no AI API key: add it in Settings → AI")
     content = task
@@ -374,10 +459,14 @@ def _ask(task, system=SYSTEM, key="clips", model=None, images=None):
         for label, b64 in images:
             content += [{"type": "text", "text": label},
                         {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "low"}}]
+    # A local thinking model (Gemma 4, Qwen 3...) reasons privately before answering: worth it for picking clip
+    # moments, ~2.5x slower for no gain on short tasks (posts, searches, screening, pictures), so off there.
+    extra = {"reasoning_effort": "none"} if _local() and key != "clips" and not think else {}
     r = _deepseek().chat.completions.create(
         model=model or config.DEEPSEEK_MODEL,
         response_format={"type": "json_object"},  # forces valid JSON back
         messages=[{"role": "system", "content": system}, {"role": "user", "content": content}],
+        extra_body=extra or None,
     )
     return json.loads(r.choices[0].message.content).get(key, [])
 
@@ -410,7 +499,9 @@ def validate(clips, candidates, counts):
         if e - s < lo * 0.8:  # window itself too small to fit a real clip
             continue
         want[kind] -= 1
+        peak = num(c.get("peak"), None)
         out.append({"kind": kind, "start": s, "end": e, "score": num(c.get("virality"), 0),
+                    "peak": peak if peak is not None and s + 0.5 <= peak <= e - 0.5 else None,
                     "title": str(c.get("title", ""))[:100],
                     "headline": " ".join(str(c.get("headline", "")).split()[:6]),  # 3-6 words asked; hard cap 6
                     "description": str(c.get("description", "")),

@@ -212,7 +212,7 @@ def refresh_posts():
         reel = json.loads(p.get("features") or "{}").get("format") == "reel"
         for aid, u in ups.items():
             a = toks.get(int(aid)) if str(aid).isdigit() else None
-            if not a or not u.get("id"):
+            if not a or not u.get("id") or u.get("manual"):
                 continue
             try:
                 if a["platform"] == "instagram":
@@ -333,9 +333,9 @@ def slideshow(images, out, track=None, per=None):
                       f"afade=t=out:st={max(total - 1.2, 0):.2f}:d=1.2,loudnorm=I=-16:TP=-1.5[au]")
         audio = ["-map", "[au]", "-c:a", "aac", "-b:a", "192k"]
     out.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run([config.FFMPEG, "-y", "-loglevel", "error", *ins, "-filter_complex", ";".join(chains),
+    render.run_safe([config.FFMPEG, "-y", "-loglevel", "error", *ins, "-filter_complex", ";".join(chains),
                     "-map", f"[{last}]", *audio, *render.encoder()[:2], "-b:v", "8M", "-pix_fmt", "yuv420p",
-                    "-r", "30", "-t", f"{total:.2f}", "-movflags", "+faststart", str(out)], check=True, capture_output=True)
+                    "-r", "30", "-t", f"{total:.2f}", "-movflags", "+faststart", str(out)], capture_output=True)
     return out
 
 

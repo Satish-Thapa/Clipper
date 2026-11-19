@@ -192,6 +192,18 @@ def schedule(s, now=None, posts=None):
             "due": due, "next_at": nxt, "can_post_now": len(today) < due and now >= last + every / 2 and now < w1}
 
 
+def slots(s, k, posts=None, now=None):
+    """The next k posting times of a schedule (autopilot or post automation), as if each slot gets used: the 1st
+    waiting item goes at the 1st, the 2nd at the 2nd... (rolling over to the next days' windows)."""
+    t, ps, out = now or time.time(), list(posts or []), []
+    for _ in range(max(0, k)):
+        nxt = schedule(s, t, ps)["next_at"]
+        out.append(nxt)
+        ps.append(nxt)
+        t = max(t, nxt)
+    return out
+
+
 def pipeline(aid=None):
     """(its clips waiting to be posted, clips its queued/running topics will still make, roughly)."""
     aid = aid or _first_id()
@@ -223,11 +235,46 @@ def status(aid=None):
     waiting, coming = pipeline(s["id"])
     today = time.strftime("%Y-%m-%d")
     running = _lock(s["id"]).locked()
-    return {"settings": s, "last": json.loads(raw) if raw else None, "running": running,
+    return {"settings": s, "last": json.loads(raw) if raw else None, "running": running, "activity": activity(s["id"]),
+            "gap_min": int(config.POST_GAP_MIN or 0),
             "stage": STAGE.get(s["id"], "") if running else "", "schedule": schedule(s, posts=_posts(s["id"])),
             "scheduled": waiting, "coming": coming, "need": need(s), "max_rounds": MAX_ROUNDS,
             "rounds_today": len([r for r in rounds(MAX_ROUNDS + 5, s["id"]) if r.get("day") == today and r.get("topics")]),
             "bot_check": bot_paused(), "cookies": download.cookies_state()["source"]}
+
+
+def activity(aid, n=14):
+    """What an autopilot is doing and has just done, from what's saved (so a page refresh loses nothing):
+    -> {"now": one line, "lines": the latest log lines of its round, topics and their video jobs, newest last}."""
+    s = settings(aid)
+    aid = s["id"]
+    since = time.time() - 86400
+    tps = [t for t in db.all("topics", "source='auto'") if _topic_aid(t) == aid and (t["created"] or 0) > since][:4]
+    lines = []
+    last = rounds(1, aid)
+    if last:
+        r = last[0]
+        lines.append((r["at"], f"[{time.strftime('%H:%M:%S', time.localtime(r['at']))}] round ({r.get('reason')}): "
+                      + (r.get("error") or ", ".join(x["topic"] for x in r.get("topics") or []) or "nothing to queue")))
+    now = ""
+    if _lock(aid).locked():
+        now = f"Finding what's trending: {STAGE.get(aid) or 'starting'}"
+    for tp in tps:
+        for ln in (tp["log"] or "").splitlines()[-6:]:
+            lines.append((tp["created"], f"{ln}  · {tp['topic'][:30]}"))
+        for j in db.all("jobs", f"topic_id={int(tp['id'])}")[:3]:
+            for ln in (j["log"] or "").splitlines()[-5:]:
+                lines.append((j["created"] or tp["created"], ln))
+            if not now and j["status"] not in FINISHED:
+                pct = f" {round((j.get('progress') or 0) * 100)}%" if j.get("progress") else ""
+                now = f"{j['status'].capitalize()}{pct}: {(j.get('title') or '')[:60]}"
+        if not now and tp["status"] not in FINISHED and tp["status"] != "queued":
+            now = f"{tp['status'].capitalize()}: {tp['topic']}"
+    if not now and any(t["status"] == "queued" for t in tps):
+        now = "Waiting for its turn (another automation is using the computer)"
+    # order by the [HH:MM:SS] stamp within the day (each source's own lines are already in order)
+    lines.sort(key=lambda x: (x[0] // 86400, x[1][1:9] if x[1].startswith("[") else ""))
+    return {"now": now, "lines": [ln for _, ln in lines][-n:]}
 
 
 def status_all():
@@ -249,6 +296,10 @@ def upload_tick(now=None):
         if all(p in limited for p in s["platforms"]):
             continue
         c = waiting[0]
+        from . import categories
+        dest_ids = [x["id"] for x in categories.destinations(c.get("category_id"), s["platforms"])]
+        if social.gap_wait(dest_ids, now):  # its accounts got a post moments ago (from any automation): wait the gap
+            continue
         posts = [p for p in _posts(s["id"]) if p > time.time() - 3 * 86400] + [time.time()]
         db.set_setting(f"auto_posts_{s['id']}", json.dumps(posts))
         db.log(c["job_id"], f"autopilot {s['name'] or s['id']}: posting #{c['id']} (post "
@@ -271,10 +322,7 @@ def stop_all(aid=None):
         for t in _active_topics(s["id"]):
             topics.stop(t["id"])
             stopped += 1
-        for c in waiting_clips(s["id"]):
-            db.update("clips", c["id"], status="not uploaded (autopilot stopped)")
-            db.log(c["job_id"], f"#{c['id']} unscheduled: autopilot stopped")
-            cancelled += 1
+        # its already-made clips stay queued: stopping a maker never cancels what's waiting to go out
     db.syslog(f"autopilot STOPPED by user ({'all' if aid is None else aid}): {stopped} topic(s), {cancelled} clip(s) cancelled")
     return {"topics": stopped, "clips": cancelled}
 
@@ -325,7 +373,7 @@ def trending_topics(niche, k, research=None, aid=None, category_id=None):
         db.syslog(f"autopilot: search '{q}' failed: {ex!r}")
         if download.bot_checked(ex):
             raise RuntimeError("YouTube bot check ('Sign in to confirm you're not a bot'): add YouTube cookies "
-                               "on the Socials page") from None
+                               "in Settings → Downloads") from None
     top = sorted(seen.values(), key=lambda e: e.get("view_count") or 0, reverse=True)[:40]
     db.syslog(f"autopilot: {len(seen)} videos this week for '{niche}' ({len(queries)} searches), top {len(top)} sent to DeepSeek")
     rows = [{"title": e.get("title"), "channel": e.get("channel"), "views": e.get("view_count")} for e in top]
@@ -349,6 +397,7 @@ def plan(s, missing):
     return videos, videos * max(1, int(s["choosy"]))
 
 
+@config.in_brand(lambda reason="scheduled", aid=None, one=False: config.brand_of_category(settings(aid)["category_id"]))
 def run_round(reason="scheduled", aid=None, one=False):
     """One autopilot: find trending topics and queue enough videos for today's missing clips. one=True ("Make one
     clip now"): a single video for a single clip, whatever today's plan says. Returns the round record."""
@@ -382,10 +431,12 @@ def run_round(reason="scheduled", aid=None, one=False):
         _step("queueing topics", aid)
         split = lambda total: [total // len(found) + (1 if i < total % len(found) else 0) for i in range(len(found))]
         queued = []
+        from . import page
         for tp, k, kp in zip(found, split(n), split(pool)):
             if k <= 0:
                 continue
-            tid = topics.enqueue(topic=tp["topic"], videos=k, shorts=shorts, longs=longs, mode=s["mode"],
+            style = page.next_style(s["category_id"]) if s.get("category_id") else ""  # streamer / clean mix
+            tid = topics.enqueue(topic=tp["topic"], videos=k, shorts=shorts, longs=longs, mode=s["mode"], style=style,
                                  subtitles=int(s["subtitles"]), voiceover=int(s["voiceover"]), face_check=int(s["face_check"]),
                                  aspect=s["aspect"], hq=int(s["hq"]), platforms=json.dumps(s["platforms"]), source="auto",
                                  pool=max(kp, k), category_id=s["category_id"], autopilot_id=aid)
@@ -416,7 +467,8 @@ def due_round(s, now=None):
     lt = time.localtime(now)
     if not s["enabled"] or lt.tm_hour < int(s["hour"]) or lt.tm_hour >= int(s["post_to"]) or bot_paused():
         return None
-    today = [r for r in rounds(MAX_ROUNDS + 5, s["id"]) if r.get("day") == time.strftime("%Y-%m-%d", lt)]
+    today = [r for r in rounds(MAX_ROUNDS + 20, s["id"]) if r.get("day") == time.strftime("%Y-%m-%d", lt)
+             and r.get("reason") in ("daily", "top-up")]  # your "Run a round now" clicks don't use up its rounds
     if not today:
         return "daily" if need(s) > 0 else None
     if len(today) >= MAX_ROUNDS or now - today[0]["at"] < TOPUP_GAP or _active_topics(s["id"]):
@@ -429,14 +481,22 @@ def _loop():
     while True:
         try:
             worker.publish_due()  # every minute: clips scheduled for a time
-            upload_tick()  # every minute: is a post due on any autopilot?
+            from . import page, planner
+            for bid in page.all_brands():  # every brand's page, whichever one the app is showing
+                try:
+                    with config.brand(bid):
+                        planner.dispatch(bid=bid)  # the clip / post whose planned slot has come (the Scheduled tab's time)
+                except Exception as e:
+                    db.syslog(f"planner (brand {bid}) error: {e!r}", exc=True)
             if tick % 10 == 0:  # every 10 minutes: delete published clips' files and old source videos
                 worker.sweep()
-            if tick % 5 == 0:  # every 5 minutes: is a round due? (each autopilot's round runs on its own thread)
-                for s in profiles():
-                    why = due_round(s)
-                    if why and not _lock(s["id"]).locked():
-                        threading.Thread(target=run_round, args=(why, s["id"]), daemon=True).start()
+            if tick % 5 == 0:  # every 5 minutes: each page's categories get content made to keep ~a day queued
+                for bid in page.all_brands():
+                    try:
+                        with config.brand(bid):
+                            page.maker_tick(bid)
+                    except Exception as e:
+                        db.syslog(f"maker (brand {bid}) error: {e!r}", exc=True)
         except Exception as e:
             db.syslog(f"autopilot loop error: {e!r}", exc=True)
         tick += 1

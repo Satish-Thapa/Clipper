@@ -90,11 +90,21 @@ MEME_SYSTEM = f"""You make one meme for a page, for its audience, following the 
 Choose the layout that fits the joke:
 - "caption": the classic one: a line of text above ONE picture (POV / Me when / When you... + the scene that lands it).
 - "two_panel": two pictures, each with a short label: Expectation vs Reality, Nobody / Me, Them / Us, Before / After.
+- "dialogue": a comic strip of 2-4 pictures of the game's characters talking, one speech bubble each (two in the last
+  one is fine): a normal question, then the character's answer is the punchline in their voice. E.g. "What are your
+  plans for today?" / "Me and Big Smoke are going to buy some beer." / "And after that?" / "Unity Station."
+- "logic": ONE picture with a big header at the top ("VICE CITY LOGIC:", "BIG SMOKE:", "GTA PHYSICS:"), optionally one
+  speech bubble a character says, and the punchline at the bottom ("FALL 10 STORIES... GET UP, SWIM, AND CONTINUE LIKE
+  NOTHING HAPPENED", "ME: THAT'S THE PLAN").
 For every picture write a short YouTube search for gameplay footage that shows exactly that scene (the game + what's
-happening: "GTA 5 police chase crash", "CS2 player whiffing spray"). The picture carries the punchline: be specific.
-- "caption": the meme text (max 110 characters; a line break between setup and punchline is fine).
-- "panels": the pictures: [{{"label": "max 30 characters, or empty for the caption layout", "image": "search"}}]
-  (1 for caption, 2 for two_panel).
+happening: "GTA 5 police chase crash", "CS2 player whiffing spray", "GTA San Andreas CJ Big Smoke cutscene"). The picture
+carries the punchline: be specific; for dialogue pick cutscenes where those characters are on screen.
+- "caption": the meme text (max 110 characters; a line break between setup and punchline is fine). For dialogue / logic:
+  a short summary of the joke (it's how repeats are spotted; it isn't drawn).
+- "panels": the pictures: [{{"label": "max 30 characters, or empty for the caption layout", "image": "search",
+  "lines": [{{"who": "CJ", "text": "max 90 characters, emoji allowed"}}]}}] (1 for caption / logic, 2 for two_panel,
+  2-4 for dialogue; "lines" only for dialogue).
+- "header", "bubble", "bottom": logic only (header max 30 characters, bubble max 80, bottom max 90; emoji allowed).
 - "post": the caption posted with it: one short line that adds to the joke, then a question inviting people to share.
 Funny for people who play the game; nothing offensive, no real people mocked.
 {RULES}
@@ -275,7 +285,7 @@ def problem(c, dest=None):
     if not c["templates"]:
         return "Pick at least one template."
     if not [a for a in dest if a["platform"] in PLATFORMS]:
-        return "Set a default Facebook or Instagram account for this category."
+        return "No account to post to: tick a Facebook Page or Instagram account in its settings (Post to)."
     if not [a for a in dest if a["platform"] in PLATFORMS and a["status"] == "connected"]:
         return "Its Facebook / Instagram accounts need reconnecting."
     return ""
@@ -284,12 +294,14 @@ def problem(c, dest=None):
 # ---- post automations: several per category, each with its own topic, keywords, templates and schedule ----
 
 AUTO_DEFAULTS = {"name": "", "category_id": None, "enabled": False, "niche": "", "keywords": "", "templates": [],
-                 "posts_per_day": 4, "post_from": 9, "post_to": 21, "approve": True}
+                 "posts_per_day": 4, "post_from": 9, "post_to": 21, "approve": True,
+                 "accounts": []}  # the Facebook Pages / Instagram accounts it posts to ([] = the category's defaults)
 
 
 def _auto_clean(a):
     a = {**AUTO_DEFAULTS, **{k: v for k, v in a.items() if k in AUTO_DEFAULTS}, "id": int(a["id"])}
     a["templates"] = [int(x) for x in a["templates"] if str(x).isdigit()]
+    a["accounts"] = [int(x) for x in (a.get("accounts") or []) if str(x).isdigit()]
     a["post_from"] = min(max(int(a["post_from"]), 0), 23)
     a["post_to"] = min(max(int(a["post_to"]), a["post_from"] + 1), 24)
     a["posts_per_day"] = min(max(int(a["posts_per_day"]), 1), 48)
@@ -344,7 +356,8 @@ def auto_save(aid, data):
 
 def auto_create(data):
     lst = autos()
-    aid = max([a["id"] for a in lst] + [0]) + 1
+    aid = max([a["id"] for a in lst] + [int(db.get_setting("post_autos_last_id") or 0), 0]) + 1  # never reuse an id
+    db.set_setting("post_autos_last_id", str(aid))
     a = _auto_clean({**AUTO_DEFAULTS, "templates": [x["id"] for x in templates()], **data, "id": aid})
     if not category(a["category_id"]):
         raise ValueError("pick a category")
@@ -353,10 +366,28 @@ def auto_create(data):
 
 
 def auto_delete(aid):
+    gone = auto_get(aid)
+    heir = next((a for a in autos() if gone and a["id"] != int(aid) and a["category_id"] == gone["category_id"]), None)
+    for p in db.all("posts", "auto_id=? AND status IN ('draft','ready')", (int(aid),)):
+        # its waiting posts aren't stranded: another automation of the same category takes them (as it would post them)
+        if heir:
+            db.update("posts", p["id"], auto_id=heir["id"], status="draft" if heir["approve"] else "ready")
+            db.log(p["id"], f"its automation was deleted: now with automation {heir['id']}", "posts")
+    db.set_setting("post_autos_last_id", str(max(int(db.get_setting("post_autos_last_id") or 0), int(aid))))
+    db.set_setting(f"posts_times_a{int(aid)}", "[]")  # its posting history isn't inherited by a later automation
     _auto_store([a for a in autos() if a["id"] != int(aid)])
 
 
 WORKING = {}  # automation id -> what it's doing right now ("Writing a post", "Posting"), for the UI
+
+
+def auto_dest(a):
+    """The accounts an automation posts to: the ones ticked on it, else its category's defaults (Facebook /
+    Instagram only). Accounts removed since are dropped."""
+    if a.get("accounts"):
+        rows = [accts.get(x) for x in a["accounts"]]
+        return [r for r in rows if r and r["platform"] in PLATFORMS]
+    return [x for x in cats.destinations(a["category_id"], PLATFORMS) if x["platform"] in PLATFORMS]
 
 
 def _atimes(aid):
@@ -374,7 +405,7 @@ def automation(brand_id=None):
     out = []
     for a in autos(bid):
         c = category(a["category_id"]) or {}
-        dest = [x for x in cats.destinations(a["category_id"], PLATFORMS) if x["platform"] in PLATFORMS]
+        dest = auto_dest(a)
         err = ERRORS.get(f"a{a['id']}")
         mine_posts = db.all("posts", "auto_id=?", (a["id"],))[:3]  # newest first
         label = lambda p: p["card"] or " / ".join(x.get("label", "") for x in (json.loads(p.get("features") or "{}").get("meme") or {}).get("panels", []) if x.get("label")) or p["kind"]
@@ -382,15 +413,18 @@ def automation(brand_id=None):
                    "uploads": [{"platform": u.get("platform"), "url": u.get("url"), "error": (u.get("error") or "")[:160]}
                                for u in json.loads(p["uploads"] or "{}").values() if isinstance(u, dict)]} for p in mine_posts]
         busy = WORKING.get(a["id"]) or ("Posting" if any(p["status"] == "posting" for p in mine_posts) else "")
+        logs = []  # its recent posts' steps, oldest first
+        for q in reversed(db.all("posts", "auto_id=?", (a["id"],))[:4]):
+            logs += [f"{ln}  · post {q['id']}" for ln in (q["log"] or "").splitlines()[-8:]]
         out.append({**a, "category": c.get("name", ""), "color": c.get("color", "#6b8f86"),
                     "schedule": autopilot.schedule(a, posts=_atimes(a["id"])), "problem": problem(a, dest),
-                    "error": err["error"] if err else "", "recent": recent, "working": busy,
+                    "error": err["error"] if err else "", "recent": recent, "working": busy, "log": logs[-14:],
                     "targets": [{"id": x["id"], "platform": x["platform"], "name": x["name"], "status": x["status"]} for x in dest],
                     "drafts": len([p for p in waiting if p.get("auto_id") == a["id"] and p["status"] == "draft"]),
                     "ready": len([p for p in waiting if p.get("auto_id") == a["id"] and p["status"] == "ready"])})
     drafts = [{**{k: p[k] for k in ("id", "category_id", "card", "caption", "image", "created")}, "card": p["card"] or p["caption"]}
               for p in waiting if p["status"] == "draft"][:30]
-    return {"autos": out, "categories": [{"id": c["id"], "name": c["name"]} for c in mine], "drafts": drafts,
+    return {"gap_min": int(config.POST_GAP_MIN or 0), "autos": out, "categories": [{"id": c["id"], "name": c["name"]} for c in mine], "drafts": drafts,
             "templates": templates(), "busy": LOCK.locked()}
 
 
@@ -460,7 +494,13 @@ def _direct(link):
 
 
 def _parse_feed(content, default_source):
-    """RSS 2.0 or Atom -> [{title, source, link, hours, snippet}]."""
+    """RSS 2.0 or Atom -> [{title, source, link, hours, snippet}]. Junk after the feed's closing tag (Bing sometimes
+    adds some) is cut off instead of failing the whole source."""
+    for end in (b"</rss>", b"</feed>"):
+        k = content.rfind(end)
+        if k != -1:
+            content = content[:k + len(end)]
+            break
     root, out = ET.fromstring(content), []
     entries = list(root.iter("item")) or [e for e in root.iter() if e.tag.endswith("}entry")]
     for it in entries:
@@ -596,6 +636,15 @@ def _clean(x, n):
     return re.sub(r"\s+", " ", str(x or "")).strip()[:n]
 
 
+PLACEHOLDER = re.compile(r"^(an?|one|the)\s+(\w+[\s,]+){0,4}(line|caption|sentence|text|summary|joke|question|punchline|header)"
+                         r"\b.*\b(about|over|for|that|describing|of)\b", re.I)
+
+
+def _placeholder(text):
+    """The AI describing what it should write ("A calm, warm line about the atmosphere...") instead of writing it."""
+    return bool(PLACEHOLDER.search(str(text or "").strip()))
+
+
 def _clean_card(x, n):
     """Like _clean, but a line break stays (at most 3 lines): a meme's setup / punchline."""
     lines = [re.sub(r"[ \t]+", " ", l).strip() for l in str(x or "").replace("\r", "").split("\n")]
@@ -620,7 +669,7 @@ def _music(d, names):
     return m if m in names else (random.choice(names) if names else "")
 
 
-def write(tpl, niche="", cid=None, music=(), keywords=""):
+def write(tpl, niche="", cid=None, music=(), keywords="", say=lambda s: None):
     """DeepSeek writes one post from template `tpl` -> {card, footer, caption, tags, link, source, key, slides, music}.
     Raises if it can't. Never repeats a headline / card this category already has from that template.
     music: track names to choose from (the post goes up as a Reel); the AI picks the one that fits."""
@@ -641,7 +690,9 @@ def write(tpl, niche="", cid=None, music=(), keywords=""):
         seen = _seen(cid, tid)
         c = category(cid) if cid else None
         terms = [x for x in (((c or {}).get("keywords") or "") + "," + keywords).split(",") if x.strip()]
+        say(f"reading the news sources for '{niche or 'top stories'}'")
         items = [i for i in news(niche, terms=terms) if _key(i["title"]) not in seen]
+        say(f"{len(items)} new stories found; the AI is picking one")
         if not items:
             raise RuntimeError(f"no new headlines for '{niche or 'top stories'}' in the news sources (Settings)")
         rows = [{"id": k, "title": i["title"], "source": i["source"], "hours_ago": i["hours"], "snippet": i["snippet"][:160]}
@@ -650,6 +701,7 @@ def write(tpl, niche="", cid=None, music=(), keywords=""):
                       NEWS_PICK_SYSTEM, "ids", config.POST_MODEL)
         picks = [items[int(x)] for x in (d if isinstance(d, list) else [d]) if str(x).isdigit() and int(x) < len(items)] or items[:1]
         for item in picks[:3]:  # the first pick whose article can be read; else the first, from its snippet
+            say(f"reading the article: {item['title'][:70]} ({item['source']})")
             text, read_from = article(item)
             if text:
                 break
@@ -657,6 +709,7 @@ def write(tpl, niche="", cid=None, music=(), keywords=""):
             item, text, read_from = picks[0], "", ""
         story = {"headline": item["title"], "source": item["source"], "hours_ago": item["hours"],
                  "article_text" if text else "snippet": text or item["snippet"] or "(none)"}
+        say("the AI is writing the post from " + ("the article" if text else "the headline (article unreadable)"))
         d = pick._ask(f"Page topic: {niche or 'top stories, anything'}\n{how}\nStory:\n{json.dumps(story, indent=1, ensure_ascii=False)}",
                       NEWS_SYSTEM + (MUSIC_ASK if names else "") + _language(), "post", config.POST_MODEL)
         if not isinstance(d, dict):
@@ -670,20 +723,40 @@ def write(tpl, niche="", cid=None, music=(), keywords=""):
     if tpl["source"] == "meme":
         recent = [p["card"] for p in db.all("posts", "category_id=? AND template_id=?", (cid, tid))[:30]]
         task = f"Page topic: {topic}\n{how}\n" + (f"Already posted, don't repeat these jokes:\n{json.dumps(recent, indent=1)}" if recent else "")
-        for _ in range(2):
+        for _ in range(3):
             d = pick._ask(task, MEME_SYSTEM + _language(), "meme", config.POST_MODEL)
             if not isinstance(d, dict):
                 continue
-            layout = "two_panel" if d.get("layout") == "two_panel" else "caption"
-            panels = [{"label": _clean(x.get("label"), 30), "image": _clean(x.get("image"), 100)}
-                      for x in (d.get("panels") or []) if isinstance(x, dict) and _clean(x.get("image"), 100)][:2 if layout == "two_panel" else 1]
+            layout = d.get("layout") if d.get("layout") in ("two_panel", "dialogue", "logic") else "caption"
+            most = {"two_panel": 2, "dialogue": 4}.get(layout, 1)
+            panels = [{"label": _clean(x.get("label"), 30), "image": _clean(x.get("image"), 100),
+                       "lines": [{"who": _clean(ln.get("who"), 30), "text": _clean(ln.get("text"), 120)}
+                                 for ln in (x.get("lines") or []) if isinstance(ln, dict) and _clean(ln.get("text"), 120)][:2]}
+                      for x in (d.get("panels") or []) if isinstance(x, dict) and _clean(x.get("image"), 100)][:most]
+            meme = {"layout": layout, "panels": panels}
+            if layout == "dialogue":
+                panels = [x for x in panels if x["lines"]]
+                meme["panels"] = panels
+                if len(panels) < 2:
+                    continue
+            if layout == "logic":
+                meme.update(header=_clean(d.get("header"), 40), bubble=_clean(d.get("bubble"), 100),
+                            bottom=_clean(d.get("bottom"), 110))
+                if not (meme["header"] or meme["bottom"]) or any(_placeholder(meme[k]) for k in ("header", "bubble", "bottom")):
+                    continue
+            if any(_placeholder(ln["text"]) for x in panels for ln in x["lines"]) or _placeholder(d.get("caption")) and layout == "caption":
+                continue
             card = _clean_card(d.get("caption"), 160)
+            if layout in ("dialogue", "logic") and not card:  # the joke's text, for spotting repeats
+                card = _clean(" / ".join([meme.get("header", ""), meme.get("bottom", "")] if layout == "logic" else
+                                         [ln["text"] for x in panels for ln in x["lines"]]).strip(" /"), 160)
             if panels and (card or layout == "two_panel") and _key(card or panels[0]["label"]) not in _seen(cid, tid):
                 if layout == "two_panel" and len(panels) < 2:
-                    layout = "caption"
+                    meme["layout"] = "caption"
+                # dialogue / logic draw their own text: the card text isn't printed on them
                 return {"card": card, "footer": "", "caption": _clean(d.get("post"), 600), "tags": _tags(d.get("tags")),
                         "link": "", "source": "", "key": _key(card or " ".join(x["label"] for x in panels)),
-                        "meme": {"layout": layout, "panels": panels}, "music": _music(d, names)}
+                        "meme": meme, "music": _music(d, names)}
         raise RuntimeError("the AI gave no new meme")
     recent = [p["card"] for p in db.all("posts", "category_id=? AND template_id=?", (cid, tid))[:40]]
     task = f"Page topic: {topic}\n{how}\n" + (f"Already posted, don't repeat or reword these:\n{json.dumps(recent, indent=1)}"
@@ -691,7 +764,7 @@ def write(tpl, niche="", cid=None, music=(), keywords=""):
     for _ in range(2):  # a repeat gets one more try
         d = pick._ask(task, POST_SYSTEM + (MUSIC_ASK if names else "") + _language(), "post", config.POST_MODEL)
         card = _clean_card(d.get("card") if isinstance(d, dict) else "", 220).strip('"“”')
-        if card and _key(card) not in _seen(cid, tid):
+        if card and _key(card) not in _seen(cid, tid) and not _placeholder(card):
             return {"card": card, "footer": _clean(d.get("footer"), 80), "caption": _clean(d.get("caption"), 1500),
                     "tags": _tags(d.get("tags")), "link": "", "source": "", "key": _key(card), "music": _music(d, names),
                     "image": _clean(d.get("image"), 100)}
@@ -707,7 +780,9 @@ def _ass_color(hex_rgb, alpha="00"):
 
 def _ass_text(s):
     """Card text for libass: a line break the AI wrote (a meme's setup / punchline) stays a line break."""
-    return str(s).replace("\\", "/").replace("{", "(").replace("}", ")").replace("\r", "").replace("\n", "\\N")
+    from .render import plain  # emoji out: the card fonts have none (empty boxes)
+    s = str(s).replace("\\", "/").replace("{", "(").replace("}", ")").replace("\r", "")
+    return "\\N".join(x for x in (plain(l) for l in s.split("\n")) if x)
 
 
 def _ink(hex_rgb):
@@ -853,6 +928,7 @@ Format: Layer, Start, End, Style, Text
     return out
 
 
+@config.in_brand(lambda pid: config.brand_of_category(db.get("posts", pid)["category_id"]))
 def _render(pid):
     """The card image, plus one image per detail slide (then the post goes up as a carousel: cover first)."""
     p = db.get("posts", pid)
@@ -872,7 +948,11 @@ def _render(pid):
     stamp = int(time.time())  # new names each time, so the browser doesn't show a cached card
     rel = f"posts/{pid}_{stamp}.jpg"
     pic = DATA / feats["bg"] if feats.get("bg") else None
-    if feats.get("meme") and any(x.get("file") for x in feats["meme"]["panels"]):
+    if feats.get("meme") and feats["meme"]["layout"] in ("dialogue", "logic") and \
+            any(x.get("file") for x in feats["meme"]["panels"]):
+        from . import memes  # comic layouts: speech bubbles and big outlined text, drawn with Pillow
+        memes.render(feats["meme"], DATA / rel, c["handle"], category_logo(c))
+    elif feats.get("meme") and any(x.get("file") for x in feats["meme"]["panels"]):
         render_meme(feats["meme"], p["card"], DATA / rel, c["handle"], category_logo(c))
     else:
         render_card(tpl, p["card"], p["footer"], DATA / rel, c["handle"], category_logo(c), pic)
@@ -889,26 +969,104 @@ def _render(pid):
         video = f"posts/{pid}_{stamp}.mp4"
         track = next((x["file"] for x in engage.tracks() if x["name"] == feats.get("music")), None)
         engage.slideshow([DATA / m for m in media], DATA / video, track)
-    db.update("posts", pid, image=rel, media=json.dumps(media if len(media) > 1 else []), video=video)
+    feats["follow_slide"] = media[-1] if follow and len(media) > 1 else ""  # Facebook leaves it out (caption has the line)
+    db.update("posts", pid, image=rel, media=json.dumps(media if len(media) > 1 else []), video=video, features=json.dumps(feats))
     for o in old:
         if o and o not in media and o != video:
             (DATA / o).unlink(missing_ok=True)
 
 
-def make(cid, template_id=None, status="draft", topic="", auto=None):
+def start(cid, auto=None):
+    """The post's row, saved the moment making starts (status 'making'), so its log shows every step live."""
+    if not category(cid):
+        raise ValueError("category not found")
+    pid = db.insert("posts", category_id=cid, kind="", status="making", card="", created=time.time(),
+                    auto_id=(auto or {}).get("id"))
+    db.log(pid, "started", "posts")
+    return pid
+
+
+@config.in_brand(lambda cid, *a, **k: config.brand_of_category(cid))
+def make(cid, template_id=None, status="draft", topic="", auto=None, pid=None):
     """Write + render one post for category `cid`. template_id None = the template the learning picks.
     topic: what this one post is about (a keyword); empty = the automation's / category's own topic.
-    auto: the post automation making it (its templates, topic and keywords are used)."""
-    if auto:
-        WORKING[auto["id"]] = "Writing a post"
-        try:
-            return _make(cid, template_id, status, topic, auto)
-        finally:
+    auto: the post automation making it (its templates, topic and keywords are used).
+    pid: its row from start() (the API makes it first, so you can watch); None = made here."""
+    pid = pid or start(cid, auto)
+    REQUESTS[pid] = {"cid": cid, "template": template_id, "topic": topic, "auto": auto}
+
+    def say(step):  # one line in the post's log, and the automation card's "Now:" line
+        if pid in CANCELLED:  # you pressed Start over while it was being written
+            raise Cancelled()
+        db.log(pid, step, "posts")
+        if auto:
+            WORKING[auto["id"]] = f"Writing a post: {step}"
+    try:
+        out = _make(cid, template_id, status, topic, auto, pid, say)
+        if pid in CANCELLED:  # finished in the same moment you started over: still thrown away
+            raise Cancelled()
+        return out
+    except Cancelled:
+        discard(pid)
+        return None
+    except Exception as e:
+        db.update("posts", pid, status="failed")
+        db.log(pid, f"failed: {social.error_text(e)[:300]}", "posts")
+        raise
+    finally:
+        CANCELLED.discard(pid)
+        REQUESTS.pop(pid, None)
+        if auto:
             WORKING.pop(auto["id"], None)
-    return _make(cid, template_id, status, topic, auto)
 
 
-def _make(cid, template_id, status, topic, auto):
+class Cancelled(Exception):
+    pass
+
+
+REQUESTS = {}      # post id -> what it was asked for, while it's being written (Start over makes the same again)
+CANCELLED = set()  # posts thrown away by Start over while being written: they stop at their next step
+
+
+def discard(pid):
+    """Delete a post that never went out, with its files."""
+    p = db.get("posts", pid)
+    if not p:
+        return
+    for f in [p.get("image"), p.get("video")] + json.loads(p.get("media") or "[]"):
+        if f and str(f).startswith("posts/"):
+            (DATA / f).unlink(missing_ok=True)
+    db.delete("posts", pid)
+
+
+def restart(pid):
+    """Start over on a post that hasn't gone out: throw it away (a post still being written stops at its next step)
+    and return what to make instead: {"cid", "template", "topic", "auto"} (the same request; a post made before a
+    restart of Clipper, or by you from photos, gets its category and post type)."""
+    p = db.get("posts", pid)
+    if not p:
+        raise ValueError("post not found")
+    if p["status"] in ("posting", "posted") or any(u.get("id") for u in json.loads(p.get("uploads") or "{}").values()
+                                                 if isinstance(u, dict)):
+        raise ValueError("it's already posted: make a new one instead")
+    if p.get("kind") == "Your post":
+        raise ValueError("a post from your own photos: change it in Create instead")
+    req = REQUESTS.get(pid) or {"cid": p["category_id"], "template": p.get("template_id"), "topic": "",
+                                "auto": autopilot_post(p.get("auto_id"))}
+    if p["status"] == "making" and pid in REQUESTS:
+        CANCELLED.add(pid)  # its writer deletes it at its next step
+        db.log(pid, "started over by you: stopping", "posts")
+    else:
+        discard(pid)
+    return req
+
+
+def autopilot_post(aid):
+    """The post automation with this id (its templates / topic / keywords), or None."""
+    return next((a for a in autos() if a["id"] == aid), None) if aid else None
+
+
+def _make(cid, template_id, status, topic, auto, pid, say):
     c = category(cid)
     if not c:
         raise ValueError("category not found")
@@ -926,17 +1084,23 @@ def _make(cid, template_id, status, topic, auto):
     songs = [x["name"] for x in engage.tracks()] if config.MUSIC_ON else []
     if fmt == "auto":  # card or Reel: whichever has done better (a Reel only with music to put under it)
         fmt, fwhy = engage.choose(cid, "format", ["photo", "reel"] if songs else ["photo"])
-    w = write(tpl, (topic or "").strip() or (auto or {}).get("niche") or c["niche"], cid, songs if fmt == "reel" else (),
-              (auto or {}).get("keywords", ""))
+    db.update("posts", pid, template_id=tpl["id"], kind=tpl["name"])
+    say(f"template '{tpl['name']}' ({why}), {fmt} ({fwhy})")
+    if tpl["source"] != "news":
+        say("the AI is writing it" + (" (a meme: the joke and the pictures to look for)" if tpl["source"] == "meme" else ""))
+    subject = (topic or "").strip() or (auto or {}).get("niche") or c["niche"] or cats.search_topic(cid)  # never "anything"
+    w = write(tpl, subject, cid, songs if fmt == "reel" else (),
+              (auto or {}).get("keywords", ""), say)
     feats = {"template": tpl["id"], "format": fmt, "music": w.get("music", ""), "slides": len(w.get("slides") or []),
              "cta": bool(config.POST_CTA.strip())}
-    pid = db.insert("posts", category_id=cid, template_id=tpl["id"], kind=tpl["name"], status="making", card=w["card"],
-                    footer=w["footer"], caption=w["caption"], tags=json.dumps(w["tags"]), link=w["link"],
-                    source=w["source"], key=w["key"], slides=json.dumps(w.get("slides") or []), features=json.dumps(feats),
-                    auto_id=(auto or {}).get("id"), created=time.time())
-    db.log(pid, f"template '{tpl['name']}' ({why}), {fmt} ({fwhy})" + (f", music: {feats['music']}" if feats["music"] else ""),
-           "posts")
+    db.update("posts", pid, card=w["card"], footer=w["footer"], caption=w["caption"], tags=json.dumps(w["tags"]),
+              link=w["link"], source=w["source"], key=w["key"], slides=json.dumps(w.get("slides") or []),
+              features=json.dumps(feats))
+    say(f"written: {(w['card'] or w['caption'])[:80]}" + (f" · music: {feats['music']}" if feats["music"] else ""))
+    if w.get("meme") or (tpl.get("picture", True) and w.get("image")):
+        say("finding a picture: " + (", ".join(f"'{x['image']}'" for x in w["meme"]["panels"]) if w.get("meme") else f"'{w['image']}'"))
     _pictures(pid, tpl, w)
+    say("rendering the card" + (" and the Reel" if fmt == "reel" else ""))
     try:
         _render(pid)
     except subprocess.CalledProcessError as e:
@@ -952,17 +1116,27 @@ def _pictures(pid, tpl, w):
     """Gameplay frames for the post (images.py): one background for a card, one per panel for a meme. Stored in its
     features; a picture that can't be found just leaves the plain card."""
     from . import images
-    feats = json.loads(db.get("posts", pid).get("features") or "{}")
+    post = db.get("posts", pid)
+    feats = json.loads(post.get("features") or "{}")
+    scope = cats.scope(post["category_id"])  # the right game / era: the vision pick checks the frame against it
+    from . import page
+    day = page.recipe(post["category_id"]).get("light") == "day"
+    if day:  # a bright-daytime page: its pictures too
+        scope += "\nOnly bright, sunny DAYTIME pictures of the original game (no night, dusk, sunset, rain or remastered graphics)."
     try:
         if w.get("meme"):
-            panels = []
-            for k, panel in enumerate(w["meme"]["panels"]):
-                dest = images.picture(panel["image"], f'{w["card"]} / {panel["label"]}', DATA / "posts" / "src" / f"{pid}_{k}.jpg")
-                panels.append({**panel, "file": str(dest.relative_to(DATA)) if dest else ""})
-            feats["meme"] = {"layout": w["meme"]["layout"], "panels": panels}
+            def one(k, panel):
+                said = " / ".join(f"{ln['who']}: {ln['text']}" for ln in panel.get("lines") or [])
+                dest = images.picture(panel["image"] + (" daytime" if day else ""), f'{w["card"]} / {panel["label"] or said}',
+                                      DATA / "posts" / "src" / f"{pid}_{k}.jpg", scope)
+                return {**panel, "file": str(dest.relative_to(DATA)) if dest else ""}
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(4) as ex:  # a 4-panel strip: the searches at once, not one after another
+                panels = list(ex.map(lambda kp: one(*kp), enumerate(w["meme"]["panels"])))
+            feats["meme"] = {**w["meme"], "panels": panels}  # logic memes keep their header / bubble / bottom
             db.log(pid, f"meme ({w['meme']['layout']}): " + ", ".join(f"'{x['image']}' -> {'found' if x['file'] else 'none'}" for x in panels), "posts")
         elif tpl.get("picture", True) and w.get("image"):
-            dest = images.picture(w["image"], w["card"], DATA / "posts" / "src" / f"{pid}_bg.jpg")
+            dest = images.picture(w["image"] + (" daytime" if day else ""), w["card"], DATA / "posts" / "src" / f"{pid}_bg.jpg", scope)
             if dest:
                 feats["bg"] = str(dest.relative_to(DATA))
             db.log(pid, f"background picture '{w['image']}': {'found' if dest else 'none found, plain card'}", "posts")
@@ -971,6 +1145,7 @@ def _pictures(pid, tpl, w):
     db.update("posts", pid, features=json.dumps(feats))
 
 
+@config.in_brand(lambda pid, *a, **k: config.brand_of_category(db.get("posts", pid)["category_id"]))
 def edit(pid, card=None, footer=None, caption=None):
     new = {k: v for k, v in (("card", card), ("footer", footer), ("caption", caption)) if v is not None}
     if not db.get("posts", pid) or not new:
@@ -995,7 +1170,7 @@ def caption_for(p, platform, text_post=False):
     parts = [" ".join(x for x in (p["card"], p["footer"]) if x) if text_post else "", p["caption"]]
     if p.get("template_id") and config.POST_CTA.strip():  # made posts end with what a follower gets
         parts.append(engage.fill(config.POST_CTA, category(p["category_id"]) or {}))
-    song = json.loads(p.get("features") or "{}").get("music") if p.get("video") else ""
+    song = json.loads(p.get("features") or "{}").get("music") if p.get("video") and platform == "instagram" else ""
     if song:  # a Creative Commons track has to be credited where it's used
         credit = next((x["credit"] for x in engage.tracks() if x["name"] == song and x["credit"]), "")
         if credit:
@@ -1010,12 +1185,11 @@ def _send(p, a):
     """Your own photos: one = a photo post, several = a carousel. A made post: its card (or, on Facebook, text only when
     the template says so). Instagram always needs a picture."""
     media = [DATA / m for m in json.loads(p.get("media") or "[]")]
-    if p.get("video") and (DATA / p["video"]).exists():  # a Reel (the slides as a video with music)
+    if p.get("video") and (DATA / p["video"]).exists() and a["platform"] == "instagram":
+        # a Reel (the slides as a video with music): Instagram only. Facebook always gets the still card / carousel.
         text = caption_for(p, a["platform"])
         c = category(p["category_id"]) or {}
         a = {**a, "audio_name": (c.get("handle") or "").strip() or None}  # "original audio" credited to the page
-        if a["platform"] == "facebook":
-            return social.facebook(a, DATA / p["video"], p["card"][:100], text, reel=True)
         fb = next((x for x in accts.all(secret=True, platform="facebook", brand_id=a.get("brand_id")) if not x["error"]), None)
         return social.instagram({**a, "host_page": (fb["ext_id"], fb["token"])} if fb else a, DATA / p["video"], text)
     text_post = a["platform"] == "facebook" and (_is_text(p) or (not media and not p["image"]))
@@ -1023,6 +1197,9 @@ def _send(p, a):
     if a["platform"] == "facebook":
         if text_post:
             return social.fb_text(text, a["ext_id"], a["token"])
+        follow = json.loads(p.get("features") or "{}").get("follow_slide")
+        if follow:  # just the post on Facebook: no "Follow …" image (the line is in the caption already)
+            media = [m for m in media if m != DATA / follow]
         if len(media) > 1:
             return social.fb_carousel(media, text, a["ext_id"], a["token"])
         return social.fb_photo(media[0] if media else DATA / p["image"], text, a["ext_id"], a["token"])
@@ -1044,12 +1221,17 @@ def targets_of(p):
     chosen = json.loads(p.get("targets") or "[]")
     if chosen:
         return chosen
+    auto = auto_get(p["auto_id"]) if p.get("auto_id") else None
+    if auto:
+        return [x["id"] for x in auto_dest(auto)]  # its automation's accounts
     return [a["id"] for a in cats.destinations(p["category_id"]) if a["platform"] in PLATFORMS]
 
 
-def publish(pid, account_ids=None):
+@config.in_brand(lambda pid, *a, **k: config.brand_of_category(db.get("posts", pid)["category_id"]))
+def publish(pid, account_ids=None, auto=False):
     """Post to each target account it isn't on yet. uploads = {account id: result}. Expired accounts are refused
-    (reconnect them first); an account whose API says its limit is reached is skipped by the schedule for 24 h."""
+    (reconnect them first); an account whose API says its limit is reached is paused 24 h: automatic posting (auto)
+    skips it, and when every target is paused the post waits for the first pause to end. You posting by hand: tries all."""
     p = db.get("posts", pid)
     if not p or p["status"] in ("posting", "making"):
         return p
@@ -1058,6 +1240,17 @@ def publish(pid, account_ids=None):
     if not targets:
         raise ValueError("no accounts to post to: map a Facebook Page or Instagram account to this category")
     ups = json.loads(p["uploads"] or "{}")
+    if auto:
+        paused = [a for a in targets if accts.limited(a) and not ups.get(str(a["id"]), {}).get("id")]
+        if paused and len(paused) == len([a for a in targets if not ups.get(str(a["id"]), {}).get("id")]):
+            until = min(a["limited_until"] for a in paused) + 60
+            db.update("posts", pid, publish_at=until)
+            db.log(pid, f"its accounts are paused by a limit; timed for {time.strftime('%d %b %H:%M', time.localtime(until))}", "posts")
+            return db.get("posts", pid)
+        for a in paused:
+            db.log(pid, f"not sent to {a['platform']} {a['name']}: paused by a limit until "
+                        f"{time.strftime('%d %b %H:%M', time.localtime(a['limited_until']))}", "posts")
+        targets = [a for a in targets if a not in paused]
     db.update("posts", pid, status="posting")
     for a in [a for a in targets if not ups.get(str(a["id"]), {}).get("id")]:
         try:
@@ -1069,8 +1262,7 @@ def publish(pid, account_ids=None):
         except Exception as e:
             msg = social.error_text(e)
             ups[str(a["id"])] = {"error": msg[:500], "at": time.time(), "platform": a["platform"], "name": a["name"]}
-            if social.LIMIT_RE.search(msg):
-                db.update("accounts", a["id"], limited_until=time.time() + LIMIT_PAUSE)
+            social.note_limit(a["platform"], msg, a["id"])  # a limit error: that account paused 24 h
             accts.token_error(a["id"], msg)
             db.log(pid, f"post to {a['platform']} {a['name']} failed: {msg}", "posts", exc=True)
     done = all(ups.get(str(a["id"]), {}).get("id") for a in targets)
@@ -1126,24 +1318,11 @@ def tick_auto(a, now):
         pending = len(db.all("posts", "auto_id=? AND status IN ('draft','ready')", (a["id"],)))
         if pending < min(BUFFER, max(sch["posts_per_day"] - sch["posted_today"], 1)):
             make(cid, auto=a)
-    if not sch["can_post_now"]:
-        return None
-    live = [a["id"] for a in cats.destinations(cid) if a["platform"] in PLATFORMS and not accts.limited(a, now)
-            and a["status"] == "connected"]
-    if not live:
-        return None  # every account is at its limit or needs reconnecting
-    ready = list(reversed(db.all("posts", "auto_id=? AND status='ready' AND publish_at IS NULL", (a["id"],))))
-    if ready:
-        p = ready[0]
-    elif not a["approve"] and can_make:
-        p = make(cid, status="ready", auto=a)
-    else:
-        return None  # waiting for you to approve a draft
-    db.set_setting(f"posts_times_a{a['id']}", json.dumps([t for t in _atimes(a["id"]) if t > now - 3 * 86400] + [now]))
-    chosen = json.loads(p.get("targets") or "[]")
-    publish(p["id"], [x for x in chosen if x in live] or live if chosen else live)
+    if not a["approve"] and can_make:  # no approval: keep one post made ahead, so its slot never waits on the AI
+        if not db.all("posts", "auto_id=? AND status IN ('ready','making') AND publish_at IS NULL", (a["id"],)):
+            make(cid, status="ready", auto=a)
     ERRORS.pop(key, None)
-    return p["id"]
+    return None  # posting itself: planner.dispatch() on the planned slot (the Scheduled tab's time)
 
 
 def tick(now=None):
@@ -1155,19 +1334,11 @@ def tick(now=None):
         db.log(p["id"], "skipped: news older than 12 h", "posts")
     for p in db.all("posts", "status='ready' AND publish_at IS NOT NULL AND publish_at <= ?", (now,)):
         try:  # scheduled for a time: goes up then, whatever the category's slots
-            publish(p["id"])
+            publish(p["id"], auto=True)
         except Exception as e:
             db.log(p["id"], f"scheduled post failed: {e!r}", "posts", exc=True)
             db.update("posts", p["id"], status="failed")
-    for a in autos():
-        c = category(a["category_id"])
-        if not a["enabled"] or not a["templates"] or not c or not c["defaults"]:
-            continue
-        try:
-            tick_auto(a, now)
-        except Exception as e:
-            ERRORS[f"a{a['id']}"] = {"at": time.time(), "error": str(e)[:300]}
-            db.syslog(f"posts: automation {a['id']} ({c['name']}): {e!r}", exc=True)
+    # making posts: page.maker_tick (each category's recipe); posting them: planner.dispatch (the page plan)
 
 
 def locked(fn, *a, **kw):
