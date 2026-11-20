@@ -116,7 +116,10 @@ def _run(job_id):
         job.update(is_live=int(bool(i.get("is_live"))), channel=i.get("channel") or "")
         db.log(job_id, f"{'LIVE' if i.get('is_live') else 'video'}: {i.get('title')} | channel {i.get('channel')}, "
                        f"{(i.get('duration') or 0) / 60:.1f} min, {i.get('view_count') or 0:,} views")
-        if i.get("is_live"):
+        if job.get("as_is") and not i.get("is_live"):  # a channel's Short: re-posted as it is
+            _as_is(job, i, d)
+            stopped = STOPS[job_id].is_set()
+        elif i.get("is_live"):
             stopped = _live(job, i, d)  # True only when Stop was pressed (not when the pieces asked for are done)
         else:
             _vod(job, i, d)
@@ -188,6 +191,36 @@ def _vod(job, i, d):
         _pieces(job, src, total, d, i.get("title", ""), i.get("heatmap"), chat, comments)
     else:
         _process(job, src, i.get("title", ""), d, heatmap=i.get("heatmap"), chat=chat, comments=comments)
+
+
+def _as_is(job, i, d):
+    """A channel's own Short, posted AS IT IS: its picture, sound, title, description and tags, no cutting and
+    nothing burned in. It's one clip; uploads go through the run's queue like the others."""
+    jid = job["id"]
+    db.update("jobs", jid, status="downloading")
+    h = download.height_for(job.get("hq"))
+    with db.step(jid, f"downloading the Short (up to {h}p)"):
+        download.download_vod(job["url"], d / "source.%(ext)s", h, stop=STOPS.get(jid))
+    _check(jid)
+    src = next(d.glob("source.*"))
+    title = (i.get("title") or job.get("title") or "Short")[:100]
+    tags = [t for t in ("".join(ch for ch in str(x) if ch.isalnum()) for x in i.get("tags") or []) if t][:5]
+    n = _dur(src)
+    cid = db.insert("clips", job_id=jid, kind="short", start=0.0, end=n, score=0, title=title,
+                    description=(i.get("description") or "").strip()[:4000], tags=json.dumps(tags),
+                    reason="the channel's own Short, posted as it is", headline="",
+                    why=json.dumps({"as_is": True, "source": title}), status="rendering")
+    out = d / "clips" / f"{cid}.mp4"
+    try:
+        with db.step(jid, f"STEP 6 keeping the Short as it is ({n:.0f}s, {_describe(src)}): {title}"):
+            how = render.as_is_copy(src, out)
+    except Exception:
+        db.update("clips", cid, status="render failed")
+        raise
+    db.log(jid, f"clip #{cid} ready ({how}): {out.name}, {out.stat().st_size / 1e6:.1f} MB")
+    db.update("clips", cid, path=str(out.relative_to(DATA)), status="rendered")
+    if job.get("auto_upload"):
+        post_or_queue(job, cid)
 
 
 def _dur(f):

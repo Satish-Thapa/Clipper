@@ -397,7 +397,9 @@ record piece 1 ──▶ record piece 2 ──▶ record piece 3 ──▶ ...  
   - **A funny header:** the streamer's name and what they're doing, ending with one emoji, for example
     "SPEED THINKS ANIMALS ARE HUMAN 😭". It's at most 7 words, written by the AI (`pick.reel_note`), and the
     streamer's name comes from the channel.
-  - **Layout:** the header sits at the top.
+  - **Layout:** the header is big and in the middle. With a facecam, it sits on the line between the streamer and
+    the gameplay; otherwise, in the middle of the screen. It uses 1-3 evenly split lines at up to 110px, pops in,
+    and then gently pulses (`render.big_title`).
   - **Subtitles:** the streamer's words, at the bottom. The word being said turns yellow and bounces.
   - **What's left out:** the follow line, logo, end card and voice-over.
   - **Emoji:** they render in black and white, because the subtitle renderer has no colour emoji.
@@ -407,9 +409,14 @@ record piece 1 ──▶ record piece 2 ──▶ record piece 3 ──▶ ...  
   The rest wait in Clips.
 - **Long clips show what you can do in the game.** For game videos, a long clip can be a full showcase of one
   activity or feature, shown start to finish and titled that way: "You Can Take Dates In GTA 6".
-- **Clip a whole channel** (Create page). Paste a channel link and say how many videos. It ranks the channel's
-  recent uploads and past streams by views and by how recently they went up, and takes the best overall (lowest
-  rank by views + rank by date). It does them one at a time, with the settings of the form above.
+- **Clip a whole channel** (Create page). Paste a channel link and say how many recent videos. It takes that many
+  of the newest uploads and past streams, sorts them by views, and clips and posts them most viewed first, one at
+  a time. The box has its own clips per video (shorts / long) and "upload only the best"; the clip style and
+  framing come from the form above.
+  **Recent Shorts (posted as they are):** the channel's newest Shorts, most viewed first, re-posted unchanged: the
+  same picture, sound, title, description and tags, nothing cut or added (`worker._as_is`). H.264 is copied
+  untouched; VP9 / AV1 is re-encoded once at top quality, since Instagram and TikTok want H.264. Only use this for
+  channels you're allowed to re-post.
 
   Videos longer than your limit are clipped, and their titles stay on that video's topic. Shorter ones are posted
   whole as one clip in the same format (header, subtitles), under the video's own title; the AI writes the header

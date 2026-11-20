@@ -278,10 +278,14 @@
   </section>
   <section class="panel">
     <h3 style="margin-top:0">Clip a whole channel</h3>
-    <p class="dim" style="margin:0 0 10px;font-size:13px">Paste a YouTube channel and say how many videos: it picks the best ones by views and how recently they went up, and does them one after another with the settings above (clip style, framing, shorts / long, upload only the best), uploading where you tick below. Videos longer than the limit are clipped; shorter ones are posted whole, formatted like the other clips. Videos already done are skipped, so run it again later for the new ones.</p>
+    <p class="dim" style="margin:0 0 10px;font-size:13px">Paste a YouTube channel and say how many recent videos: it takes that many of the newest (uploads and past streams), sorts them by views and does them most viewed first, one after another, with the clip counts below and the clip style and framing from the form above. It can also re-post the channel's newest Shorts as they are. Uploads go where you tick below. Videos longer than the limit are clipped; shorter ones are posted whole, formatted like the other clips. Videos already done are skipped, so run it again later for the new ones.</p>
     <form id="chf" class="row" style="flex-wrap:wrap;gap:10px;align-items:end">
       <label style="flex:1 1 260px">Channel link<input name="channel" placeholder="https://www.youtube.com/@name or @name" required></label>
-      <label>How many videos<input type="number" name="count" value="5" min="1" max="30" style="width:70px"></label>
+      <label title="That many of the newest uploads and past streams, done most viewed first. 0 = no videos.">Recent videos<input type="number" name="count" value="5" min="0" max="30" style="width:70px"></label>
+      <label title="Clips made from each video (videos shorter than the limit are posted whole instead).">Clips per video: shorts<input type="number" name="shorts" value="3" min="0" max="20" style="width:60px"></label>
+      <label>long<input type="number" name="longs" value="1" min="0" max="10" style="width:60px"></label>
+      <label title="Of each video's clips, upload only its best N shorts / M long (by the AI's score); the rest wait in Clips. Empty = all.">Upload only the best<input type="number" name="upload_best" min="0" max="100" placeholder="all" style="width:60px"> shorts<input type="number" name="upload_best_long" min="0" max="100" placeholder="all" style="width:60px"> long</label>
+      <label title="The channel's newest Shorts, most viewed first, posted exactly as they are: same picture, sound and title, nothing cut or added. Only for channels you're allowed to re-post. 0 = none.">Recent Shorts (posted as they are)<input type="number" name="short_count" value="0" min="0" max="30" style="width:70px"></label>
       <label title="Videos at least this long are clipped into shorts / long clips; shorter ones are posted whole (one clip, in the clip format).">Clip videos longer than<input type="number" name="min_minutes" value="10" min="0" max="600" step="0.5" style="width:70px"> min</label>
       <label title="Clips that are uploaded go into a queue: one every this many minutes (best first), so they don't all go up at once. They show as scheduled (⏰) in Clips. 0 = upload each one as soon as it's made.">Upload one clip every<input type="number" name="every_min" value="60" min="0" max="1440" style="width:70px"> min</label>
       <label title="No clip is posted before this time; then one every N minutes. Empty = start right away.">Start posting at<input type="datetime-local" name="start_at"></label>
@@ -680,10 +684,10 @@ $("#f").onsubmit = async e => {
 $("#chf").onsubmit = async e => {  // a channel: the main form's settings + which videos
   e.preventDefault();
   const m = new FormData($("#f")), c = new FormData(e.target), btn = e.target.querySelector("button");
-  const best = Object.fromEntries(["upload_best", "upload_best_long"].filter(k => m.get(k) !== "").map(k => [k, +m.get(k)]));
-  const body = {channel: c.get("channel"), count: +c.get("count"), every_min: +c.get("every_min"),
+  const best = Object.fromEntries(["upload_best", "upload_best_long"].filter(k => c.get(k) !== "").map(k => [k, +c.get(k)]));
+  const body = {channel: c.get("channel"), count: +c.get("count"), short_count: +c.get("short_count"), every_min: +c.get("every_min"),
     start_at: c.get("start_at") ? new Date(c.get("start_at")).getTime() / 1000 : null, min_minutes: +c.get("min_minutes"),
-    shorts: +m.get("shorts"), longs: +m.get("longs"), ...framing($("#f")), hq: m.has("hq"), mode: m.get("mode") === "manual" ? "hype" : m.get("mode"),
+    shorts: +c.get("shorts"), longs: +c.get("longs"), ...framing($("#f")), hq: m.has("hq"), mode: m.get("mode") === "manual" ? "hype" : m.get("mode"),
     subtitles: m.has("subtitles"), follow: m.has("follow"), voiceover: m.has("voiceover"), notes: m.get("notes") || "", style: m.get("style"),
     chunk_minutes: +m.get("chunk_minutes"), max_chunks: +m.get("max_chunks"), ...best, platforms: picked(e.target)};
   btn.disabled = true; btn.textContent = "Reading the channel…";
@@ -695,8 +699,8 @@ $("#chf").onsubmit = async e => {  // a channel: the main form's settings + whic
 };
 function showChannel(s) {
   $("#chState").innerHTML = !s.plan || !s.plan.length ? "" : `${s.running ? "⏳ Working through" : "✓ Done:"} ${s.plan.length} video(s)<br>` + s.plan.map(v =>
-    `${esc(v.why)} · ${esc(v.title)} · ${Math.round(v.duration / 60)} min · ${(v.views || 0).toLocaleString()} views · `
-    + (v.done ? "already done, skipped" : v.whole ? "posted whole" : "clipped") + (v.job ? ` · <a href="#jobs">job #${v.job}</a>` : "")).join("<br>");
+    `${esc(v.why)} · ${esc(v.title)} · ${!v.duration ? "" : v.duration < 120 ? Math.round(v.duration) + "s · " : Math.round(v.duration / 60) + " min · "}${(v.views || 0).toLocaleString()} views · `
+    + (v.done ? "already done, skipped" : v.as_is ? "posted as it is" : v.whole ? "posted whole" : "clipped") + (v.job ? ` · <a href="#jobs">job #${v.job}</a>` : "")).join("<br>");
 }
 async function stopChannel() { await fetch("/api/channel", {method: "DELETE"}); alertBox("Stopped: the video being clipped finishes, the rest are skipped."); }
 setInterval(async () => { if (location.hash && location.hash !== "#create") return; try { showChannel(await (await fetch("/api/channel")).json()); } catch {} }, 8000);

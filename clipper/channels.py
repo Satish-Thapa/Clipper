@@ -1,9 +1,10 @@
-"""Clip a YouTube channel: its best videos by views and how recently they went up, one after another.
+"""Clip a YouTube channel: its N most recent videos and M most recent Shorts, most viewed first, one after another.
 
-Videos LONGER than `min_minutes` are clipped like any video (the job's shorts / longs, its style and uploads).
-Shorter ones are posted WHOLE: the full video formatted like the other clips (layout, header, subtitles, hook) as one
-clip (worker._whole). Videos that already have a job are skipped, so running a channel again only adds new ones."""
-import json
+Videos LONGER than `min_minutes` are clipped like any video (the run's shorts / longs, its style and uploads).
+Shorter ones are posted WHOLE: the full video formatted like the other clips (layout, header, subtitles) as one clip
+(worker._whole). The channel's own Shorts are posted AS THEY ARE: same picture, sound and title, no cutting and
+nothing burned in (worker._as_is). Anything that already has a job is skipped, so running a channel again only adds
+new ones."""
 import threading
 import time
 
@@ -26,7 +27,7 @@ def _tab(base, tab, n):
     except Exception as e:
         if download.bot_checked(e):
             raise
-        return []  # a channel without that tab (no streams / no videos)
+        return []  # a channel without that tab (no streams / no videos / no shorts)
     return [{"id": e["id"], "url": f"https://www.youtube.com/watch?v={e['id']}", "title": e.get("title") or "",
              "duration": float(e.get("duration") or 0), "views": int(e.get("view_count") or 0), "rank": i, "tab": tab}
             for i, e in enumerate(es) if e and e.get("id") and e.get("live_status") not in ("is_live", "is_upcoming")]
@@ -38,38 +39,46 @@ def videos(channel, pool=30):
     return _tab(base, "videos", pool) + _tab(base, "streams", pool)
 
 
-def choose(vids, count):
-    """The best `count` by views AND how recently they went up: each video's place by views + its place by upload
-    order (newest = 0, uploads and streams each from their tab), lowest total first, more views on a tie.
-    -> [video + "why": "#2 by views, #1 newest"]."""
-    vids = [v for v in vids if v["duration"]]
-    by_views = {v["id"]: i for i, v in enumerate(sorted(vids, key=lambda v: -v["views"]))}
-    best = sorted(vids, key=lambda v: (by_views[v["id"]] + v["rank"], -v["views"]))[:count]
-    return [{**v, "why": f"#{by_views[v['id']] + 1} by views, #{v['rank'] + 1} newest {'stream' if v['tab'] == 'streams' else 'upload'}"}
-            for v in best]
+def shorts(channel, pool=30):
+    """The channel's newest `pool` Shorts (flat; the Shorts tab often leaves out the duration)."""
+    return _tab(channel_url(channel), "shorts", pool)
 
 
-def plan(channel, count, min_minutes):
-    """-> the videos to do, each with "whole": True when it's shorter than min_minutes (posted whole) and "done"
-    when it already has a job."""
+def choose(vids, count, label="newest"):
+    """The `count` most recent (newest first on each tab, tabs taken in turn), sorted by views, most first: that's the
+    order they're done and posted in. -> [video + "why": "#1 by views of the 5 newest"]."""
+    recent = sorted(vids, key=lambda v: (v["rank"], v["tab"] != "videos"))[:count]
+    best = sorted(recent, key=lambda v: -v["views"])
+    kind = lambda v: {"streams": "stream", "shorts": "Short"}.get(v["tab"], "upload")
+    return [{**v, "why": f"#{i + 1} by views of the {len(best)} {label} ({kind(v)})"} for i, v in enumerate(best)]
+
+
+def plan(channel, count, min_minutes, short_count=0):
+    """-> the videos, then the Shorts, to do. Each has "whole" (shorter than min_minutes: posted whole in the clip
+    format), "as_is" (a Short: re-posted unchanged) and "done" (already has a job)."""
     done = {j["url"] for j in db.all("jobs")}
     out = []
-    for v in choose(videos(channel), count):
-        out.append({**v, "whole": 0 < v["duration"] < min_minutes * 60, "done": v["url"] in done})
+    if count:
+        for v in choose([v for v in videos(channel) if v["duration"]], count):
+            out.append({**v, "whole": 0 < v["duration"] < min_minutes * 60, "as_is": False, "done": v["url"] in done})
+    if short_count:
+        for v in choose(shorts(channel), short_count, "newest Shorts"):
+            out.append({**v, "whole": False, "as_is": True, "done": v["url"] in done})
     return out
 
 
-def start(channel, count, min_minutes, job):
-    """Plan now (a few seconds), then make one job per new video in the background, one at a time.
+def start(channel, count, min_minutes, job, short_count=0):
+    """Plan now (a few seconds), then make one job per new video / Short in the background, one at a time.
     job: the job settings (counts, style, framing, platforms...) as for /api/jobs, without the url."""
     if STATE["running"]:
         raise RuntimeError(f"already working through {STATE['channel']}: stop it first or wait")
-    todo = plan(channel, count, min_minutes)
+    todo = plan(channel, count, min_minutes, short_count)
     ABORT.clear()
     STATE.update(running=True, channel=channel_url(channel), plan=todo, at=time.time())
-    db.syslog(f"channel {STATE['channel']}: {len(todo)} video(s) picked ("
+    db.syslog(f"channel {STATE['channel']}: {len(todo)} picked ("
               + "; ".join(f"{v['why']} {v['title'][:50]!r} {v['duration'] / 60:.0f} min, {v['views']:,} views"
-                          f"{' (whole)' if v['whole'] else ''}{' (already done)' if v['done'] else ''}" for v in todo) + ")")
+                          f"{' (whole)' if v['whole'] else ' (as is)' if v['as_is'] else ''}"
+                          f"{' (already done)' if v['done'] else ''}" for v in todo) + ")")
     threading.Thread(target=_run, args=(todo, job), daemon=True).start()
     return todo
 
@@ -86,10 +95,11 @@ def _run(todo, job):
                      "what this video is about (same game / subject / people), never a different one.")
             notes = f"{job.get('notes') or ''}\n{topic}".strip()
             jid = db.insert("jobs", **{**job, "url": v["url"], "title": v["title"], "whole": int(v["whole"]),
-                                       "notes": notes, "created": time.time()})
+                                       "as_is": int(v["as_is"]), "notes": notes, "created": time.time()})
             v["job"] = jid
-            db.log(jid, f"from channel {STATE['channel']} ({v['why']}, {v['views']:,} views): " + ("shorter than the limit, so posted WHOLE in the clip format"
-                                                     if v["whole"] else "clipped"))
+            db.log(jid, f"from channel {STATE['channel']} ({v['why']}, {v['views']:,} views): "
+                        + ("a Short, posted AS IT IS" if v["as_is"] else
+                           "shorter than the limit, so posted WHOLE in the clip format" if v["whole"] else "clipped"))
             worker.run(jid)
     except Exception as e:
         db.syslog(f"channel {STATE['channel']}: ERROR {e!r}")

@@ -162,7 +162,8 @@ class ChannelRun(NewJob):
     shorter = posted whole in the clip format. The rest = the same settings as a single video."""
     url: str = ""
     channel: str = Field(min_length=2, max_length=300)
-    count: int = Field(5, ge=1, le=30)
+    count: int = Field(5, ge=0, le=30)  # recent videos to clip
+    short_count: int = Field(0, ge=0, le=30)  # recent Shorts of the channel, posted as they are
     min_minutes: float = Field(10, ge=0, le=600)
     every_min: float = Field(0, ge=0, le=1440)  # upload one clip every N minutes (a queue); 0 = as soon as it's made
     start_at: float | None = None  # epoch seconds: no clip is posted before this (None = right away)
@@ -170,13 +171,17 @@ class ChannelRun(NewJob):
 
 @app.post("/api/channel")
 def channel_run(r: ChannelRun):
+    if r.count + r.short_count == 0:
+        raise HTTPException(400, "ask for at least one video or Short")
+    if r.count and r.shorts + r.longs == 0:
+        raise HTTPException(400, "ask for at least one short or long clip per video")
     job = dict(shorts=r.shorts, longs=r.longs, auto_upload=int(bool(r.platforms)), platforms=json.dumps(r.platforms),
                aspect=r.aspect, hq=int(r.hq), mode=r.mode, subtitles=int(r.subtitles), follow=int(r.follow),
                notes=r.notes.strip(), voiceover=int(r.voiceover), style=r.style, upload_best=r.upload_best,
                upload_best_long=r.upload_best_long, layout=r.layout, chunk_minutes=r.chunk_minutes, max_chunks=r.max_chunks,
                post_every=r.every_min or None, post_from=r.start_at)
     try:
-        return {"videos": channels.start(r.channel, r.count, r.min_minutes, job)}
+        return {"videos": channels.start(r.channel, r.count, r.min_minutes, job, r.short_count)}
     except Exception as e:
         raise HTTPException(409 if "already" in str(e) else 502, str(e)[:300])
 

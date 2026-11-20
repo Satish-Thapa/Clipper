@@ -165,6 +165,44 @@ def _emoji(text):
     return re.sub(r"([\U0001F000-\U0001FAFF☀-➿]+)", rf"{{\\fn{EMOJI_FONT}}}\1{{\\fnArial Black}}", text)
 
 
+BIG_TITLE, BIG_CHARS = 110, 16  # reel title: font px, and characters per line that fit ~950px at that size
+# (measured: a line of Arial Black capitals + spaces is ~0.5 of the font size wide per character)
+
+
+def _width(text):
+    """Line width in characters (an emoji is about two wide)."""
+    return len(text) + len(re.findall(r"[\U0001F000-\U0001FAFF☀-➿]", text))
+
+
+def _rows(words, n):
+    """words -> n lines, split where the longest line is shortest (every split point tried; titles are short)."""
+    from itertools import combinations
+    n = min(n, len(words))
+    best = None
+    for cuts in combinations(range(1, len(words)), n - 1):
+        b = (0, *cuts, len(words))
+        rows = [" ".join(words[b[i]:b[i + 1]]) for i in range(n)]
+        if best is None or max(map(_width, rows)) < max(map(_width, best)):
+            best = rows
+    return best or [" ".join(words)]
+
+
+def big_title(headline, y, length):
+    """The reel title as ASS: big white caps with a thick outline on 1-3 balanced lines (the fewest that keep it big;
+    a smaller font only when even 3 lines are too long), centred on y; it pops in, then gently pulses."""
+    words = headline.upper().replace("{", "").replace("}", "").replace("\\", "/").split()
+    for n in (1, 2, 3):
+        rows = _rows(words, n)
+        if max(map(_width, rows)) <= BIG_CHARS * 1.15 or n == 3:
+            break
+    size = max(60, min(BIG_TITLE, round(BIG_TITLE * BIG_CHARS / max(map(_width, rows)))))
+    pulse = "".join(rf"\t({ms},{ms + 500},\fscx{104 if j % 2 == 0 else 100}\fscy{104 if j % 2 == 0 else 100})"
+                    for j, ms in enumerate(range(900, min(int(length * 1000), 60000), 1800)))
+    tags = (rf"{{\an5\q2\pos(540,{y})\fs{size}\bord8\shad4\fscx40\fscy40\t(0,180,\fscx110\fscy110)"
+            rf"\t(180,320,\fscx100\fscy100){pulse}}}")
+    return tags + r"\N".join(_emoji(r) for r in rows)
+
+
 def _caption_lines(ws, start, per_line, karaoke):
     out = []
     for i in range(0, len(ws), per_line):
@@ -183,19 +221,22 @@ def _caption_lines(ws, start, per_line, karaoke):
 
 
 def ass(words, start, end, vertical=True, headline="", per_line=3, aspect=CROP_ASPECT, hook=None, split=False,
-        cap_margin=None, head_y=None, ending=True, shift=0.0, karaoke=False):
+        cap_margin=None, head_y=None, ending=True, shift=0.0, karaoke=False, mid_y=None):
     """Headline (white, black outline, no box: the video shows through) in the top black bar for the whole clip + big captions in the bottom black bar,
     a few words at a time. With no bars (aspect 9/16) they sit on the video instead.
     shift: every line this many seconds later (an exact cut decodes from `shift` s before the clip starts).
-    karaoke: the word being said in yellow (and bouncing)."""
+    karaoke: the word being said in yellow (and bouncing).
+    mid_y: the reel title: big, centred on this line (the facecam seam / the middle of the screen)."""
     if shift:
         out = ass(words, start, end, vertical, headline, per_line, aspect, hook, split, cap_margin, head_y, ending,
-                  karaoke=karaoke)
+                  karaoke=karaoke, mid_y=mid_y)
         return re.sub(r"^(Dialogue: \d+,)([\d:.]+),([\d:.]+),",
                       lambda m: f"{m[1]}{_t(_secs(m[2]) + shift)},{_t(_secs(m[3]) + shift)},", out, flags=re.M)
     ws = [w for w in words if start <= w["s"] < end]
     lines = _caption_lines(ws, start, per_line, karaoke)
-    if headline:
+    if headline and mid_y and vertical:  # reel: big, eye-catching, centred on mid_y, pops in, then gently pulses
+        lines.insert(0, f"Dialogue: 2,{_t(0)},{_t(end - start)},Top,{big_title(headline, mid_y, end - start)}")
+    elif headline:
         raw = headline.upper().replace("{", "").replace("}", "")
         text = _emoji(raw)
         if vertical:  # follow message on top, then the headline under it
@@ -343,6 +384,25 @@ def preview(clip, out_dir, name, poster=False):
             subprocess.run([FFMPEG, "-y", "-loglevel", "error", *cmd, str(tmp)], check=True, capture_output=True)
         tmp.replace(out)
         return out
+
+
+def _codec(path, stream):
+    return subprocess.run([FFPROBE, "-v", "error", "-select_streams", f"{stream}:0", "-show_entries", "stream=codec_name",
+                           "-of", "csv=p=0", str(path)], capture_output=True, text=True).stdout.strip()
+
+
+def as_is_copy(src, out):
+    """A video posted as it is: the same picture and sound in an .mp4 every platform takes. H.264 is copied untouched
+    (no quality lost); VP9 / AV1 (what YouTube often serves) is re-encoded once at top quality, since Instagram and
+    TikTok want H.264. -> what was done, for the log."""
+    out = Path(out)
+    copy_v = _codec(src, "v") == "h264"
+    copy_a = _codec(src, "a") in ("aac", "")
+    subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-i", str(Path(src).resolve()), "-map", "0:v:0", "-map", "0:a?",
+                    *(["-c:v", "copy"] if copy_v else [*encoder(), "-pix_fmt", "yuv420p"]),
+                    *(["-c:a", "copy"] if copy_a else ["-c:a", "aac", "-b:a", "256k", "-ar", "48000"]),
+                    "-movflags", "+faststart", str(out.resolve())], check=True, capture_output=True)
+    return "copied untouched" if copy_v else "re-encoded to H.264 at top quality, picture unchanged"
 
 
 def youtube_copy(path):
@@ -493,9 +553,13 @@ def cut(src, out, start, end, vertical, words=(), headline="", voice=(), aspect=
     subs = ""
     if words or headline or hook or (END_CARD.strip() and not clean):
         sub = out.with_suffix(".ass")
+        # reel: the title in the middle (with a facecam: on the seam between streamer and gameplay); captions at the
+        # bottom (facecam at the bottom: on the gameplay, clear of the title)
+        mid = (CAM_H if cam[0] == "top" else 1920 - CAM_H) if reel and cam else 960 if reel and not filler else None
+        cap = (CAM_H + (300 if reel else 40)) if cam and cam[0] == "bottom" else None
         sub.write_text(ass(words, start, end, vertical, headline, aspect=aspect, hook=hook, split=bool(filler),
-                           cap_margin=CAM_H + 40 if cam and cam[0] == "bottom" else None,
-                           head_y=split_head_y(hook) if filler else None, ending=not clean, shift=pre, karaoke=reel),
+                           cap_margin=cap, head_y=split_head_y(hook) if filler else None, ending=not clean, shift=pre,
+                           karaoke=reel, mid_y=mid),
                        encoding="utf-8")
         subs = f",subtitles={sub.name}"  # relative name + cwd avoids ffmpeg path escaping
     n_in = 1 + (1 if logo else 0) + len(voice)  # the background video is the last input
