@@ -152,23 +152,93 @@ def top_block(aspect=CROP_ASPECT, lines=1):
     return y, y + hook_h, y + hook_h + HEAD_H
 
 
+YELLOW = r"{\c&H00E5FF&}"  # ASS colours are BGR: this is the headline yellow
+EMOJI_FONT = "Segoe UI Emoji"
+# The word being said: yellow, pops up bigger and wiggles as it's pronounced, then settles (the rest of the line stays still).
+JIGGLE = (r"{\c&H00E5FF&\t(0,90,\fscx125\fscy125\frz-5)\t(90,170,\fscx112\fscy112\frz4)"
+          r"\t(170,250,\fscx115\fscy115\frz-2)\t(250,330,\fscx110\fscy110\frz0)}")
+UNJIGGLE = r"{\c&HFFFFFF&\fscx100\fscy100\frz0}"
+
+
+def _emoji(text):
+    """Emoji in the font that has them (Arial Black doesn't), then back."""
+    return re.sub(r"([\U0001F000-\U0001FAFF☀-➿]+)", rf"{{\\fn{EMOJI_FONT}}}\1{{\\fnArial Black}}", text)
+
+
+BIG_TITLE, BIG_CHARS = 110, 16  # reel title: font px, and characters per line that fit ~950px at that size
+# (measured: a line of Arial Black capitals + spaces is ~0.5 of the font size wide per character)
+
+
+def _width(text):
+    """Line width in characters (an emoji is about two wide)."""
+    return len(text) + len(re.findall(r"[\U0001F000-\U0001FAFF☀-➿]", text))
+
+
+def _rows(words, n):
+    """words -> n lines, split where the longest line is shortest (every split point tried; titles are short)."""
+    from itertools import combinations
+    n = min(n, len(words))
+    best = None
+    for cuts in combinations(range(1, len(words)), n - 1):
+        b = (0, *cuts, len(words))
+        rows = [" ".join(words[b[i]:b[i + 1]]) for i in range(n)]
+        if best is None or max(map(_width, rows)) < max(map(_width, best)):
+            best = rows
+    return best or [" ".join(words)]
+
+
+def big_title(headline, y, length):
+    """The reel title as ASS: big white caps with a thick outline on 1-3 balanced lines (the fewest that keep it big;
+    a smaller font only when even 3 lines are too long), centred on y; it pops in, then gently pulses."""
+    words = headline.upper().replace("{", "").replace("}", "").replace("\\", "/").split()
+    for n in (1, 2, 3):
+        rows = _rows(words, n)
+        if max(map(_width, rows)) <= BIG_CHARS * 1.15 or n == 3:
+            break
+    size = max(60, min(BIG_TITLE, round(BIG_TITLE * BIG_CHARS / max(map(_width, rows)))))
+    pulse = "".join(rf"\t({ms},{ms + 500},\fscx{104 if j % 2 == 0 else 100}\fscy{104 if j % 2 == 0 else 100})"
+                    for j, ms in enumerate(range(900, min(int(length * 1000), 60000), 1800)))
+    tags = (rf"{{\an5\q2\pos(540,{y})\fs{size}\bord8\shad4\fscx40\fscy40\t(0,180,\fscx110\fscy110)"
+            rf"\t(180,320,\fscx100\fscy100){pulse}}}")
+    return tags + r"\N".join(_emoji(r) for r in rows)
+
+
+def _caption_lines(ws, start, per_line, karaoke):
+    out = []
+    for i in range(0, len(ws), per_line):
+        g = ws[i:i + per_line]
+        said = [w["w"].upper().replace("{", "").replace("}", "") for w in g]
+        if not karaoke:
+            out.append(f"Dialogue: 0,{_t(g[0]['s'] - start)},{_t(g[-1]['e'] - start)},Cap,{' '.join(said)}")
+            continue
+        # the word being said in yellow, the rest of the line white (one event per word, back to back)
+        for k, w in enumerate(g):
+            a = g[0]["s"] if k == 0 else w["s"]
+            b = g[k + 1]["s"] if k + 1 < len(g) else g[-1]["e"]
+            text = " ".join(f"{JIGGLE}{x}{UNJIGGLE}" if j == k else x for j, x in enumerate(said))
+            out.append(f"Dialogue: 0,{_t(a - start)},{_t(max(b, a + 0.05) - start)},Cap,{text}")
+    return out
+
+
 def ass(words, start, end, vertical=True, headline="", per_line=3, aspect=CROP_ASPECT, hook=None, split=False,
-        cap_margin=None, head_y=None, ending=True, shift=0.0):
+        cap_margin=None, head_y=None, ending=True, shift=0.0, karaoke=False, mid_y=None):
     """Headline (white, black outline, no box: the video shows through) in the top black bar for the whole clip + big captions in the bottom black bar,
     a few words at a time. With no bars (aspect 9/16) they sit on the video instead.
-    shift: every line this many seconds later (an exact cut decodes from `shift` s before the clip starts)."""
+    shift: every line this many seconds later (an exact cut decodes from `shift` s before the clip starts).
+    karaoke: the word being said in yellow (and bouncing).
+    mid_y: the reel title: big, centred on this line (the facecam seam / the middle of the screen)."""
     if shift:
-        out = ass(words, start, end, vertical, headline, per_line, aspect, hook, split, cap_margin, head_y, ending)
+        out = ass(words, start, end, vertical, headline, per_line, aspect, hook, split, cap_margin, head_y, ending,
+                  karaoke=karaoke, mid_y=mid_y)
         return re.sub(r"^(Dialogue: \d+,)([\d:.]+),([\d:.]+),",
                       lambda m: f"{m[1]}{_t(_secs(m[2]) + shift)},{_t(_secs(m[3]) + shift)},", out, flags=re.M)
     ws = [w for w in words if start <= w["s"] < end]
-    lines = []
-    for i in range(0, len(ws), per_line):
-        g = ws[i:i + per_line]
-        text = " ".join(w["w"] for w in g).upper().replace("{", "").replace("}", "")
-        lines.append(f"Dialogue: 0,{_t(g[0]['s'] - start)},{_t(g[-1]['e'] - start)},Cap,{text}")
-    if headline:
-        text = headline.upper().replace("{", "").replace("}", "")
+    lines = _caption_lines(ws, start, per_line, karaoke)
+    if headline and mid_y and vertical:  # reel: big, eye-catching, centred on mid_y, pops in, then gently pulses
+        lines.insert(0, f"Dialogue: 2,{_t(0)},{_t(end - start)},Top,{big_title(headline, mid_y, end - start)}")
+    elif headline:
+        raw = headline.upper().replace("{", "").replace("}", "")
+        text = _emoji(raw)
         if vertical:  # follow message on top, then the headline under it
             hook = follow_line() if hook is None else hook
             hl = hook_lines(hook)
@@ -180,7 +250,7 @@ def ass(words, start, end, vertical=True, headline="", per_line=3, aspect=CROP_A
                 lines.insert(0, f"Dialogue: 1,{_t(0)},{_t(end - start)},Hook,"
                                 + rf"{{\an8\pos(540,{hy})\fad(200,0)\fscx40\fscy40\t(0,220,\fscx108\fscy108)\t(220,360,\fscx100\fscy100){pulse}}}{hook}")
             # a long headline (it now matches the title, up to 6 words) gets a smaller font so it stays inside 1080px
-            fit = rf"\fs{max(50, round(78 * 24 / len(text)))}" if len(text) > 24 else ""
+            fit = rf"\fs{max(50, round(78 * 24 / len(raw)))}" if len(raw) > 24 else ""
             lines.insert(0, f"Dialogue: 0,{_t(0)},{_t(end - start)},Top,{{\\an8\\pos(540,{ty if hook else hy}){fit}}}{text}")
         else:
             lines.insert(0, f"Dialogue: 0,{_t(0)},{_t(end - start)},Top,{text}")
@@ -229,21 +299,30 @@ def tts(text, out):
         return w.getnframes() / w.getframerate()
 
 
-@lru_cache(maxsize=1)
-def encoder():
-    """NVIDIA GPU encoder (NVENC) if a 1-frame test encode works, else x264 on the CPU."""
-    test = [FFMPEG, "-loglevel", "error", "-f", "lavfi", "-i", "color=black:s=256x256:d=0.1",
-            "-frames:v", "1", "-c:v", "h264_nvenc", "-f", "null", "-"]
-    try:
-        if subprocess.run(test, capture_output=True, timeout=30).returncode == 0:
-            db.syslog("render: GPU encoder (h264_nvenc)")
-            return ["-c:v", "h264_nvenc", "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", "18", "-b:v", "0",
-                    "-maxrate", "18M", "-bufsize", "36M", "-profile:v", "high"]
-    except (OSError, subprocess.SubprocessError):
-        pass
+CLIP_MAXRATE = 24  # Mbps peak for the clips: Instagram rejects Reels over 25 Mbps (on average); quality-based below it
+
+
+@lru_cache(maxsize=4)
+def encoder(maxrate=CLIP_MAXRATE):
+    """NVIDIA GPU encoder (NVENC) if a 1-frame test encode works, else x264 on the CPU. Upload quality: constant
+    quality 16 (visually lossless for a phone), the slowest / best preset, adaptive quantization (more bits on faces,
+    text and edges, fewer on flat areas), lookahead and B-frames; `maxrate` (Mbps) only caps the peaks."""
+    cap = ["-maxrate", f"{maxrate}M", "-bufsize", f"{maxrate * 2}M", "-profile:v", "high"]
+    best = ["-c:v", "h264_nvenc", "-preset", "p7", "-tune", "hq", "-rc", "vbr", "-cq", "16", "-b:v", "0",
+            "-spatial-aq", "1", "-temporal-aq", "1", "-aq-strength", "8", "-rc-lookahead", "32", "-bf", "3",
+            "-b_ref_mode", "middle", *cap]
+    plain = ["-c:v", "h264_nvenc", "-preset", "p7", "-tune", "hq", "-rc", "vbr", "-cq", "16", "-b:v", "0", *cap]
+    for args, what in ((best, "h264_nvenc, best quality"), (plain, "h264_nvenc")):  # older GPUs lack temporal AQ / B-refs
+        test = [FFMPEG, "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=1080x1920:d=0.3:r=60", *args,
+                "-pix_fmt", "yuv420p", "-f", "null", "-"]
+        try:
+            if subprocess.run(test, capture_output=True, timeout=30).returncode == 0:
+                db.syslog(f"render: GPU encoder ({what}, peaks {maxrate} Mbps)")
+                return args
+        except (OSError, subprocess.SubprocessError):
+            pass
     db.syslog("render: CPU encoder (libx264)")
-    return ["-c:v", "libx264", "-preset", "medium", "-crf", "18", "-maxrate", "18M", "-bufsize", "36M", "-profile:v", "high"]
-    # ^ 18 Mbps cap: Instagram rejects Reels over 25 Mbps, and 1080x1920 looks no better above ~15
+    return ["-c:v", "libx264", "-preset", "slow", "-crf", "16", "-aq-mode", "3", *cap]
 
 
 def save_master(src, out, start, end):
@@ -307,10 +386,51 @@ def preview(clip, out_dir, name, poster=False):
         return out
 
 
+def _codec(path, stream):
+    return subprocess.run([FFPROBE, "-v", "error", "-select_streams", f"{stream}:0", "-show_entries", "stream=codec_name",
+                           "-of", "csv=p=0", str(path)], capture_output=True, text=True).stdout.strip()
+
+
+def as_is_copy(src, out):
+    """A video posted as it is: the same picture and sound in an .mp4 every platform takes. H.264 is copied untouched
+    (no quality lost); VP9 / AV1 (what YouTube often serves) is re-encoded once at top quality, since Instagram and
+    TikTok want H.264. -> what was done, for the log."""
+    out = Path(out)
+    copy_v = _codec(src, "v") == "h264"
+    copy_a = _codec(src, "a") in ("aac", "")
+    subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-i", str(Path(src).resolve()), "-map", "0:v:0", "-map", "0:a?",
+                    *(["-c:v", "copy"] if copy_v else [*encoder(), "-pix_fmt", "yuv420p"]),
+                    *(["-c:a", "copy"] if copy_a else ["-c:a", "aac", "-b:a", "256k", "-ar", "48000"]),
+                    "-movflags", "+faststart", str(out.resolve())], check=True, capture_output=True)
+    return "copied untouched" if copy_v else "re-encoded to H.264 at top quality, picture unchanged"
+
+
+def youtube_copy(path):
+    """The copy that goes to YouTube: the clip upscaled to 1440p (1440x2560 vertical / 2560x1440 wide). YouTube gives
+    1440p+ uploads its better encoding (VP9/AV1, higher bitrate), so they look clearly sharper to viewers even when
+    watched at 1080p; 1080p uploads get the weaker AVC encode. Instagram / TikTok scale to 1080 anyway, so they get the
+    clip as it is. -> the copy's path (the caller deletes it after the upload), or `path` if it's already that big."""
+    path = Path(path)
+    wh = subprocess.run([FFPROBE, "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height",
+                         "-of", "csv=p=0", str(path)], capture_output=True, text=True).stdout.strip().split(",")
+    w, h = int(wh[0]), int(wh[1])
+    if min(w, h) >= 1440:
+        return path
+    size = "1440:2560" if h > w else "2560:1440"
+    out = path.with_name(path.stem + "_yt1440.mp4")
+    subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-i", str(path),
+                    "-vf", f"scale={size}:force_original_aspect_ratio=decrease:flags=lanczos,pad={size}:(ow-iw)/2:(oh-ih)/2,setsar=1",
+                    *encoder(40),  # 1440p60: YouTube recommends ~24 Mbps; quality-based, peaks up to 40
+                    "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart", str(out)],
+                   check=True, capture_output=True)
+    return out
+
+
 def encoder_name():
     return "GPU NVENC" if "h264_nvenc" in encoder() else "CPU x264"
 
 
+SHARPEN, CAM_SHARPEN = 0.4, 0.7  # contrast-adaptive sharpening after upscaling (0-1): the picture / the facecam panel
 CAM_H = 700  # facecam layouts: the streamer's panel (~36% of 1920, full width); the gameplay gets the other 1220px
 CAM_CORNERS = {"tl": (0, 0, .3, .3), "tr": (.7, 0, .3, .3), "bl": (0, .7, .3, .3), "br": (.7, .7, .3, .3)}  # x, y, w, h
 
@@ -393,8 +513,13 @@ def _duration(path):
         return 0.0
 
 
+# Colour grade for a richer, "higher quality" look: stream footage comes out flat and washed out. More saturation
+# (colours pop), a little more contrast, slightly deeper midtones. Applied before the scaling and sharpening.
+GRADE = "eq=contrast=1.07:saturation=1.25:gamma=0.97"
+
+
 def cut(src, out, start, end, vertical, words=(), headline="", voice=(), aspect=CROP_ASPECT, layout="", follow=True,
-        hook_text=None, clean=False, exact=False):
+        hook_text=None, clean=False, exact=False, reel=False):
     """words: burn these as captions; headline: text at the top. Pass ()/"" for none.
     voice: [(wav_path, seconds into clip)] voice-over lines; the original audio is ducked under them.
     aspect: w/h of the kept slice of the frame (9/16 = fills the phone ... 16/9 = whole frame with bars).
@@ -404,9 +529,10 @@ def cut(src, out, start, end, vertical, words=(), headline="", voice=(), aspect=
     clean: no end card and no logo (campaign clips: only the official picture and sound).
     exact: sync-safe cut for stream recordings (live clips, no text): seek a little early, then trim to the exact
            frame, so picture and sound both start at 0 (see save_master). The headline / follow line are shifted to
-           match; no captions or voice-over with it."""
+           match; no voice-over with it.
+    reel: the reel look: captions with the word being said in yellow (and bouncing)."""
     if exact:
-        assert not words and not voice, "exact cuts carry no captions or voice-over"
+        assert not voice, "exact cuts carry no voice-over"
     pre = min(start, 20.0) if exact else 0.0  # exact: decode from `pre` s early, cut on the exact frame (output -ss)
     filler = filler_path(layout) if vertical else None
     cam = cam_layout(layout) if vertical and not filler else None
@@ -420,16 +546,20 @@ def cut(src, out, start, end, vertical, words=(), headline="", voice=(), aspect=
     # fit it to 1080 wide, and pad to 1080x1920 with black bars that hold the headline and captions.
     # ponytail: plain center crop; facecam/subject tracking is the upgrade if gameplay gets cut off
     vf = (f"crop='min(iw,ih*{aspect})':ih,scale=1080:1920:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos,"
-          "pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,setsar=1" if vertical else "scale=-2:1080")
+          f"cas={SHARPEN},pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,setsar=1" if vertical else f"scale=-2:1080:flags=lanczos,cas={SHARPEN}")
     hook = (_clean_hook(hook_text) if hook_text and vertical else "") if hook_text is not None else (
         follow_line() if follow and vertical else "")  # the follow message: its own on/off, with or without a headline
     logo = LOGO if LOGO and LOGO.exists() and not clean else None
     subs = ""
     if words or headline or hook or (END_CARD.strip() and not clean):
         sub = out.with_suffix(".ass")
+        # reel: the title in the middle (with a facecam: on the seam between streamer and gameplay); captions at the
+        # bottom (facecam at the bottom: on the gameplay, clear of the title)
+        mid = (CAM_H if cam[0] == "top" else 1920 - CAM_H) if reel and cam else 960 if reel and not filler else None
+        cap = (CAM_H + (300 if reel else 40)) if cam and cam[0] == "bottom" else None
         sub.write_text(ass(words, start, end, vertical, headline, aspect=aspect, hook=hook, split=bool(filler),
-                           cap_margin=CAM_H + 40 if cam and cam[0] == "bottom" else None,
-                           head_y=split_head_y(hook) if filler else None, ending=not clean, shift=pre),
+                           cap_margin=cap, head_y=split_head_y(hook) if filler else None, ending=not clean, shift=pre,
+                           karaoke=reel, mid_y=mid),
                        encoding="utf-8")
         subs = f",subtitles={sub.name}"  # relative name + cwd avoids ffmpeg path escaping
     n_in = 1 + (1 if logo else 0) + len(voice)  # the background video is the last input
@@ -452,13 +582,17 @@ def cut(src, out, start, end, vertical, words=(), headline="", voice=(), aspect=
               f"max(min((iw-ow)/2,iw*{max(x - 0.05, 0):.4f}-ow),0)" if x + w / 2 > 0.6 else "(iw-ow)/2")
         panels = ["[cam]", "[game]"] if cam[0] == "top" else ["[game]", "[cam]"]
         head = (f"[0:v]split=2[c][g];"
-                f"[c]crop=w=iw*{w:.4f}:h=ih*{h:.4f}:x=iw*{x:.4f}:y=ih*{y:.4f},"
-                f"scale=1080:{cam_h}:force_original_aspect_ratio=increase:flags=lanczos,crop=1080:{cam_h},setsar=1[cam];"
+                # Quality: the facecam is a small box blown up ~3x: a light denoise first (so the stream's compression
+                # blocks aren't enlarged), lanczos, then contrast-adaptive sharpening; the gameplay a lighter sharpen.
+                f"[c]crop=w=iw*{w:.4f}:h=ih*{h:.4f}:x=iw*{x:.4f}:y=ih*{y:.4f},hqdn3d=1.5:1.5:0:0,"
+                f"scale=1080:{cam_h}:force_original_aspect_ratio=increase:flags=lanczos,crop=1080:{cam_h},cas={CAM_SHARPEN},setsar=1[cam];"
                 f"[g]crop=w='min(iw,ih*{1080 / game_h:.4f})':h=ih:x='{gx}',"
-                f"scale=1080:{game_h}:force_original_aspect_ratio=increase:flags=lanczos,crop=1080:{game_h},setsar=1[game];"
+                f"scale=1080:{game_h}:force_original_aspect_ratio=increase:flags=lanczos,crop=1080:{game_h},cas={SHARPEN},setsar=1[game];"
                 f"{''.join(panels)}vstack=inputs=2{subs}")
     else:
         head = f"[0:v]{vf}{subs}"
+    if reel or not clean:  # the colour grade (not on campaign clips: only the official picture there)
+        head = head.replace("[0:v]", f"[0:v]{GRADE},", 1)
     graph, logo_in = f"{head}[o]", []
     if logo:
         # Small logo top-right. Vertical with bars: in the top bar just above the video (clear of the headline and

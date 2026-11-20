@@ -4,7 +4,9 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
+from pathlib import Path
 
+from . import db, render
 from .config import YT_CLIENT_SECRETS, YT_TOKEN
 
 # upload = post videos; readonly = read view counts for the WhatsApp report (older tokens lack it: reconnect).
@@ -37,16 +39,25 @@ def upload(path, title, description, tags, short, privacy="public"):
     if tags:
         description += "\n" + " ".join(f"#{t}" for t in tags[:5])
     yt = build("youtube", "v3", credentials=_creds(), cache_discovery=False)
-    req = yt.videos().insert(
-        part="snippet,status",
-        body={"snippet": {"title": title[:100], "description": description[:5000], "tags": tags,
-                          "categoryId": "20"},  # 20 = Gaming
-              "status": {"privacyStatus": privacy, "selfDeclaredMadeForKids": False}},
-        media_body=MediaFileUpload(str(path), chunksize=-1, resumable=True))
-    resp = None
-    while resp is None:
-        _, resp = req.next_chunk()
-    return resp["id"]
+    try:  # a 1440p copy: YouTube gives it the better encode (sharper for viewers); the 1080p clip if that fails
+        send = render.youtube_copy(path)
+    except Exception as e:
+        db.syslog(f"YouTube 1440p copy failed ({e!r}), uploading the 1080p clip")
+        send = path
+    try:
+        req = yt.videos().insert(
+            part="snippet,status",
+            body={"snippet": {"title": title[:100], "description": description[:5000], "tags": tags,
+                              "categoryId": "20"},  # 20 = Gaming
+                  "status": {"privacyStatus": privacy, "selfDeclaredMadeForKids": False}},
+            media_body=MediaFileUpload(str(send), chunksize=-1, resumable=True))
+        resp = None
+        while resp is None:
+            _, resp = req.next_chunk()
+        return resp["id"]
+    finally:
+        if str(send) != str(path):
+            Path(send).unlink(missing_ok=True)
 
 
 def views(ids):

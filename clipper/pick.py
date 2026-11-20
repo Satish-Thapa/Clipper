@@ -29,7 +29,11 @@ HARD_MAX = {"short": min(SHORT_MAX + STRETCH_SHORT, SHORT_HARD_MAX), "long": min
 # What each kind is for, told to DeepSeek.
 KIND_DESC = {
     "short": "a complete moment WITH its context: the setup a stranger needs, the payoff and the reaction.",
-    "long": "a longer segment: a whole story, argument, mission or arc that stays gripping the whole way.",
+    "long": "a longer segment: a whole story, argument, mission or arc that stays gripping the whole way. In a game "
+            "video, a great LONG is also a full showcase of something players can DO in the game (an activity, feature, "
+            "mechanic or secret: taking someone on a date, robbing a store, a new vehicle or mission type...), shown from "
+            "start to finish so it answers \"can you do X in this game?\". Title it that way, e.g. \"You Can Take Dates "
+            "In GTA 6\", \"Everything You Can Do In The GTA 6 Gas Station\".",
 }
 
 # System prompt: who DeepSeek is and what a good clip looks like. Shared by both modes.
@@ -286,6 +290,26 @@ streams, gameplay, funny moments, reactions, podcasts, interviews, news breakdow
 Mix angles (the main term, a reaction/funny-moments angle, a news/update angle, names of the big creators
 or events in that topic if you know them). Short queries, the way people actually type them; no hashtags,
 no quotes, no years unless the topic is about one. Reply as JSON: {"queries": ["...", "..."]} with 4-6 queries."""
+
+
+REEL_EMOJI = "😭💀🤣😂😳🔥😱🤯😤🥶"
+
+
+def reel_note(streamer=""):
+    """Clean / reel style: the header on the video names the streamer and what they're doing, funny, with an emoji."""
+    who = f' The streamer is "{streamer}" (use the name fans call them, e.g. "IShowSpeed" -> "SPEED").' if streamer else ""
+    return ("\n\nHEADLINE FOR THIS CHANNEL'S REELS (overrides the headline rule above): the streamer's name + what they are "
+            "doing or saying in this moment, a bit funny / teasing, 4-7 words, CAPS, ending with ONE emoji from "
+            f"{' '.join(REEL_EMOJI)}. Examples: \"SPEED THINKS ANIMALS ARE HUMAN 😭\", \"KAI GETS SCAMMED BY A KID 💀\", "
+            "\"XQC RAGES AT THE CHAT 🤣\". It still matches the title's moment." + who + "\n")
+
+
+def reel_headline(text, title="", n=7):
+    """The reel header: at most n words (cut cleanly, see short_headline) + its emoji kept at the end."""
+    words = str(text or "").split() or str(title or "").split()
+    emo = [w for w in words if not any(ch.isalnum() for ch in w)]
+    plain = short_headline(" ".join(w for w in words if any(ch.isalnum() for ch in w)), n - (1 if emo else 0))
+    return (plain + (" " + emo[0] if emo else "")).strip()
 
 
 def user_note(notes):
@@ -576,6 +600,25 @@ def headline_for(headline, title):
     """The yellow headline: the AI's (3-6 words asked, hard cap 6), or, when it gave none, the title's first words."""
     words = str(headline or "").split() or re.sub(r"[^\w\s'!?&-]", " ", str(title or "")).split()
     return " ".join(words[:6])
+
+
+WEAK_END = {"oh", "my", "the", "a", "an", "and", "or", "of", "to", "in", "on", "is", "it", "this", "that", "so", "i",
+            "you", "we", "with", "for", "at", "but", "be", "are", "was", "just"}
+
+
+def short_headline(text, n=5):
+    """At most n words that still read as a title: when it has to be cut, stop at the last ':' / ',' / '-' / '!' /
+    '?' inside those words, else drop dangling filler words ("GTA 6 FIRST LOOK: OH MY" -> "GTA 6 FIRST LOOK")."""
+    words = str(text or "").split()
+    if len(words) <= n:
+        return " ".join(words)
+    head = words[:n]
+    stops = [i for i, w in enumerate(head) if w[-1] in ":,;-!?" or w in ("-", "|")]
+    if stops and stops[-1] >= 1:
+        head = head[:stops[-1] + 1]
+    while len(head) > 2 and head[-1].lower().strip(":,;-!?|") in WEAK_END:
+        head.pop()
+    return " ".join(head).rstrip(":,;-| ")
 
 
 def validate(clips, candidates, counts):
