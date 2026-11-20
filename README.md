@@ -421,9 +421,16 @@ record piece 1 ──▶ record piece 2 ──▶ record piece 3 ──▶ ...  
   Videos longer than your limit are clipped, and their titles stay on that video's topic. Shorter ones are posted
   whole as one clip in the same format (header, subtitles), under the video's own title; the AI writes the header
   and hashtags. Videos already done are skipped, so run it again later for the new ones (`channels.py`).
-  **Upload one clip every N minutes, starting at a time you pick:** the clips that are uploaded go into a queue
-  instead of all at once. The best go first, and they show as ⏰ scheduled in Clips (`worker.post_or_queue`; the
+  **Upload one clip every N minutes, starting at a time you pick** (in the channel box, and on the Create form for
+  a single video, stream or file): the clips that are uploaded go into a queue instead of all at once. The best go first, and they show as ⏰ scheduled in Clips (`worker.post_or_queue`; the
   minute timer posts them, autopilot on or off).
+- **Schedule page.** Every post waiting to go up, grouped by day ("Today", "Tomorrow", then the date) and in time
+  order, in your local time.
+  - **Each post shows** the time, a countdown ("in 2 h 15 min"), the thumbnail, the title, its length and score,
+    and where it goes. Posts within the next hour are highlighted.
+  - **On each post:** ▶ Watch (opens the reels at that clip), Change time, ↑ Post now and Don't post.
+  - **At the top:** how many posts are timed, and the next and last post times.
+  - **At the bottom:** clips waiting for an autopilot slot.
 - **Clips page: infinite scroll and "▶ Watch from here".** The Clips page shows 24 clips at a time, and more load
   as you scroll down. Each clip has a "▶ Watch from here" button that opens the full-screen reels at that clip. In
   the reels, a clip's poster loads only when it's near the screen.

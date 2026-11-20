@@ -54,6 +54,8 @@ class NewJob(BaseModel):
     max_chunks: int = Field(0, ge=0, le=500)  # live streams: pieces to record and clip; 0 = until the stream ends
     upload_best: int | None = Field(None, ge=0, le=100)  # upload only the best N shorts (per piece for live / long videos; None = all)
     upload_best_long: int | None = Field(None, ge=0, le=100)  # ... and the best N longs (None = all). Both None = upload every clip
+    post_every: float | None = Field(None, ge=0, le=1440)  # upload one clip every N minutes (a queue); None/0 = as soon as made
+    post_from: float | None = None  # epoch seconds: no clip is posted before this
 
 
 class LiveControls(BaseModel):
@@ -152,7 +154,8 @@ def create_job(j: NewJob):
         raise HTTPException(400, "ask for at least one clip")
     jid = db.insert("jobs", url=j.url, shorts=j.shorts, longs=j.longs, auto_upload=int(bool(j.platforms)),
                     platforms=json.dumps(j.platforms), aspect=j.aspect, hq=int(j.hq), mode=j.mode, subtitles=int(j.subtitles), follow=int(j.follow), notes=j.notes.strip(), voiceover=int(j.voiceover), style=j.style,
-                    chunk_minutes=j.chunk_minutes, max_chunks=j.max_chunks, upload_best=j.upload_best, upload_best_long=j.upload_best_long, layout=j.layout, created=time.time())
+                    chunk_minutes=j.chunk_minutes, max_chunks=j.max_chunks, upload_best=j.upload_best, upload_best_long=j.upload_best_long, layout=j.layout,
+                    post_every=j.post_every or None, post_from=j.post_from, created=time.time())
     worker.start(jid)
     return {"id": jid}
 
@@ -221,7 +224,8 @@ async def create_file_job(request: Request, filename: str, shorts: int = 3, long
                           platforms: str = "youtube", mode: Mode = "hype", aspect: float = CROP_ASPECT,
                           subtitles: bool = True, voiceover: bool = False, layout: str = "", follow: bool = True,
                           notes: str = "", style: Literal["clean", "full"] = "full",
-                          upload_best: int | None = Query(None, ge=0, le=100), upload_best_long: int | None = Query(None, ge=0, le=100)):
+                          upload_best: int | None = Query(None, ge=0, le=100), upload_best_long: int | None = Query(None, ge=0, le=100),
+                          post_every: float | None = Query(None, ge=0, le=1440), post_from: float | None = None):
     """Raw file bytes in the body (no multipart, so no python-multipart dependency)."""
     plats = [p for p in platforms.split(",") if p in social.PLATFORMS]  # comma-separated in the query string
     ext = Path(filename).suffix.lower()
@@ -229,6 +233,7 @@ async def create_file_job(request: Request, filename: str, shorts: int = 3, long
         raise HTTPException(400, f"unsupported file type {ext or '(none)'}")
     jid = db.insert("jobs", url=f"file:{Path(filename).name}", title=Path(filename).stem, shorts=shorts,
                     longs=longs, auto_upload=int(bool(plats)), platforms=json.dumps(plats), aspect=min(max(aspect, 0.5625), 16 / 9), layout=layout if layout.startswith("split:") or render.cam_layout(layout) else "", mode=mode, subtitles=int(subtitles), follow=int(follow), notes=notes.strip()[:1000], voiceover=int(voiceover), style=style, upload_best=upload_best, upload_best_long=upload_best_long,
+                    post_every=post_every or None, post_from=post_from,
                     status="uploading", created=time.time())
     d = DATA / "jobs" / str(jid)
     d.mkdir(parents=True, exist_ok=True)

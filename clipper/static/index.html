@@ -30,6 +30,17 @@
   .meter { height:8px; background:var(--line); border-radius:99px; overflow:hidden; }
   .meter > span { display:block; height:100%; background:var(--ok); }
   .meter.warn > span { background:var(--warn); } .meter.full > span { background:#f44; }
+  /* Schedule page: days, then a timeline of posts */
+  .sday { margin:18px 0 8px; display:flex; align-items:baseline; gap:10px; border-bottom:1px solid var(--line); padding-bottom:6px; }
+  .sday:first-child { margin-top:0; } .sday h3 { margin:0; font-size:20px; } .sday .dim { font-size:13px; }
+  .sitem { display:grid; grid-template-columns:86px 64px 1fr; gap:14px; align-items:center; padding:10px; border-radius:10px;
+    border:1px solid var(--line); background:var(--bg); margin-bottom:8px; }
+  .sitem.soon { border-color:var(--hot); box-shadow:0 0 0 1px var(--hot) inset; }
+  .sitem .when { font-size:22px; font-weight:800; line-height:1.1; } .sitem .when small { display:block; font-size:12px; font-weight:400; color:var(--dim); }
+  .sitem .thumb { width:64px; aspect-ratio:9/16; object-fit:cover; border-radius:6px; background:#000; cursor:pointer; }
+  .sitem .t { font-weight:700; } .sitem .acts { display:flex; gap:6px; flex-wrap:wrap; margin-top:6px; align-items:center; }
+  .sitem .acts button { padding:4px 10px; font-size:12px; }
+  @media (max-width:600px) { .sitem { grid-template-columns:64px 1fr; } .sitem .when { grid-column:1 / -1; } }
   .chip { font-size:12px; padding:3px 8px; border-radius:99px; border:1px solid var(--line); color:var(--dim); text-decoration:none; }
   .chip.warn { color:var(--warn); border-color:#5a4410; } .chip.full { color:#f66; border-color:#5a2a2a; }
   #logbox { max-height:70vh; min-height:300px; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:10px;
@@ -226,6 +237,7 @@
     <a href="#campaigns">Campaigns<span class="n" id="n-campaigns"></span></a>
     <a href="#jobs">Jobs<span class="n" id="n-jobs"></span></a>
     <a href="#clips">Clips<span class="n" id="n-clips"></span></a>
+    <a href="#schedule">Schedule<span class="n" id="n-schedule"></span></a>
     <a href="#socials">Socials<span class="n" id="n-socials"></span></a>
     <a href="#news">News<span class="n" id="n-news"></span></a>
     <a href="#reports">Reports</a>
@@ -265,6 +277,8 @@
       <label class="check" title="Downloads up to 4K instead of 1440p (the default). Sharper, mostly for full-screen 9:16 framing and facecam crops, but about 4x the data, so slower."><input type="checkbox" name="hq"> 4K quality (slower download)</label>
       <label class="check full-only"><input type="checkbox" name="voiceover"> AI voice-over</label>
       <label title="Upload only the best N clips (by the AI's score); the rest are just clipped and wait in Clips, where you can upload them by hand. Live streams and long videos (cut in pieces): the best of EACH piece, right after it's clipped. Empty = upload every clip as soon as it's made. 0 = upload none of that kind.">Upload only the best<input type="number" name="upload_best" min="0" max="100" placeholder="all" style="width:60px"> shorts<input type="number" name="upload_best_long" min="0" max="100" placeholder="all" style="width:60px" title="Upload only the best N long clips. Empty = all of them, 0 = none."> long</label>
+      <label title="Clips that are uploaded go into a queue: one every this many minutes (best first), so they don't all go up at once. They show as scheduled (⏰) in Clips. Empty or 0 = upload each one as soon as it's made.">Upload one clip every<input type="number" name="post_every" min="0" max="1440" placeholder="now" style="width:70px"> min</label>
+      <label title="No clip is posted before this time (then one every N minutes, if set). Empty = right away.">Start posting at<input type="datetime-local" name="post_from"></label>
       <label style="flex-basis:100%">Tell the AI (optional)<textarea name="notes" rows="2" maxlength="1000" style="width:min(640px,100%)" placeholder="e.g. only the funny fails and police chases; no swearing in titles; skip the intro"></textarea><span class="dim" style="font-size:12px;display:block">Goes into the AI's prompt as your own instructions: which moments to pick, titles and headlines.</span></label>
       <fieldset class="pf" data-default="youtube"><legend>Upload to (none = don't upload)</legend></fieldset>
       <fieldset class="livef"><legend>If it's a live stream</legend>
@@ -488,6 +502,10 @@
     <div class="dim" id="clipMore" style="text-align:center;padding:16px;font-size:13px"></div></section>
  </div>
 
+ <div class="page" id="page-schedule">
+  <div class="page-head"><h2>Schedule</h2><p>Every post waiting to go up, by day and time (your local time). Change a time, post one now, or take it off.</p></div>
+  <section class="panel"><div id="schedSum" class="row" style="margin-bottom:14px;gap:10px;flex-wrap:wrap"></div><div id="sched"></div></section>
+ </div>
  <div class="page" id="page-news">
   <div class="page-head"><h2>News & facts posts</h2><p>Give a topic (e.g. "GTA 5"), or leave it empty to use the autopilot's
     niche / what your views say works / what's trending. It searches news portals (Google News, Bing News), reads the
@@ -668,6 +686,8 @@ $("#f").onsubmit = async e => {
   const f = new FormData(e.target), file = f.get("file");
   const opts = {shorts: +f.get("shorts"), longs: +f.get("longs"), ...framing(e.target), hq: f.has("hq"), mode: f.get("mode"), subtitles: f.has("subtitles"), follow: f.has("follow"), voiceover: f.has("voiceover"), notes: f.get("notes") || "", style: f.get("style")};
   const best = Object.fromEntries(["upload_best", "upload_best_long"].filter(k => f.get(k) !== "").map(k => [k, +f.get(k)]));
+  if (+f.get("post_every")) best.post_every = +f.get("post_every");  // the upload queue
+  if (f.get("post_from")) best.post_from = new Date(f.get("post_from")).getTime() / 1000;
   const live = {chunk_minutes: +f.get("chunk_minutes"), max_chunks: +f.get("max_chunks")};
   const btn = e.target.querySelector("button");
   let r;
@@ -1404,6 +1424,76 @@ async function schedSave(e, id) {
   if (!r.ok) return say((await r.json()).detail);
   schedOpenIds.delete(id); clipKey = ""; refresh();
 }
+// ---- Schedule page: every timed post by day and time, the autopilot's waiting ones after ----
+let schedKey = "";
+const schedDay = t => {
+  const d = new Date(t * 1000), today = new Date(); today.setHours(0, 0, 0, 0);
+  const diff = Math.round((new Date(d).setHours(0, 0, 0, 0) - today) / 864e5);
+  return diff === 0 ? "Today" : diff === 1 ? "Tomorrow" : diff === -1 ? "Yesterday (overdue)" : d.toLocaleDateString([], {weekday: "long", day: "numeric", month: "long"});
+};
+const until = t => {
+  const m = Math.round((t * 1000 - Date.now()) / 60000);
+  return m < 1 ? (m > -2 ? "posting now…" : `overdue ${-m} min`) : m < 60 ? `in ${m} min` : m < 1440 ? `in ${Math.floor(m / 60)} h ${m % 60} min` : `in ${Math.round(m / 1440)} days`;
+};
+function renderSchedule(s) {
+  const timed = s.clips.filter(c => c.status === "timed" && c.post_at).sort((a, b) => a.post_at - b.post_at);
+  const waiting = s.clips.filter(c => ["scheduled", "paused (streamer live)"].includes(c.status));
+  $("#n-schedule").textContent = timed.length + waiting.length || "";
+  const key = JSON.stringify([timed.map(c => [c.id, c.post_at, c.post_to, c.title]), waiting.map(c => [c.id, c.status]), [...schedOpenIds], Math.floor(Date.now() / 60000)]);
+  if (key === schedKey || $("#sched").contains(document.activeElement) && document.activeElement.matches("input")) return;
+  schedKey = key;
+  const jobs = Object.fromEntries(s.jobs.map(j => [j.id, j]));
+  const to = c => (c.post_to ? JSON.parse(c.post_to) : JSON.parse((jobs[c.job_id] || {}).platforms || "[]"));
+  const next = timed[0];
+  $("#schedSum").innerHTML = timed.length || waiting.length
+    ? `<span class="chip">⏰ ${timed.length} timed post(s)</span>`
+      + (next ? `<span class="chip" style="color:var(--text)">next: <b>${new Date(next.post_at * 1000).toLocaleString([], {weekday: "short", hour: "2-digit", minute: "2-digit"})}</b> (${until(next.post_at)})</span>` : "")
+      + (timed.length ? `<span class="chip">last: ${new Date(timed.at(-1).post_at * 1000).toLocaleString([], {weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit"})}</span>` : "")
+      + (waiting.length ? `<span class="chip">🤖 ${waiting.length} waiting for an autopilot slot</span>` : "")
+    : "";
+  const item = c => {
+    const t = new Date(c.post_at * 1000), soon = c.post_at - Date.now() / 1000 < 3600;
+    const thumb = c.path ? (isPhoto(c) ? `<img class="thumb" src="/media/${esc(c.path)}" loading="lazy" onclick="openReels(${c.id})">`
+      : `<img class="thumb" src="/api/clips/${c.id}/poster?v=${clipVer(c)}" loading="lazy" onclick="openReels(${c.id})" title="Watch">`) : `<div class="thumb"></div>`;
+    return `<div class="sitem ${soon ? "soon" : ""}">
+      <div class="when">${t.toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"})}<small>${until(c.post_at)}</small></div>
+      ${thumb}
+      <div><div class="t">${esc(c.title)}</div>
+        <div class="dim" style="font-size:12px">${c.kind === "long" ? "long" : "short"} · ${Math.round(c.end - c.start)}s · score ${Math.round(c.score || 0)} · job #${c.job_id} → ${to(c).map(p => PLATFORMS[p] || p).join(", ") || "nowhere"}</div>
+        <div class="acts">
+          <button class="ghost" onclick="openReels(${c.id})">▶ Watch</button>
+          <button class="ghost" onclick="schedOpen(${c.id})">Change time</button>
+          <button class="ghost" onclick="postNow(${c.id}, '${to(c).join(",")}', this)">↑ Post now</button>
+          <button class="ghost danger" onclick="unschedPost(${c.id})" title="Take it off the schedule: it stays in Clips, not posted">Don't post</button>
+        </div>
+        ${schedOpenIds.has(c.id) ? schedForm(s, c) : ""}
+      </div></div>`;
+  };
+  let html = "", day = "";
+  for (const c of timed) {
+    const d = schedDay(c.post_at);
+    if (d !== day) {
+      day = d;
+      const n = timed.filter(x => schedDay(x.post_at) === d).length;
+      html += `<div class="sday"><h3>${esc(d)}</h3><span class="dim">${n} post${n > 1 ? "s" : ""}</span></div>`;
+    }
+    html += item(c);
+  }
+  if (waiting.length) {
+    html += `<div class="sday"><h3>Waiting for an autopilot slot</h3><span class="dim">posted on the autopilot's next free slot of the day</span></div>`
+      + waiting.map(c => `<div class="sitem"><div class="when">🤖<small>${esc(c.status)}</small></div>
+          ${c.path ? `<img class="thumb" src="/api/clips/${c.id}/poster?v=${clipVer(c)}" loading="lazy" onclick="openReels(${c.id})">` : `<div class="thumb"></div>`}
+          <div><div class="t">${esc(c.title)}</div><div class="acts"><button class="ghost" onclick="openReels(${c.id})">▶ Watch</button>
+          <button class="ghost danger" onclick="unschedPost(${c.id})">Don't post</button></div></div></div>`).join("");
+  }
+  $("#sched").innerHTML = html || `<p class="empty">Nothing scheduled. Set "Upload one clip every … min" or "Start posting at" on the Create page, or ⏰ Schedule a clip from Clips.</p>`;
+}
+async function postNow(id, platforms, btn) {  // off the schedule, then straight up
+  btn.disabled = true; btn.textContent = "Posting…";
+  await post(`/api/clips/${id}/schedule`, {at: null});
+  if (platforms) await post(`/api/clips/${id}/upload?force=true`, platforms.split(","));
+  clipKey = ""; schedKey = ""; refresh();
+}
 function renderPosts(s) {
   const jobs = Object.fromEntries(s.jobs.filter(j => ["news", "fact"].includes(j.kind)).map(j => [j.id, j]));
   const posts = s.clips.filter(c => jobs[c.job_id]), making = Object.values(jobs).filter(j => !["done", "failed"].includes(j.status));
@@ -1700,6 +1790,7 @@ async function refresh() {
   if (location.hash === "#settings" || document.querySelector("select.filler") && !fillers.length) loadFillers();
   loadAuto(s);
   renderPosts(s);
+  renderSchedule(s);
   loadNewsRuns();
   jobBulk(s);
   renderCamps(s);
