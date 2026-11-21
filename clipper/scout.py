@@ -115,6 +115,18 @@ def max_days(category, launch):
     return LAUNCH_DAYS if launch and category == "gaming" else settings.get().topic_max_days
 
 
+def not_english(v):
+    """Why a video is clearly not in English ('' = it may be): YouTube's own language field, or a title that is
+    mostly non-Latin letters. The AI judge drops the rest (e.g. a Spanish title in Latin letters)."""
+    lang = str(v.get("language") or "").lower()
+    if lang and not lang.startswith("en"):
+        return f"not English (YouTube says {lang})"
+    letters = [ch for ch in str(v.get("title") or "") if ch.isalpha()]
+    if letters and sum(ord(ch) > 0x24F for ch in letters) / len(letters) > 0.3:
+        return "not English (title)"
+    return ""
+
+
 def hard_filter(v, now, used=(), category="", days=None):
     """Why the video is out ('' = it stays)."""
     s = settings.get()
@@ -125,6 +137,8 @@ def hard_filter(v, now, used=(), category="", days=None):
         return "clipped before"
     if v.get("live_status") in ("is_live", "is_upcoming"):
         return "live / upcoming"
+    if not_english(v):
+        return not_english(v)
     if not lo * 60 <= d <= s.topic_max_minutes * 60:
         return f"{d / 60:.0f} min long (clipping {lo:g}-{s.topic_max_minutes:g} min videos)"
     if days and h and h > days * 24:
@@ -460,6 +474,9 @@ if __name__ == "__main__":
     V = lambda i, mins, views, hours, live=None, **kw: {"id": i, "duration": mins * 60, "view_count": views,
                                                        "timestamp": NOW - hours * H, "live_status": live, **kw}
     assert hard_filter(V("a", 20, 9000, 5), NOW) == ""
+    assert hard_filter(V("a", 20, 9000, 5, title="GTA 6 ПРОХОЖДЕНИЕ стрим"), NOW) == "not English (title)"
+    assert hard_filter(V("a", 20, 9000, 5, language="es"), NOW).startswith("not English")
+    assert hard_filter(V("a", 20, 9000, 5, language="en-US", title="GTA 6 is insane 😭"), NOW) == ""
     assert "min long" in hard_filter(V("a", 2, 9000, 5), NOW)                       # under the min length
     assert hard_filter(V("a", 4.5, 9000, 5), NOW, category="sports") == ""          # sports show segment: 4 min ok
     assert "days old" in hard_filter(V("a", 20, 9000, 20 * 24), NOW)                # older than 14 days

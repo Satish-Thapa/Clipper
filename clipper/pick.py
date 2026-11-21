@@ -14,7 +14,7 @@ from . import ai, categories, settings
 
 # Clip kinds (all rendered vertical 9:16):
 #   short = a full moment with its context (Settings: short_min-short_max, default 20-90s), long = a longer segment.
-# Every kind is capped at 180s, so every clip is a YouTube Short.
+# A short is never over 180s (a YouTube Short); a long is as long as you set (over 180s: a normal YouTube video).
 KINDS = ("short", "long")
 
 
@@ -25,9 +25,11 @@ def limits():
 
 
 def hard_max():
-    """How far over the max the AI may go when a moment needs a bit more context (setup / payoff), never past 180s."""
+    """How far over the max the AI may go when a moment needs a bit more context (setup / payoff); a short never past
+    180s (YouTube Shorts' limit), a long never past your max + the stretch."""
     s = settings.get()
-    return {k: min(hi + s.stretch, settings.SHORT_HARD_MAX) for k, (_, hi) in limits().items()}
+    return {k: min(hi + s.stretch, settings.SHORT_HARD_MAX) if k == "short" else hi + s.stretch
+            for k, (_, hi) in limits().items()}
 
 
 # What each kind is for, told to DeepSeek.
@@ -46,6 +48,13 @@ SYSTEM = """You are a top short-form clip editor. You have cut thousands of vira
 streams (GTA V / GTA Online / GTA RP, shooters, horror, Minecraft...), IRL streams, podcasts,
 interviews, commentary and tutorials. First work out what kind of video this is from the title and
 transcript, then judge it the way that audience would.
+
+THE CHANNEL OWNER'S PRIORITIES, in this order:
+1. FUNNY CONVERSATIONS: banter, roasts, people talking over each other, a casual chat that turns hilarious, someone
+   saying something absurd with a straight face. A funny back-and-forth beats any action scene.
+2. ATTENTION GRABBERS: a loud scream, a shocked "WHAT?!", genuine surprise, panic, a jump scare, rage. These make the
+   best hooks: open the clip ON the scream / the shock (or one breath before it), never seconds earlier.
+3. Everything else below.
 
 What pops, in any content:
 - Chaos with a payoff: a plan going horribly wrong, a fail at the last second, a ridiculous crash.
@@ -355,13 +364,20 @@ CONFIRM = ("heatmap", "chat", "comments")  # audience signals: loud audio and th
 
 
 def confirm(clips, parts, peak=0.6):
-    """+5 virality (max 99) for each clip where 2+ audience signals peak (>= peak on their 0..1 scale) inside it."""
+    """+5 virality (max 99) for each clip where 2+ audience signals peak (>= peak on their 0..1 scale) inside it;
+    +3 more when it OPENS on a scream: very loud audio together with the streamer's surprise / shout words in its first
+    4 seconds (the owner's favourite hook)."""
     for c in clips:
         s, e = int(c["start"]), max(int(c["start"]) + 1, int(c["end"]))
         hits = [k for k in CONFIRM if len((parts or {}).get(k, ())) > s and float(parts[k][s:e].max()) >= peak]
         if len(hits) >= 2:
             c["score"] = min(99, c["score"] + 5)
             c["confirmed"] = hits
+        loud, react = (parts or {}).get("audio"), (parts or {}).get("reaction")
+        if loud is not None and react is not None and len(loud) > s and len(react) > s \
+                and float(loud[s:s + 4].max()) >= 0.9 and float(react[s:s + 4].max()) >= 0.6:
+            c["score"] = min(99, c["score"] + 3)
+            c["scream_hook"] = True
     return clips
 
 
@@ -468,5 +484,9 @@ if __name__ == "__main__":
     P["heatmap"][20], P["chat"][25] = 0.9, 0.7
     got = confirm([{"start": 10, "end": 30, "score": 97}, {"start": 50, "end": 70, "score": 50}], P)
     assert [g["score"] for g in got] == [99, 50] and got[0]["confirmed"] == ["heatmap", "chat"], got
+    P2 = {"audio": np.zeros(100), "reaction": np.zeros(100)}
+    P2["audio"][31], P2["reaction"][32] = 1.0, 0.8
+    got = confirm([{"start": 30, "end": 60, "score": 50}, {"start": 20, "end": 60, "score": 50}], P2)
+    assert [g["score"] for g in got] == [53, 50] and got[0]["scream_hook"], got  # a scream 11s in is no hook
     assert "CATEGORY RULES:\nPODCAST" in category_note("podcast") and "GAMING" in category_note("")
     print("pick ok")

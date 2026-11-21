@@ -19,7 +19,8 @@ from . import db
 
 Platform = Literal["youtube", "facebook", "instagram", "tiktok"]
 Category = Literal["gaming", "podcast", "sports"]
-SHORT_HARD_MAX = 180  # YouTube Shorts can't be longer than 3 min: no clip of any kind ever exceeds it
+SHORT_HARD_MAX = 180  # YouTube Shorts can't be longer than 3 min: no SHORT ever exceeds it (longs: your limit)
+LONG_LIMIT = 3600  # the longest "long" you can set (an hour); over 180s it posts to YouTube as a normal video
 HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 
@@ -63,15 +64,17 @@ class Settings(BaseModel):
                                     "Sunday). Only kinds you post at all get the extra one.")
     weekend_short_time: str = Field("21:00", description="When the extra weekend short posts.")
     weekend_long_time: str = Field("22:00", description="When the extra weekend long posts.")
-    platforms: list[Platform] = Field(["youtube"], description="Where every slot posts. One slot = one clip, posted "
-                                      "to each of these at that time.")
+    platforms: list[Platform] = Field(["youtube"], description="Where SHORTS post. One slot = one clip, posted to each "
+                                      "of these at that time.")
+    long_platforms: list[Platform] = Field(["youtube"], description="Where LONGS post (can differ from the shorts, e.g. "
+                                           "longs only to YouTube).")
     # ---- clip shape ----
     short_min: int = Field(_env("SHORT_MIN", 20, int), ge=5, le=SHORT_HARD_MAX, description="Shortest short (s).")
     short_max: int = Field(_env("SHORT_MAX", 90, int), ge=10, le=SHORT_HARD_MAX, description="Longest short the AI aims for (s).")
-    long_min: int = Field(_env("LONG_MIN", 90, int), ge=20, le=SHORT_HARD_MAX, description="Shortest long (s).")
-    long_max: int = Field(_env("LONG_MAX", 180, int), ge=30, le=SHORT_HARD_MAX, description="Longest long (s). 180 at most: YouTube Shorts' limit.")
+    long_min: int = Field(_env("LONG_MIN", 90, int), ge=20, le=LONG_LIMIT, description="Shortest long (s).")
+    long_max: int = Field(_env("LONG_MAX", 180, int), ge=30, le=LONG_LIMIT, description="Longest long (s), your call (up to an hour). Over 180s it posts to YouTube as a normal video (still vertical) instead of a Short.")
     stretch: int = Field(_env("STRETCH_SHORT", 10, int), ge=0, le=60, description="Seconds a clip may run over its "
-                         "max when cutting there would lose the setup or the payoff (never past 180s).")
+                         "max when cutting there would lose the setup or the payoff (a short never past 180s).")
     pad_before: float = Field(_env("CLIP_PAD_BEFORE", 0.8), ge=0, le=5, description="Lead-in before the first word (s).")
     pad_after: float = Field(_env("CLIP_PAD_AFTER", 1.5), ge=0, le=5, description="Room after the last word for the reaction to land (s).")
     snap_reach: float = Field(_env("SNAP_REACH", 8.0), ge=0, le=30, description="How far (s) a clip's edge may move "
@@ -83,7 +86,7 @@ class Settings(BaseModel):
                                     description="Live mode: minutes per recorded piece (each piece is clipped while the next records).")
     keep_sources: bool = Field(_env("KEEP_SOURCES", False, bool), description="Keep the downloaded video after "
                                "clipping (0.5-2 GB each). Off = deleted; clips and their master copies stay.")
-    ig_max_seconds: float = Field(_env("IG_MAX_SECONDS", 30.0), ge=0, le=SHORT_HARD_MAX, description="Instagram's "
+    ig_max_seconds: float = Field(_env("IG_MAX_SECONDS", 30.0), ge=0, le=LONG_LIMIT, description="Instagram's "
                                   "API often rejects longer Reels: longer clips skip Instagram (0 = no limit).")
     # ---- the researcher (Auto mode) ----
     topic_min_minutes: float = Field(_env("TOPIC_MIN_MINUTES", 8.0), ge=1, le=600, description="Auto only clips "
@@ -102,7 +105,7 @@ class Settings(BaseModel):
     filler: str = Field("", max_length=200, description="Split layout: the background video (Settings → Background videos).")
     subtitles: bool = Field(True, description="Burn word-by-word subtitles in, the word being said in yellow.")
     header: bool = Field(True, description="Burn the clip's topic in big letters (e.g. \"SPEED FAILS THE HEIST 😭\"): in the middle when the streamer is on top, else at the top.")
-    hq: bool = Field(False, description="Download up to 4K instead of 1440p (slower, sharper source).")
+    logo: bool = Field(True, description="Your logo (clipper/assets/logo.png), small, in the top-right corner of every clip.")
     notes: str = Field("", max_length=1000, description="Tell the AI: your own instructions for picking and writing, "
                        "used by every mode (a video can add its own).")
     # ---- Auto mode ----
@@ -139,7 +142,7 @@ class Settings(BaseModel):
             raise ValueError("weekend days are 0 (Monday) to 6 (Sunday)")
         return sorted(set(v))
 
-    @field_validator("platforms")
+    @field_validator("platforms", "long_platforms")
     @classmethod
     def _plats(cls, v):
         return list(dict.fromkeys(v))
@@ -152,9 +155,9 @@ class Settings(BaseModel):
                         f"{len(self.short_times)} given")
         if len(self.long_times) != self.longs_per_day:
             errs.append(f"{self.longs_per_day} longs a day need {self.longs_per_day} long time(s), {len(self.long_times)} given")
-        if self.shorts_per_day and self.weekend_short_time in self.short_times:
+        if self.weekend_days and self.shorts_per_day and self.weekend_short_time in self.short_times:
             errs.append("the weekend short time is already a short slot")
-        if self.longs_per_day and self.weekend_long_time in self.long_times:
+        if self.weekend_days and self.longs_per_day and self.weekend_long_time in self.long_times:
             errs.append("the weekend long time is already a long slot")
         if self.short_min >= self.short_max:
             errs.append("short min must be below short max")
@@ -172,11 +175,17 @@ class Settings(BaseModel):
             errs.append("the split layout needs a background video")
         if self.auto_enabled and not self.auto_rows:
             errs.append("Auto needs at least one topic")
-        if self.auto_enabled and not self.platforms:
+        if self.auto_enabled and not (self.platforms or self.long_platforms):
             errs.append("Auto needs at least one platform to post to")
         if errs:
             raise ValueError("; ".join(errs))
         return self
+
+
+def platforms_for(kind, s=None):
+    """Where a clip of this kind posts (Settings: shorts / longs)."""
+    s = s or get()
+    return s.long_platforms if kind == "long" else s.platforms
 
 
 _cache, _lock = {}, threading.Lock()

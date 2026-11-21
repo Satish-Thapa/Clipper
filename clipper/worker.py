@@ -102,7 +102,7 @@ def describe_job(job):
     return (f"{job.get('mode') or 'normal'} mode | {job['shorts']} shorts + {job['longs']} long"
             + (" per piece" if job.get("mode") == "live" else "") + f", {frame}, "
             f"header {'on' if job.get('header', 1) else 'off'}, subtitles {'on' if job.get('subtitles', 1) else 'off'}, "
-            f"{'4K' if job.get('hq') else 'up to 1440p'}, "
+            f"4K source + 4K clip, "
             + ("fills today's free slots with its best clips" if job.get("fill") else "clips wait in Clips"))
 
 
@@ -391,6 +391,7 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None, live=No
         # STEP 2: the hype curve: heatmap x3, chat x2, comments x1.5, loudness x1, each normalised 0..1.
         curve, parts = signals.hype_curve(n, audio, heatmap, chat, comments)
         say(f"STEP 2 hype curve: {n}s analysed, signals used: {', '.join(parts) or 'none'}")
+        _save_curves(d, src, curve, parts)  # the Jobs page draws it while the rest runs
         # STEP 3: candidate windows from the curve: only the fallback when the AI fails.
         asked = {"short": job["shorts"], "long": job["longs"]}
         counts = pick.fit_counts(asked, n)
@@ -438,6 +439,7 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None, live=No
         for c in chosen:
             say(f"picked {c['kind']} {_mmss(c['start'])}-{_mmss(c['end'])} score {c['score']}"
                 + (f" (+5: {' + '.join(c['confirmed'])} agree)" if c.get("confirmed") else "")
+                + (" (+3: opens on a scream)" if c.get("scream_hook") else "")
                 + (f", {(c.get('meta') or {}).get('moment')}" if (c.get("meta") or {}).get("moment") else "")
                 + f": \"{c['title']}\" [{c.get('headline', '')}] {' '.join('#' + t for t in c['tags'])} | {c['reason']}")
         # Snap every pick out to whole sentences, then breathing room, never past the hard max (Shorts: 3 min).
@@ -452,6 +454,7 @@ def _process(job, src, title, d, heatmap=None, chat=None, comments=None, live=No
         by = ai.LAST.model or "", ai.LAST.link or ""
         for c in chosen:
             c["why"] = _why(c, parts, words, by, live, B, title)
+        _save_curves(d, src, curve, parts, chosen)  # now with the picked clips marked on the graph
         # STEP 6: render each clip (two at a time).
         return _render_clips(job, src, d, chosen, words)
     except Stopped:
@@ -531,7 +534,7 @@ def _why(c, parts, words, by, live, boundary, title):
             "score": c.get("score"), "signals": sig, "stretched": str(c.get("reason", "")).startswith("STRETCHED"),
             "opening": " ".join(lines[0].split()[:40]) if lines else "", "closing": " ".join(lines[-1].split()[:40]) if len(lines) > 1 else "",
             "piece": live["piece"] if live else None, "joined": bool(live and c["start"] < boundary), "source": title,
-            **(c.get("meta") or {}), "confirmed": c.get("confirmed") or []}
+            **(c.get("meta") or {}), "confirmed": c.get("confirmed") or [], "scream_hook": bool(c.get("scream_hook"))}
 
 
 def _render_one(job, src, d, c, words):
@@ -552,6 +555,11 @@ def _render_one(job, src, d, c, words):
             raise
     db.log(jid, f"clip #{cid} ready: {out.name}, {out.stat().st_size / 1e6:.1f} MB")
     keep_master(jid, src, out, c["start"], c["end"], words)  # so its header can be changed later
+    try:  # the light copy + poster the app plays, made now so scrolling the reels never waits for an encode
+        render.preview(out, d / "previews", str(cid))
+        render.preview(out, d / "previews", str(cid), poster=True)
+    except Exception as e:
+        db.log(jid, f"clip #{cid}: couldn't make its preview now ({e!r}); it's made when first played")
     db.update("clips", cid, path=str(out.relative_to(DATA)), status="rendered")
     return cid
 
@@ -641,6 +649,19 @@ def _rerender(cid, before):
         db.log(jid, f"re-rendering #{cid} failed, the old video stays: {ex!r}", exc=True)
 
 
+def _save_curves(d, src, curve, parts, chosen=()):
+    """Per-second curves (all 0..1) + the picked clips for the Jobs page graph: data/jobs/<id>/curves_<file>.json
+    (not "source.*.json": that would match the glob that finds the source video)."""
+    top = float(curve.max()) if len(curve) and curve.max() > 0 else 1.0
+    data = {"name": src.name, "n": len(curve),
+            "signals": {k: [round(float(x), 2) for x in v] for k, v in {"hype": curve / top, **parts}.items()},
+            "chosen": [{k: c[k] for k in ("kind", "start", "end", "title")} for c in chosen]}
+    out = d / f"curves_{src.stem}.json"
+    tmp = out.with_suffix(".tmp")  # write-then-rename so the page never reads a half-written file
+    tmp.write_text(json.dumps(data))
+    tmp.replace(out)
+
+
 def _mmss(sec):
     return f"{int(sec // 60)}:{int(sec % 60):02d}"
 
@@ -659,24 +680,27 @@ def _describe(src):
         return ""
 
 
-def upload_clip(cid, platforms=None, force=False):
-    """Post a clip to `platforms` (default: Settings → platforms). Platforms that already have it are skipped, so
+def upload_clip(cid, platforms=None, force=False, bypass=False):
+    """Post a clip to `platforms` (default: where its kind posts, Settings: shorts / longs). Platforms that already have it are skipped, so
     pressing it again only retries the failed ones.
 
     The daily quota is checked here for EVERY platform (quota.can_post): this is the one path every upload takes
     (slots, Post now, retries), so no platform ever gets more clips of a kind in a day than that day's slots.
     A platform at its own API limit (social.limit_timers) is skipped unless force. force also tries Instagram on
-    clips over Settings → ig_max_seconds. If nothing went up anywhere, the clip gives its slot back."""
+    clips over Settings → ig_max_seconds. If nothing went up anywhere, the clip gives its slot back.
+    bypass (the Clips page's Force upload, your explicit choice): skips the daily quota too; it's logged as such."""
     c = db.get("clips", cid)
     s = settings.get()
-    platforms = platforms or s.platforms
+    platforms = platforms or settings.platforms_for(c["kind"], s)
     done = json.loads(c.get("uploads") or "{}")
     limited = social.limit_timers()
     db.update("clips", cid, status="uploading")
     for p in platforms:
         if done.get(p, {}).get("id"):
             continue
-        why = quota.can_post(c, p)
+        why = "" if bypass else quota.can_post(c, p)
+        if bypass and quota.can_post(c, p):
+            db.log(c["job_id"], f"#{cid} FORCE UPLOAD to {p}, past the daily quota ({quota.can_post(c, p)})")
         if why:
             db.log(c["job_id"], f"#{cid} not posted to {p}: {why}")
             continue

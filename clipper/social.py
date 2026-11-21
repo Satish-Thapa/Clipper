@@ -145,7 +145,7 @@ def upload(platform, path, title, description, tags, seconds, caption=None):
     # description carry the search). Instagram/TikTok: 5. Facebook: 3.
     tags = tags[:HASHTAGS[platform]]
     if platform == "youtube":
-        vid = youtube.upload(path, title, description, tags, short=True)  # every clip is vertical and <= 180s
+        vid = youtube.upload(path, title, description, tags, short=seconds <= 180)  # over 3 min: a normal video, not a Short
         return {"id": vid, "url": f"https://youtu.be/{vid}"}
     caption = "\n\n".join(x for x in (title, description, " ".join(f"#{t}" for t in tags)) if x)
     if is_photo(path):
@@ -238,8 +238,9 @@ def _instagram(path, title, caption, seconds):
     from pathlib import Path
     from . import render
     from .config import IG_BITRATE, IG_MAX_MBPS
-    if render.bitrate_mbps(path) > IG_MAX_MBPS:  # Instagram rejects Reels over 25 Mbps: send a lighter copy
-        path = render.reencode(path, Path(path).with_name(Path(path).stem + "_ig.mp4"), IG_BITRATE)
+    # Instagram rejects Reels over 25 Mbps or wider than 1920px: the 4K clip goes as a 1080x1920 copy
+    if render.bitrate_mbps(path) > IG_MAX_MBPS or render.width_of(path) > 1080:
+        path = render.reencode(path, Path(path).with_name(Path(path).stem + "_ig.mp4"), IG_BITRATE, 1080)
     c = _ok(httpx.post(f"{GRAPH}/{IG_USER_ID}/media", timeout=TIMEOUT,
                        data={"media_type": "REELS", "upload_type": "resumable", "caption": caption[:2200],
                              "share_to_feed": "true", "access_token": IG_TOKEN}))["id"]

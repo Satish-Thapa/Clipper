@@ -53,6 +53,7 @@ def upload(path, title, description, tags, short, privacy="public"):
         req = yt.videos().insert(
             part="snippet,status",
             body={"snippet": {"title": title[:100], "description": description[:5000], "tags": tags,
+                              "defaultLanguage": "en", "defaultAudioLanguage": "en",  # English, for a US audience
                               "categoryId": "20"},  # 20 = Gaming
                   "status": {"privacyStatus": privacy, "selfDeclaredMadeForKids": False}},
             media_body=MediaFileUpload(str(send), chunksize=-1, resumable=True))

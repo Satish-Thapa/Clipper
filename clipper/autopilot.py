@@ -149,7 +149,7 @@ def _row(i, row, s, history, auto_cids):
         db.update("topics", tid, status=f"clipping {k}/{len(videos)}")
         jid = db.insert("jobs", url=f"https://www.youtube.com/watch?v={v['id']}", title=v.get("title"), mode="auto",
                         auto_row=i, topic_id=tid, category=row.category, shorts=shorts, longs=longs,
-                        layout=layout_of(s), header=int(s.header), subtitles=int(s.subtitles), hq=int(s.hq),
+                        layout=layout_of(s), header=int(s.header), subtitles=int(s.subtitles),
                         notes="", fill=0, auto_upload=0, created=time.time())
         say(f"video {k}/{len(videos)} -> job #{jid}: {v.get('title')} (scout {v['scout_score']}/100)")
         CURRENT["job"] = jid

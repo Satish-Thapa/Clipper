@@ -82,10 +82,10 @@ def cookies_state():
 FRAGMENTS = 8  # YouTube throttles each connection; fetching 8 chunks at once is several times faster
 
 
-def height_for(hq):
-    """Source quality: up to 1440p by default (a 9:16 slice / facecam crop is blown up to 1080 wide, so more source
-    pixels = a sharper clip; a 1080p video downloads as before), up to 4K with the "4K quality" box (~4x the data)."""
-    return 2160 if hq else 1440
+def height_for(hq=None):
+    """Source quality: always the best there is, up to 4K (2160p). Clips render at 4K, and every source pixel makes
+    a crop or a facecam blow-up sharper. (hq is from before 4K was the only choice: ignored.)"""
+    return 2160
 
 
 def fmt(height):

@@ -176,7 +176,7 @@ def fill(cids, row=None, say=None, only=None):
                 db.update("clips", c["id"], status="scheduled", post_at=slot["at"])
                 c.update(status="scheduled", post_at=slot["at"])
                 given[c["id"]] = slot["at"]
-                say(f"clip #{c['id']} (score {c.get('score') or 0:.0f}) gets today's {slot['time']} {kind} slot")
+                say(f"clip #{c['id']} (score {c.get('score') or 0:.0f}) gets today's {t12(slot['time'])} {kind} slot")
             if len(want) > budget:
                 say(f"{len(want) - budget} {kind}(s) wait in Clips: "
                     + ("no free slot left today" if not free else f"today's free {kind} slots are kept for Auto topics"
@@ -186,8 +186,15 @@ def fill(cids, row=None, say=None, only=None):
 
 # ---------- by hand ----------
 
-def assign(cid, slot_at, now=None):
-    """Put a clip into the slot at `slot_at` (any day). Raises ValueError saying why it can't."""
+def t12(hhmm):
+    """'18:30' -> '6:30 PM' (what the owner reads)."""
+    return datetime.strptime(hhmm, "%H:%M").strftime("%I:%M %p").lstrip("0")
+
+
+def assign(cid, slot_at, now=None, swap=False):
+    """Put a clip into the slot at `slot_at` (any day, never a passed one, same kind only). Raises ValueError saying
+    why it can't. swap (drag and drop on the Slots page): a clip already in that slot changes places with this one
+    (it goes to this clip's old slot, or back to Clips when this one wasn't in a slot)."""
     now = now or time.time()
     with _LOCK:
         c = db.get("clips", cid)
@@ -201,14 +208,21 @@ def assign(cid, slot_at, now=None):
         if not slot:
             raise ValueError("there's no slot at that time (Settings → Slots)")
         if slot["kind"] != kind_of(c):
-            raise ValueError(f"that's a {slot['kind']} slot and this clip is a {kind_of(c)}")
+            raise ValueError(f"that's a {slot['kind']} slot and this clip is a {kind_of(c)}: shorts go in short slots, longs in long slots")
         if slot["at"] <= now + LEAD:
-            raise ValueError("that slot has passed: use Post now (it uses one of today's free slots)")
+            raise ValueError("that slot's time has passed: pick a later one")
         h = holder(slot, db.all("clips"))
         if h and h["id"] != cid:
-            raise ValueError(f"clip #{h['id']} already has that slot")
+            if not swap:
+                raise ValueError(f"clip #{h['id']} already has that slot")
+            if posted_ok(h) or h["status"] == "uploading":
+                raise ValueError("the clip in that slot is already posting")
+            old = c["post_at"] if c["status"] == "scheduled" and c.get("post_at") and c["post_at"] > now + LEAD else None
+            db.update("clips", h["id"], status="scheduled" if old else "rendered", post_at=old)
+            db.log(h["job_id"], f"clip #{h['id']} swapped out of its slot by clip #{cid}"
+                                + (f": it moves to {datetime.fromtimestamp(old):%a %d %b %I:%M %p}" if old else ": it waits in Clips"))
         db.update("clips", cid, status="scheduled", post_at=slot["at"])
-    db.log(c["job_id"], f"clip #{cid} placed in the {slot['time']} {slot['kind']} slot of {day_of(slot['at']):%a %d %b}")
+    db.log(c["job_id"], f"clip #{cid} placed in the {t12(slot['time'])} {slot['kind']} slot of {day_of(slot['at']):%a %d %b}")
     return db.get("clips", cid)
 
 
@@ -221,8 +235,9 @@ def unassign(cid, why="taken off its slot"):
 
 
 def claim_now(cid, now=None):
-    """Post now: the clip takes one of TODAY's free slots of its kind (its own, if it already has one today; else the
-    earliest free one, passed or not). -> the slot. Raises ValueError when today's are all taken."""
+    """Post now: the clip takes one of TODAY's upcoming free slots of its kind (its own, if it already has one today;
+    else the next free one; a slot whose time has passed is never used). -> the slot. Raises ValueError when there's
+    none left today."""
     now = now or time.time()
     with _LOCK:
         c = db.get("clips", cid)
@@ -232,10 +247,10 @@ def claim_now(cid, now=None):
             raise ValueError("already posted: use Retry for the platforms that failed")
         today, kind, clips = day_of(now), kind_of(c), db.all("clips")
         mine = next((x for x in plan(today) if x["kind"] == kind and c.get("post_at") and abs(x["at"] - c["post_at"]) < 1), None)
-        free = [x for x in plan(today) if x["kind"] == kind and not holder(x, clips)]
+        free = [x for x in plan(today) if x["kind"] == kind and x["at"] > now and not holder(x, clips)]
         slot = mine or (free[0] if free else None)
         if not slot:
-            raise ValueError(f"today's {limit(today, kind)} {kind} slot(s) are all used: place it in a later slot")
+            raise ValueError(f"no free {kind} slot left today (today's {limit(today, kind)} are used or passed): put it in a later slot")
         db.update("clips", cid, status="scheduled", post_at=slot["at"])
         return slot
 
@@ -247,9 +262,9 @@ def tick(upload, now=None):
     today = day_of(now)
     for c in sorted(db.all("clips", f"status='scheduled' AND post_at <= {now:.0f}"), key=lambda c: c["post_at"]):
         if day_of(c["post_at"]) < today:
-            unassign(c["id"], f"missed its slot ({datetime.fromtimestamp(c['post_at']):%a %d %b %H:%M}, the app was off)")
+            unassign(c["id"], f"missed its slot ({datetime.fromtimestamp(c['post_at']):%a %d %b %I:%M %p}, the app was off)")
             continue
-        db.log(c["job_id"], f"slot time {datetime.fromtimestamp(c['post_at']):%H:%M}: posting #{c['id']}")
+        db.log(c["job_id"], f"slot time {datetime.fromtimestamp(c['post_at']):%I:%M %p}: posting #{c['id']}")
         upload(c["id"])
 
 
@@ -281,7 +296,8 @@ def calendar(days=7, now=None):
             slots.append({**x, "state": state, "reserved": res,
                           "clip": c and {k: c.get(k) for k in ("id", "title", "headline", "kind", "score", "path", "uploads", "status")}})
         out.append({"day": day.isoformat(), "weekday": day.strftime("%a"), "weekend": is_weekend(day, s), "slots": slots,
-                    "used": {kind: max(posted(day, kind, p, clips) for p in s.platforms) if s.platforms else 0 for kind in KINDS},
+                    "used": {kind: max([posted(day, kind, p, clips) for p in settings.platforms_for(kind, s)] or [0])
+                             for kind in KINDS},
                     "limit": {kind: limit(day, kind, s) for kind in KINDS}})
     return out
 
@@ -329,13 +345,27 @@ if __name__ == "__main__":
     unassign(a)
     assert db.get("clips", a)["status"] == "rendered"
     # post now takes the earliest free slot of today; when they're all held, it refuses
-    assert claim_now(a, at(mon, "12:00"))["time"] == "10:00"   # passed but unused: Post now may use it
-    assert claim_now(b, at(mon, "12:00"))["time"] == "18:00"
+    assert claim_now(a, at(mon, "12:00"))["time"] == "18:00"   # 10:00 passed: never used, the next free one is
     try:
-        claim_now(c3, at(mon, "12:00"))
-        raise AssertionError("third short today")
+        claim_now(b, at(mon, "12:00"))
+        raise AssertionError("no upcoming short slot left today")
     except ValueError as e:
-        assert "all used" in str(e)
+        assert "no free short slot left today" in str(e)
+    db.update("clips", a, post_at=at(mon, "10:00"))  # the rest of the test: a holds 10:00, b holds 18:00
+    db.update("clips", b, status="scheduled", post_at=at(mon, "18:00"))
+    # drag and drop: swap two slotted clips; a ready clip dropped on a taken slot sends that one back to Clips
+    tue = mon + timedelta(days=1)
+    assign(c3, at(tue, "10:00"), now)
+    x = C(score=60)
+    assign(x, at(tue, "18:00"), now)
+    assign(c3, at(tue, "18:00"), now, swap=True)
+    assert db.get("clips", c3)["post_at"] == at(tue, "18:00") and db.get("clips", x)["post_at"] == at(tue, "10:00")
+    y = C(score=55)
+    assign(y, at(tue, "10:00"), now, swap=True)
+    assert db.get("clips", x)["status"] == "rendered" and db.get("clips", y)["post_at"] == at(tue, "10:00")
+    for cid in (c3, x, y):
+        db.update("clips", cid, status="rendered", post_at=None)
+    assert t12("18:30") == "6:30 PM" and t12("09:05") == "9:05 AM"
     # tick: due today -> uploaded; an earlier day's slot -> back to Clips
     sent = []
     fake = lambda cid: (sent.append(cid), db.update("clips", cid, status="uploaded", uploads=up("youtube", at(mon, "12:00"))))

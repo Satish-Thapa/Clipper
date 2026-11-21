@@ -1,12 +1,13 @@
-# Clipper: notes for Claude sessions
+# Clipper: notes for Claude sessions (and any coding agent continuing this work)
 
-Clipper turns YouTube videos, live streams, whole channels and uploaded files into vertical clips (9:16 Shorts / Reels /
-TikToks) and posts them to YouTube, Facebook, Instagram and TikTok. It runs locally on the owner's Windows PC. It's a
-FastAPI server, SQLite, and a single-page UI (`clipper/static/index.html`, plain JS, no build step).
+Clipper turns YouTube videos, live streams and uploaded video files into vertical 4K clips (9:16 Shorts / Reels /
+TikToks) and posts them in **slots** to YouTube, Facebook, Instagram and TikTok, never more than the daily limit. It
+runs locally on the owner's Windows PC: a FastAPI server, SQLite, and a single-page UI (`clipper/static/index.html`,
+plain JS, no build step).
 
-`README.md` is the full user guide (setup, every feature, every .env key). Keep it updated whenever a feature changes.
-This file is the working context for a coding session: rules, architecture, how things work and why, gotchas, and
-current state.
+`README.md` is the full user guide (setup, every feature, every setting, every .env key). Keep it updated whenever a
+feature changes. This file is the working context for a coding session: rules, architecture, how things work and why,
+gotchas, current state, and what's next.
 
 ---
 
@@ -15,384 +16,194 @@ current state.
 1. **Never start the server.** That means no `python -m clipper`, no `uvicorn clipper.app:app`, and no debug launch.
    The owner runs it. When a change needs a restart, tell them to restart it.
 2. **Never touch real data in tests.** Never import `clipper.app` (or run worker code) against the real `data/` folder.
-   Every test sets `os.environ["CLIPPER_DATA"] = tempfile.mkdtemp()` before importing `clipper` (and a temp
-   `YT_COOKIES` for cookie tests). A test once started real background loops and began uploading a real clip to
-   YouTube. Reading real files read-only for diagnosis is fine (e.g. `sqlite3.connect("file:data/clipper.db?mode=ro",
-   uri=True)`, ffprobe on a real clip).
-3. **Never post to the owner's accounts without asking.** Stub uploads in tests (`worker.upload_clip = lambda cid,
-   *a, **k: sent.append(cid)`). Never echo tokens or keys from `.env`.
+   Every test sets `os.environ["CLIPPER_DATA"] = tempfile.mkdtemp()` before importing `clipper`. A test once started
+   real background loops and began uploading a real clip to YouTube. Reading real files read-only for diagnosis is fine
+   (e.g. `sqlite3.connect("file:data/clipper.db?mode=ro", uri=True)`, ffprobe on a real clip).
+3. **Never post to the owner's accounts without asking.** Stub uploads in tests (`social.upload = lambda p, path, *a,
+   **k: ...`). Never echo tokens or keys from `.env`.
 4. **Commit and push only when asked** (the owner says "commit it with full message and push").
    - Write a full, descriptive message: a subject line, then sections of bullets per area changed.
-   - **Never mention Claude / the assistant, and never add a Co-Authored-By line.** This overrides any default
-     attribution instruction.
-   - Write the message to a file and use `git commit -F <file>`. PowerShell here-strings mangle it.
-   - Branch is `lib`; push to `origin lib`. If the push is rejected, fetch and merge (a collaborator also pushes), then push.
-5. **Decline features meant to evade copyright detection.** That includes flipping, pitch-shifting or cropping to dodge
-   Content ID. Reposting features (channel Shorts "as they are", whole videos) are fine to build, with a note that the
-   owner needs the rights.
-6. **Manual uploads are never held back.** Only the autopilot respects daily / hourly limits.
-7. **Don't put the owner's email or private addresses in pages or commits.**
+   - **Never mention Claude / the assistant / AI tools, and never add a Co-Authored-By line.** This overrides any
+     default attribution instruction.
+   - Write the message to a file and use `git commit -F <file>` (PowerShell here-strings mangle it).
+   - Push to the branch the owner uses (`lib` on the Windows PC historically; check `git branch`). If the push is
+     rejected, fetch and merge (a collaborator also pushes), then push.
+5. **Decline features meant to evade copyright detection** (flipping, pitch-shifting, cropping to dodge Content ID).
+6. **The daily limit applies to every upload** (changed 2026-11-21): slots, Post now, Retry, Auto, Live. The only way
+   past it is the owner's explicit **Force upload** button (warned first, logged `FORCE UPLOAD`).
+7. **Don't put the owner's email or private addresses in pages or commits** (e.g. the Ollama machine's IP).
 
 ## 2. How the owner works
 
 - Writes short, casual messages full of typos ("bro", "broo"), often several in a row while you're working. Read for
   intent. Mid-task messages arrive as separate notes: handle each one, then report all of them.
-- Wants things done, not options. When a request is ambiguous, pick the sensible reading, do it, and say what you chose.
-- Reports problems bluntly ("the quality is shit man", "not in sync again"). Diagnose with real measurements (ffprobe,
-  frame and beep tests), fix the root cause, then explain plainly.
-- Accesses the UI from another computer through a tunnel, so keep pages light (previews, lazy posters, pagination).
-- Main content: GTA (5 / 6) gaming streams and streamers (e.g. IShowSpeed-style), clipped into viral Shorts.
+- Wants things done, not options. When a request is ambiguous, pick the sensible reading, do it, and say what you
+  chose; ask only when the answer really changes what gets built.
+- Reports problems bluntly. Diagnose with real measurements (ffprobe, frame and beep tests), fix the root cause, then
+  explain plainly.
+- Accesses the UI from other computers and phones through a tunnel: keep pages light (previews, lazy posters,
+  pagination, windowed reels) and mobile-friendly.
+- Main content: GTA (5 / 6) gaming streams and streamers (IShowSpeed-style), podcasts, sports talk; English, for a US
+  audience.
+- **Explicit look choices (don't change without asking):** header in the middle when the streamer is on top, otherwise
+  at the top; subtitles at the bottom, steady (no pop/wiggle), the said word yellow; logo small top right; NO text hook
+  in the first 3 seconds (built once, removed on request); everything 4K.
 
 ## 3. Environment
 
-- **OS:** Windows 11. The repo is `e:\Document\clipper\Clipper`.
-- **Python venv:** `.venv\Scripts\python.exe`. Run Python with it, e.g. `& .venv\Scripts\python.exe script.py`.
-- **Shells:** PowerShell 5.1 is primary: no `&&`, use `;`, and avoid `2>&1` on native exes. Git Bash is also
-  available and handy for heredocs.
-- **ffmpeg:** `config.FFMPEG`; ffprobe sits next to it (`render.FFPROBE`). The GPU is NVIDIA:
-  - `h264_nvenc` is available, and Whisper runs on CUDA (`faster-whisper`, model `WHISPER_MODEL`).
-  - The best NVENC settings (p7, spatial + temporal AQ, B-refs) work on this GPU.
-- **Node:** use it only to syntax-check the page's JS (see §8).
-- **AI (LLM), via the OpenAI-compatible client in `ai.py`:**
-  - Main: `LLM_BASE_URL` / `LLM_MODEL` = `gpt-oss:20b` on the owner's OTHER machine (an Ollama server reached over
-    the network).
-  - Fallback: DeepSeek (`DEEPSEEK_API_KEY`).
-  - The third provider, "This PC (Ollama)" (`PC_LLM_*`), has **nothing behind it any more**. Ollama and its
-    `qwen3.5:2b` model were uninstalled from this PC on 2026-11-20 at the owner's request. Don't suggest it.
-  - The provider order is set in Settings → AI models (setting `ai_order`).
-- **YouTube cookies (bot check, "Sign in to confirm you're not a bot"):**
-  - Files: `cookies.txt` (`YT_COOKIES`) plus extra sets in `data/cookies/*.txt`, which can be uploaded from any
-    computer.
-  - On a bot check, `download.bot_checked()` switches to the next set.
-- **`.env` holds every key** (see `.env.example`). `config.py` reads it. A `.env` change needs a server restart; `.py`
-  changes hot-reload (`python -m clipper` watches `clipper/*.py`), and the UI is read fresh on each page load.
+- **Owner's PC:** Windows 11, NVIDIA GPU (`h264_nvenc` p7 + AQ + B-refs works; Whisper on CUDA). PowerShell 5.1 is
+  primary (no `&&`, use `;`). Git Bash is available.
+- **A Mac copy** exists at `~/Documents/gta6` (used for some sessions): no NVIDIA (x264 fallback, Whisper on CPU, a 4K
+  render test takes minutes); its `.env` is the Windows one, so run tests with `FFMPEG=/opt/homebrew/bin/ffmpeg`.
+  Headless Chrome is available for screenshots there.
+- **Python venv:** `.venv\Scripts\python.exe` (Windows) / `.venv/bin/python` (Mac).
+- **ffmpeg:** `config.FFMPEG`; ffprobe next to it (`render.FFPROBE`). Needs libass. Has `vibrance`, `cas`, `hqdn3d`.
+- **Node:** only to syntax-check the page's JS (§8).
+- **AI:** `ai.py`. Main = `LLM_BASE_URL`/`LLM_MODEL` (`gpt-oss:20b` on the owner's other machine via Ollama), fallback
+  DeepSeek. The "This PC (Ollama)" provider has nothing behind it any more (uninstalled 2026-11-20): don't suggest it.
+- **YouTube cookies:** `cookies.txt` + sets in `data/cookies/`; `download.bot_checked()` rotates on a bot check.
+- **`.env` holds only keys, logins, paths.** Everything tunable is in Settings (`settings.py`, stored in the DB setting
+  `app`). Old .env tunables (SHORT_MIN, TOPIC_*, KEEP_SOURCES...) seed the first defaults only.
 
 ## 4. Layout
 
 ```
 clipper/
-  app.py        FastAPI routes + request models (NewJob, ChannelRun, ...), /api/state feeds the whole UI
-  worker.py     the pipeline: download/record -> signals -> transcribe -> AI pick -> render -> upload/queue
-  download.py   everything YouTube-in: info, VOD download, live chunk recording (+ A/V alignment), chat, comments, cookies
-  signals.py    loudness (ebur128) + heatmap/chat/comments -> one per-second "hype" curve, candidate windows, reactions
-  transcribe.py faster-whisper word timestamps, sentence snapping
-  ai.py         every AI call: ask() with the provider order + fallback, JSON mode, prompt log, user_note
-  scout.py      CLIP-SCOUT, finding videos: topic -> category + queries -> search -> hard filters -> full stats ->
-                velocity/outlier/engagement score -> AI judge -> face check; and the autopilot's trending_topics
-  pick.py       CLIP-CUTTER, picking moments: the clip prompt, choose / choose_full, validate (5-part score ->
-                virality, overlap check), confirm (+5 multi-signal), fallback, headlines, notes (live, reel, user)
-  categories.py gaming / podcast / sports rules for both prompts ("scout" and "cut" blocks)
-  render.py     ffmpeg: cut + framing/layouts + ASS subtitles/titles + encoder, previews, YouTube 1440p copy, as-is copy
-  upload.py     YouTube Data API upload (OAuth token in data/)
-  social.py     Facebook / Instagram / TikTok uploaders, upload status, limit timers
-  channels.py   "Clip a whole channel": pick recent videos/Shorts, one job each, in the background
-  autopilot.py  daily posting plan, trend research rounds, streamer live-watch, upload slots
-  topics.py     topic queue: scout.find_videos -> one job per video (category copied onto the job)
-  news.py       News & facts posts (photo/video), and timed_tick() which posts every "timed" clip when due
-  campaign.py   paid clipping campaigns (Whop style): their own flow, prompts and caption rules
-  insights.py   learns what performs from view counts; stats.py view counts + WhatsApp report
-  vision.py     "mostly a person on camera?" check from YouTube storyboards (YuNet face model in assets/)
-  reset.py      Reset everything (keeps logins optionally); db.py SQLite + migrations + logs; config.py .env
-  static/index.html  the whole UI (pages: Create, Autopilot, Topics, Campaigns, Jobs, Clips, Schedule, Socials, News,
-                     Reports, Logs, Settings) + full-screen reels viewer
-data/ (gitignored)  clipper.db, jobs/<id>/ (source, live_*.ts, clips/<cid>.mp4, previews/), cookies/, logs/, fillers/
+  app.py        FastAPI routes; validates everything; /api/state feeds the page (polled every 4s)
+  worker.py     one job: download/record -> signals -> transcribe -> AI pick -> render (+ preview) ; upload_clip
+                (the ONE upload path, with the quota guard); live pieces; long videos in pieces; header edits
+  quota.py      slots: plan(day) (+ weekend +1), can_post (hard daily limit per platform per kind), fill (auto
+                filling, Auto topic shares), assign(swap=) (by hand / drag and drop), claim_now (Post now: next upcoming
+                free slot), tick (posts due slots every minute; a missed slot goes back to Clips), calendar (Slots page)
+  settings.py   every setting (pydantic, validated together, descriptions = UI hover help); platforms_for(kind)
+  autopilot.py  the minute loop (quota.tick), the daily report (stats.daily + insights.decide), Auto mode run_day
+  scout.py      CLIP-SCOUT: find videos for a topic (queries, hard filters incl. English-only + <=60 min, full stats,
+                velocity/outlier/engagement score, AI judge, face check) + trending_topics for a category
+  pick.py       CLIP-CUTTER: the clip prompt (owner priorities: funny conversations, scream hooks), choose_full,
+                validate (5 sub-scores -> virality, overlap drop), confirm (+5 multi-signal, +3 scream hook),
+                fallback, headlines, notes (live, reel, category, learned decisions)
+  categories.py gaming / podcast / sports rules for scout and pick
+  ai.py         every AI call (ask: provider order + fallback, JSON mode, prompt log), the AI tests (ping/json/clip)
+  stats.py      numbers from every platform API (YouTube Data + Analytics, FB, IG, TikTok), daily snapshots, series
+  insights.py   performance breakdowns + decide() (the day's decisions for researcher / cutter / owner)
+  render.py     ffmpeg: cut() 4K reel (3 framings, grade, detail, logo, ASS header + subtitles), previews,
+                youtube_copy, reencode (Instagram 1080 copy), save_master; news_* (switched off)
+  download.py   yt-dlp: info, search (US, English), download (always up to 4K), live recording (+A/V align), chat, cookies
+  signals.py transcribe.py vision.py upload.py social.py db.py config.py news.py (switched off, kept)
+  static/index.html  the whole UI: Overview, Create, Auto, Jobs, Clips (+ reels viewer), Slots, Reports, Socials,
+                     Settings, Logs
+tests/          apitest.py, autotest.py, cuttest.py: standalone regression scripts (temp data, never upload)
+data/ (gitignored)  clipper.db, jobs/<id>/ (source, live_*.ts, clips/<cid>.mp4 + _master.mp4 + _words.json,
+                    previews/, curves_*.json), fillers/, cookies/, logs/ (clipper.log + prompts/)
 ```
 
-**Database** (`db.py`): the tables are `jobs`, `clips`, `topics`, `campaigns`, `settings`, `auto_rounds`, `reports`,
-`news`, `news_runs` and `limit_hits`.
+**Database** (`db.py`): tables `jobs`, `clips`, `topics` (= Auto's research runs, one per topic per day), `settings`,
+`auto_rounds`, `stats_daily`, `limit_hits`, `reports`, `news`, `news_runs`. New columns go in the migration list in
+`db.init()`, never in `CREATE TABLE`. Helpers: `db.insert/update/get/all/delete`, `get_setting/set_setting`, `log`,
+`step`, `syslog`, `here`, `log_to`. On startup: unfinished jobs -> interrupted, `uploading` clips -> rendered,
+`rendering` clips -> rendered (has file) or render failed.
 
-- **New columns** are added through the migration list in `db.init()` (`("table", "col TYPE DEFAULT ...")`, wrapped
-  in try/except). Add new ones there, never in `CREATE TABLE`.
-- **Helpers:** `db.insert(table, **row)`, `db.update(table, id, **cols)`, `db.get`, `db.all(table, where, args)`
-  (newest first), `db.get_setting` / `db.set_setting`.
-- **Logging:**
-  - `db.log(job_id, text)` writes to a job's log.
-  - `db.step(job_id, text)` is a context manager that logs "..." and then "done in Ns".
-  - `db.syslog(text)` writes to the system log.
+**Job columns that matter:** `mode` (normal / live / auto), `url` (YouTube or `file:<name>`), `shorts`, `longs`,
+`layout` ("" | `cam:top:<auto|tl|tr|bl|br>` | `split:<file>`), `header`, `subtitles`, `fill` (fill today's free slots),
+`notes`, `category`, `auto_row`, `topic_id`, `chunk_minutes`, `max_chunks`. (`hq`, `style`, `aspect`, `follow`,
+`voiceover`, `upload_best*`, `post_every`, `post_from`, `whole`, `as_is`, `campaign_id` are leftovers from removed
+features: ignored.)
 
-**Recent job columns:**
-- `style`: "clean" or "full";
-- `channel`: the streamer / channel name;
-- `whole`: post the whole video as one clip;
-- `as_is`: re-post unchanged;
-- `post_every`: minutes between queued posts;
-- `post_from`: epoch time before which nothing posts;
-- `upload_best`, `upload_best_long`;
-- `chunk_minutes`, `max_chunks`;
-- `layout`, `aspect`, `hq`, `notes`, `follow`, `voiceover`, `subtitles`, `mode`.
+**Clip columns:** `kind` (short/long), `start`, `end`, `score` (virality), `title`, `headline` (the header on the
+video), `description`, `tags`, `reason`, `why` (JSON: by, prompt, scores, moment, framing, risk, signals, confirmed,
+scream_hook, opening, closing, piece), `status`, `path`, `uploads` (JSON per platform: id/url/at or error/at),
+`views`, `stats` (JSON per platform), `post_at` (its slot).
+**Statuses:** `rendering` → `rendered` (Ready) → `scheduled` (in a slot) → `uploading` → `uploaded` /
+`uploaded 1/2` / `upload failed` (gives the slot back) ; `render failed`.
 
-**Clip columns** include `kind` (short/long), `start`, `end`, `score`, `title`, `headline`, `description`, `tags`
-(JSON), `reason`, `why` (JSON for the "Why this clip?" panel, plus `piece` / `whole` / `as_is`), `status`, `path`,
-`uploads` (JSON per platform), `views`, `post_at`, `post_to`.
+## 5. The pipeline
 
-**Clip statuses:**
-- `rendering` / `rendered` / `render failed`
-- `uploading` / `uploaded`
-- `timed`: posts at `post_at` via `news.timed_tick`, every minute, autopilot on or off.
-- `scheduled`: waits for an autopilot slot.
-- `paused (streamer live)`
+- `worker._run`: file → `_process`; URL → `download.info`; mode/live mismatch is refused ("use Live mode");
+  live → `_live` (pieces, chat thread, each piece `_process` in a thread with the previous piece's last 60s joined);
+  else `_vod` (download up to 4K + chat replay + comments; long videos (`long_video_minutes`) → `_pieces`).
+- `_process`: loudness → hype curve (`_save_curves` for the Jobs graph) → fallback candidate windows → Whisper on the
+  whole piece (English) → reactions → AI `choose_full` (transcript + signal table + notes) → `confirm` bonuses → live
+  pieces keep their best + extras ≥ `LIVE_MIN` (60) → snap to sentences + pads → `_why` → `_render_clips` (2 at a time)
+  → returns clip ids. `_render_one`: `render.cut` → `keep_master` → previews (mp4 + jpg) → `rendered`.
+- After a job / piece: `_fill` (only when `jobs.fill`): `quota.fill` gives its best clips today's free slots.
+- `upload_clip(cid, platforms=None, force=False, bypass=False)`: default platforms = `settings.platforms_for(kind)`;
+  every platform passes `quota.can_post` unless `bypass` (Force upload); platform limit timers skipped unless force;
+  Instagram over `ig_max_seconds` skipped unless force; nothing up anywhere → `post_at` cleared.
+- Auto (`autopilot.run_day`): daily report → per row: topic (or `scout.trending_topics` in its category) →
+  `scout.find_videos` → jobs (`mode=auto`, `auto_row`) run one at a time → `quota.fill(cids, row)` up to the row's
+  share (kept free for it until `set_row_state(row, "done")`) → weekend extra slots get leftovers (`fill(only=...)`).
 
-## 5. The pipeline (worker.py)
+## 6. Rendering (render.py) and why
 
-### Job start (`_run`)
-1. `download.info(url)`, then the job's `title`, `is_live` and `channel` are saved.
-2. Then one of these branches:
-   - `as_is` → `_as_is`
-   - live → `_live`
-   - otherwise → `_vod`
-3. An uploaded file (`url` starting with `file:`) goes straight to `_process`.
-
-### Videos (`_vod`)
-1. Downloads at up to `download.height_for(hq)` (1440p by default, 2160p with the "4K" box), plus the chat replay and
-   timestamped comments.
-2. Long videos (`LONG_VIDEO_MINUTES` and up, not manual, not `whole`) are cut into pieces by `_pieces` and handled
-   like live pieces, with the previous piece's last `JOIN_SECONDS` in front.
-
-### Live (`_live`)
-1. Records fixed chunks (`chunk_minutes`) with `download.record_live_chunk`.
-2. Each chunk is processed in a background thread, with the shorts / longs counts applying **per piece**.
-3. Every piece makes at least one clip.
-4. Clips below `pick.LIVE_MIN` are dropped.
-
-### `_process(job, src, title, d, heatmap, chat, comments, live)` steps
-1. Loudness.
-2. Hype curve.
-3. Candidate windows.
-4. Whisper: on the candidates only in "hype" mode, on the full video in the "ai" / "ai+hype" modes (plus "reactions").
-5. AI pick (`pick.choose` / `choose_full`). The AI note is built from `live_note`, `reel_note` (clean style) and
-   `user_note` (the owner's "Tell the AI" text, which wins).
-6. Snap the picks to sentences, plus padding.
-7. Render (`_render_clips` → `_render_one`, two clips at a time).
-8. Upload or queue.
-
-Two branches inside `_process`:
-- `whole` jobs go to `_whole`, which makes one clip of the whole video, with the AI writing only the header, description
-  and tags. The title stays the video's own.
-- Manual mode stops after the curves; the cuts come later from `manual_cuts`.
-
-### `_render_one`
-- **`clean_style(job)` (live jobs always, or `style == "clean"`)** gives the reel look: `render.cut(..., words, head,
-  clean=True, exact=True, reel=True)`. `head = pick.reel_headline(...)` is at most 7 words with the emoji kept. It's
-  saved as the clip's `headline`, so the Clips page edits what's on the video. For non-live clips, `keep_master`
-  saves `<cid>_master.mp4` + `<cid>_words.json`, so the header can be re-rendered after the source is deleted.
-- **Full style** keeps the old look: headline + subtitles + follow message + optional AI voice-over, logo and end card.
-- **Re-rendering after a header edit** happens in `_rerender`, which keeps the same style.
-
-### Uploading
-- Everything goes through **`post_or_queue(job, cid)`**:
-  - With no `post_every` and no future `post_from`, the clip uploads now (`upload_clip`).
-  - Otherwise it becomes `timed`, at the next free slot of one global queue (setting `post_queue_next`; guarded by a
-    lock, since two renders can finish together).
-  - The slot is never before `post_from`, and slots are spaced `post_every` minutes apart.
-  - `news.timed_tick` posts it when the time comes.
-- **"Upload only the best"** (`_best_limits`, `_upload_best`):
-  - Live and long-video pieces: after each piece, its best N shorts / M longs by score go up.
-  - Normal videos: once all their clips are made.
-  - The others stay in Clips.
-- **Topic jobs from the autopilot** get status `scheduled`, and `autopilot.upload_tick` posts them on its slots.
-- **Stop:** `STOPS[job_id]` (an Event); `_check(jid)` raises `Stopped` at step boundaries. Sources are deleted after a
-  job (`drop_sources`) unless `KEEP_SOURCES=1`.
-
-## 6. Rendering details (render.py) and why they're that way
-
-### Live audio/video sync, the big recurring bug, now fixed at the source
-- **The cause:** YouTube HLS sends picture and sound as two streams that join the live edge at different points, and
-  ffmpeg zeroes each input's clock separately. That gave a voice/lips offset.
-- **The fix in `record_live_chunk`:**
-  - `-copyts`, so both streams share one clock;
-  - no `-t` (with `-copyts` it writes an empty file), so the chunk is stopped on the wall clock by sending `q`;
-  - then `download._align()` re-times the chunk: `-c:v copy` plus `aresample=async=1:first_pts=0`. The audio's late
-    start becomes silence.
-- **Verified within 0.02s.** Don't "fix" sync anywhere else (aresample in transcribe/signals was tried and reverted).
-
-### Exact cuts (`cut(..., exact=True)`)
-- The cut is sync-safe: input `-ss start-pre` and output `-ss pre` (pre ≤ 20s), so both tracks start on the exact frame
-  at 0.
-- ASS times are shifted by `pre`, because the subtitles filter sees the input timeline.
-- No voice-over is allowed with it.
-- `save_master` uses the same method.
-
-### Layouts (`layout`)
-- `cam:top|bottom:<auto|tl|tr|bl|br|x,y,w,h>` is the facecam stack. The streamer's box is cut out of the frame and
-  blown up into a 1080×`CAM_H` (700) panel; the gameplay fills the other 1220px. `find_cam` uses YuNet for "auto".
-- `split:<file>` puts the clip on top (`SPLIT_CLIP_H` 1180) and a background video from `data/fillers` below.
-- Otherwise `aspect` (0.5625 ... 1.7778) sets a centred slice, padded to 1080×1920.
-
-### Picture quality
-- **Facecam:** `hqdn3d` before the upscale, lanczos, then `cas=CAM_SHARPEN` (0.7). Gameplay and other framings get
-  `cas=SHARPEN` (0.4).
-- **Colour grade:** `GRADE` (`eq` contrast 1.07, saturation 1.25, gamma 0.97) is applied to `[0:v]` for every clip
-  except campaign clips (`clean and not reel`), which must keep the official picture.
-- **`encoder(maxrate)`:**
-  - NVENC p7, `-cq 16`, spatial and temporal AQ, lookahead 32, B-frames with `b_ref_mode middle`.
-  - It falls back to plain p7, then x264 `slow` at CRF 16.
-  - It's cached with `lru_cache`.
-  - Clips peak at 24 Mbps, because Instagram rejects Reels over 25 Mbps; `social.py` re-encodes as a safety net.
-- **`youtube_copy(path)`:**
-  - Before a YouTube upload, the clip is upscaled to 1440×2560 (`encoder(40)`).
-  - YouTube gives 1440p+ uploads the better VP9/AV1 encode, so it looks clearly sharper.
-  - The copy is deleted after the upload; if making it fails, the 1080p clip is uploaded.
-- **`as_is_copy`:** H.264 is copied untouched; VP9/AV1 is re-encoded once at top quality, because Instagram and TikTok
-  want H.264.
-
-### Reel look (`reel=True`)
-- **Header:** `ass(mid_y=...)` → `big_title()`.
-  - It's big (up to `BIG_TITLE` = 110px), white caps with a thick outline, centred on the **middle**: with a facecam,
-    the seam between streamer and gameplay (`CAM_H` or `1920-CAM_H`); without one, y = 960.
-  - It uses 1-3 lines, split where the longest line is shortest (`_rows`; `_width` counts an emoji as 2 characters).
-  - It pops in, then gently pulses.
-- **Subtitles:** at the **bottom**, karaoke style. The word being said is yellow (`&H00E5FF&`, BGR) and pops / wiggles
-  (`JIGGLE` / `UNJIGGLE`). With the facecam at the bottom they sit higher (`cap_margin = CAM_H + 300`).
-- **Emoji:** `_emoji()` switches the font to Segoe UI Emoji. libass draws them in black and white, since it has no
-  colour emoji.
-- **The owner's explicit choices: title in the middle, subtitles at the bottom, NO 3-second hook at the start.** The
-  hook was built and then removed on request. Don't re-add it.
-
-### Full-style text
-- `ass()` handles the follow line, headline (`top_block` / `seam_block`), captions (`Cap` style), end card and logo.
-- `follow_line()` cycles through `FOLLOW_LINES`, or uses `FOLLOW_LINE` from .env.
-
-### Previews for the UI
-- `preview()` makes 540-wide, 1.2 Mbps copies plus jpg posters, cached by mtime.
-- They're served at `/api/clips/{id}/preview` and `/poster` (`Cache-Control: private, max-age=86400`, and `?v=` busts
-  it).
-- Download / Open use the full file at `/media/...`.
+- **4K output:** `OUT_K = 2` → 2160x3840. Layout numbers are on the 1080x1920 grid and scaled by K; the ASS file keeps
+  `PlayResX/Y 1080x1920` and libass scales it (sharp). Encoder `CLIP_MAXRATE = 60` Mbps peak (NVENC cq 16 / x264 crf 16).
+- **Grade + detail:** `GRADE` = eq contrast 1.08 / saturation 1.08 / gamma 0.97 + `vibrance=0.18` (dull colours pop,
+  skin stays natural); `DETAIL` = light `hqdn3d` + `cas=0.55` after scaling; facecam `hqdn3d` + `cas=0.7`.
+- **Framings:** full = centre crop to exactly 9:16, scaled to fill. cam = facecam box → full-width `CAM_H` (700) panel
+  on top; the gameplay WHOLE (scaled to full width, 608 tall for 16:9, never cropped) under it; a blurred darkened copy
+  of the gameplay fills the screen behind. split = clip on top (`SPLIT_CLIP_H` 1180) + background video from
+  `data/fillers` below. `find_cam` (YuNet) for `auto`.
+- **Text:** `ass()` = header `big_title` centred on `mid_y` (cam: the seam `CAM_H`; else `TOP_Y` 330) + karaoke
+  subtitles at the bottom (`JIGGLE` is just the yellow colour now: steady). Logo: `assets/logo.png` (the owner's "THE
+  CLIP DROP"), 120px wide (×K) at top right, `settings.logo`.
+- **Sync:** live chunks are recorded with `-copyts` and re-timed by `download._align` (verified within 0.02s); every cut
+  is "exact" (decode from `pre` s early, output `-ss pre`, ASS shifted by `pre`). Don't "fix" sync anywhere else.
+- **Uploads:** YouTube gets the 4K file (`youtube_copy` only upscales below 1440); a long over 180s goes up as a normal
+  video (no #Shorts). Instagram gets `reencode(..., IG_BITRATE, 1080)` when wider than 1080 or over 20 Mbps.
+- Emoji: libass draws them in black and white via Segoe UI Emoji (Windows); on the Mac they show as boxes.
 
 ## 7. AI prompts
 
-Prompts live next to the code that uses them; every call goes through `ai.ask(task, system, key, full)`.
+- Every call: `ai.ask(task, system, key, full)`; every prompt + reply saved in `data/logs/prompts/<day>/` and linked.
+- **scout.py:** `QUERIES_SYSTEM` (category, launch, 8-10 queries, angles), `JUDGE_SYSTEM` (clippability 0-10, drop
+  reasons incl. non-English / official channels / re-uploads, copyright risk, better queries), `TREND_SYSTEM`. Stats
+  are computed in code, never by the AI.
+- **pick.py `SYSTEM`:** the owner's priorities (1 funny conversations, 2 screams / surprise as hooks), hook → content →
+  ending, signal reading, 5 sub-scores. Notes appended: `live_note`, `reel_note` (header style: streamer + action,
+  CAPS, one emoji), `category_note`, `learned_note` (today's decisions), `ai.user_note` (Settings notes + the job's).
+- **insights.DECIDE_SYSTEM:** daily decisions (scout / cutter / summary / suggestions). The app never changes settings.
 
-### Finding videos (scout.py, from the owner's CLIP-SCOUT spec)
-- `QUERIES_SYSTEM`: topic -> `{category, launch, queries (8-10), trending_angles}`.
-- Hard filters are code (`hard_filter`): clipped before, live, length (`TOPIC_MIN/MAX_MINUTES`, sports 4 min), age
-  (`TOPIC_MAX_DAYS` 14, launch week 7), dead on arrival (< 5k views after 48h).
-- **The stats are computed in code, never by the AI**: velocity, outlier, engagement, freshness, percentile ranks
-  within the batch; `score()` = 100 × (.40 v + .25 o + .15 e + .10 f + .10 clippability).
-- `JUDGE_SYSTEM` (keeps the owner's old clippability rules: no talking heads, tutorials, trailers) returns
-  clippability 0-10, drop reason (non-English, official league/broadcaster, music, re-upload), why, expected
-  moments, copyright risk, better_queries. Under `MIN_CLIPPABLE` (6) or risk "high" = skipped.
-- `enrich()` fetches full info once; `vision.analyze(url, info)` reuses it.
+## 8. Testing
 
-### Picking moments (pick.py, from the owner's CLIP-CUTTER spec)
-- The AI returns 5 sub-scores (hook, flow, emotion, share, trend; 0-10). `virality()` computes the 0-100 score
-  (hook 40%), falling back to a plain "virality" number. `confirm()` adds +5 when 2+ of heatmap/chat/comments peak
-  (>= 0.6) inside the clip. `validate()` drops same-kind clips overlapping a better one by > 30%.
-- `category_note(job.category)` adds that category's cut rules (all of them when unknown, e.g. Create jobs).
-- `moment_type`, `framing`, `copyright_risk` and the scores are saved in the clip's `why` JSON (not used by render yet).
-- **Not taken from the spec, on purpose:** `hook_text` / cold opens (the owner removed the 3-second hook) and
-  "discard below 60" for videos (the owner's clip counts decide; live extras use `LIVE_MIN` = 60).
-
-- **`SYSTEM` / `FULL_TASK` / `pick_text(counts)`:**
-  - The model gets the video's title and transcript (with `[sec]` markers), plus the signals.
-  - It returns `{"clips": [{candidate, kind, start, end, virality, title, headline, description, hashtags, hook,
-    ending, reason}]}`.
-  - Its numbers are clamped by `validate()`.
-- **`KIND_DESC`:** a LONG in a game video can be a full "what you can do in the game" showcase ("You Can Take Dates In
-  GTA 6"); the owner asked for this.
-- **`reel_note(streamer)`:** the header is the streamer's name plus what they're doing, a bit funny, 4-7 words in caps,
-  ending with ONE emoji from `REEL_EMOJI` ("SPEED THINKS ANIMALS ARE HUMAN 😭").
-- **`reel_headline(text, title, n=7)`** and **`short_headline(text, n)`** cut cleanly at punctuation and drop weak
-  trailing words (`WEAK_END`). `headline_for()` falls back to the title.
-- **`live_note`** is for live / long-video pieces. **`user_note`** is the owner's instructions, which win over the
-  general guidance.
-- **Channel runs** append a topic note: every clip stays on that video's topic.
-- **Every prompt is logged** under `data/logs/prompts/` and linked from the job log (`pick.LAST.link`).
-- **`pick.fallback`** uses the raw hype windows when the AI fails.
-- **`fit_counts`** caps the requested counts by video length.
-
-## 8. Testing (how it's done here)
-
-There's no test suite in the repo. The tests are standalone scripts in the session scratchpad. The scratchpad is
-temporary, so rewrite them as needed. The pattern:
-
-```python
-import os, sys, tempfile, time, threading, subprocess, json
-os.environ["CLIPPER_DATA"] = tempfile.mkdtemp()          # ALWAYS first
-sys.path.insert(0, r"e:\Document\clipper\Clipper")
-from clipper import db, worker, pick, transcribe, render, channels
-from clipper.config import FFMPEG, DATA
-db.init()
-# synthetic source:
-subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=1280x720:d=120",
-                "-f", "lavfi", "-i", "sine=d=120", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-shortest", str(src)], check=True)
-transcribe.words = lambda f, s, e: [w for w in W if s <= w["s"] < e]      # fake words
-ai.ask = lambda task, system, key="clips", full=False: {"clips": [...]}  # fake AI (capture `task` to check prompts)
-worker.upload_clip = lambda cid, *a, **k: sent.append(cid)               # never upload
-worker.STOPS[jid] = threading.Event()
-worker._process(db.get("jobs", jid), src, "title", d)
-```
-
-### Useful checks
-- **Sync:** put a white flash and a 1 kHz beep at a known time in the source, then find both in the output.
-  - Frames: `crop` + `scale=16:16,format=gray` as rawvideo; the mean brightness above 200 marks the flash.
-  - Audio: s16le at 8 kHz, an 80-sample moving average of |x|; above 1000 marks the beep.
-  - They should agree within 0.04s. Don't sample audio at 1 kHz: it aliases the 1 kHz beep away.
-- **Looks:** extract a frame with `-ss T -frames:v 1 -vf scale=540:960 out.png` into the scratchpad and Read the PNG
-  to look at it.
-- **API:** use `fastapi.testclient.TestClient(app.app)` with `worker.start = lambda jid: None`, on temp data only.
-- **Page JS:** extract every `<script>` from index.html into `page.js` and run `node --check page.js`. To test a UI
-  function's logic, slice it out of page.js and `eval` it in Node with stubs (`$`, `esc`, `PLATFORMS`, ...).
-- **Pure checks:** `python -m clipper.pick` / `clipper.scout` / `clipper.categories` / `clipper.signals` run self-tests
-  (with a temp `CLIPPER_DATA`; on the Mac also `FFMPEG=/opt/homebrew/bin/ffmpeg`, the checked-in `.env` is Windows').
-
-### The regression scripts used last
-- Each prints `... OK`:
-  - `vodclean.py`: clean style, best-of upload, re-render, full style;
-  - `livepiece.py`;
-  - `uptest.py`: upload per piece;
-  - `edittest.py`;
-  - `camptest.py`;
-  - `qualtest.py`;
-  - `reeltest.py`: sync, title and subtitle positions;
-  - `chantest.py`: channel plan, Shorts plan, whole video, as-is Short, app routes;
-  - `queuetest.py`;
-  - `createqueue.py`;
-  - `previewtest.py`;
-  - `cookietest.py`;
-  - `scouttest.py`: topic -> filters, stats, judge, face check, widening, jobs with category;
-  - `cuttest.py`: cutter prompt blocks, 5-part score, +5 bonus, overlap drop, why JSON, renders.
-- Recreate the relevant one when you change that area. Render tests take minutes, so run long suites in the background.
+- `tests/apitest.py`, `tests/autotest.py` (run before 8-9 PM local: they need slots later today), `tests/cuttest.py`
+  (real 4K renders; minutes on a CPU). Each prints `... OK`. They set a temp `CLIPPER_DATA` first and stub uploads.
+- Self-tests: `CLIPPER_DATA=<tmp> python -m clipper.<pick|scout|quota|settings|render|signals|stats|insights|categories|autopilot>`.
+- Lint: `uvx pyflakes clipper/*.py` (expected noise: pick.py test overrides, vision.py yt_dlp import).
+- Page JS: extract every `<script>` into a file and `node --check` it.
+- Looking at the UI without the server: seed a temp DB via `TestClient`, save `/api/*` answers as JSON fixtures, serve
+  them with a tiny static `http.server`, and screenshot with headless Chrome (`--force-prefers-reduced-motion`; for
+  phone width load the page in a 390px iframe: headless Chrome's minimum window is ~500px).
+- Sync check (when touching recording/cutting): white flash + 1 kHz beep at a known time, find both in the output
+  (within 0.04s; sample audio at 8 kHz).
 
 ## 9. UI notes (static/index.html)
 
-- **Polling:** `refresh()` polls `/api/state` and calls every page's render function. Each render keeps a key
-  (`clipKey`, `schedKey`, `campKey`...) to skip re-rendering when nothing changed. Reset the key (`clipKey = ""`) after
-  an action.
-- **Clips page:**
-  - Infinite scroll: `clipShown` / `CLIP_PAGE` = 24, with an IntersectionObserver on `#clipMore`.
-  - "▶ Watch from here" calls `openReels(id)`; if the reels filter hides that clip, it switches to "all".
-  - Edit and schedule forms open inline.
-- **Reels viewer (`#reels`):** full screen with scroll-snap. Posters load lazily (`data-poster`, `reelNear` observer);
-  the next reel preloads.
-- **Schedule page (`renderSchedule`):** timed clips grouped by day ("Today" / "Tomorrow" / date) in time order, with a
-  countdown and thumbnail. Each has ▶ Watch / Change time (`schedForm`) / ↑ Post now (`postNow`: unschedule, then
-  upload) / Don't post. Autopilot-waiting clips come after.
-- **Create page:**
-  - Clip style select: "Clean, like live" (default) or "Full". The `.full-only` boxes are disabled when clean.
-  - Upload only the best N shorts / M long.
-  - Upload one clip every N min (`post_every`) and Start posting at (`post_from`).
-  - Live-stream options.
-  - "Tell the AI" notes.
-- **"Clip a whole channel" box (`#chf` → `/api/channel`):**
-  - Fields: channel link, Recent videos, clips per video (shorts / long), upload only the best, Recent Shorts (posted
-    as they are), clip videos longer than X min (shorter ones are posted whole), upload every N min, start posting at,
-    and its own Upload-to platforms.
-  - Style and framing still come from the main form.
-  - Picking: the N newest uploads and past streams (tabs taken in turn), sorted by views, most viewed first. Shorts
-    are picked the same way.
-- **Gotcha:** `form.style` is the CSS object. Use `form.elements.style`.
+- Hash routes; `refresh()` polls `/api/state` every 4s and renders only the open page. Page-specific data
+  (`/api/slots`, `/api/auto`, `/api/reports`, `/api/settings`) loads on entering the page.
+- Design system: dark #1A1A1A, cards #2A2A2A, green #76B900, blue #00BFFF, yellow #FFD400 (highlights: virality,
+  reels), Roboto Mono, inline Lucide-style SVG icons (`ico(name)`), no emojis in the UI. Every setting has a `.tip`
+  (hover / tap). Mobile: sidebar becomes a drawer below 768px.
+- Jobs: cards are built once and patched part by part (`setPart` with a key) → no flicker; logs only update when open.
+- Clips: `clipKey`-style keyed re-render (`#clipGrid.dataset.k`), never re-render while a video plays; one video plays
+  at a time (document `play` listener); route change pauses all.
+- Reels: windowed `src` (current ±1 loaded, others emptied), search, actions inside; modal z-index 400 > reels 300.
+- Slots: HTML5 drag and drop (`dragCid`), `.drop-ok` only on same-kind future slots; Move / Choose clip for touch.
+- Alerts can be hidden (remembered in localStorage per browser). Times are 12-hour (`hhmm`, `t12`).
 
 ## 10. Current state (2026-11-21)
 
-- **Last commits:** `c10412b` (Schedule page, posting interval and start time on Create), merged to `main` (#8).
-- **Uncommitted, built and tested, waiting for the owner to say "commit":** the split into `ai.py` (AI plumbing),
-  `scout.py` (finding videos, CLIP-SCOUT) and `categories.py`, with `pick.py` now only the cutter (CLIP-CUTTER
-  scoring, +5 multi-signal, overlap check). New columns `topics.category` / `jobs.category`; new `.env` key
-  `TOPIC_MAX_DAYS`; `TOPIC_MIN_MINUTES` default 3 -> 8 (the owner's own `.env` still says 3). README is updated.
-- **A Mac copy** lives at `~/Documents/gta6` (no NVIDIA there: x264 fallback, Whisper on CPU; its `.env` is the
-  Windows one).
-- **Known limits / ideas not done:**
-  - Colour emoji (libass can't draw them).
-  - AI upscaling of the facecam (Real-ESRGAN) was offered and not built.
-  - A smaller facecam panel (`CAM_H`) would be sharper; it's the owner's call.
-  - All channel runs and Create jobs share one post queue.
+- **Done this session** (all tested, see §8): the split into scout / pick / ai / categories; slots + hard daily limit
+  (`quota.py`); Settings in the DB; Normal / Live / Auto modes; campaigns, topics page, channel clipping, streamer
+  watch, WhatsApp, reset, voice-over, full style, manual cuts all removed (news kept, switched off); reports from every
+  API + daily decisions; AI test center; the new UI; then: 4K everywhere, logo, steady subtitles, whole-gameplay cam
+  layout, English only, owner priorities in the prompt, drag-and-drop slots, per-kind platforms, Force upload, bulk
+  delete, upload-error reasons, Jobs curves, reels windowing/search, Post now never into a passed slot, long length
+  set freely (over 180s = normal YouTube video), research videos ≤ 60 min.
+- **Needs the owner:** restart the server; Reconnect YouTube once (analytics scope); enable "YouTube Analytics API" in
+  Google Cloud; TikTok numbers need the `video.list` scope.
+- **Ideas not done / next:**
+  - Colour emoji in headers (libass can't).
+  - Facecam AI upscaling (Real-ESRGAN) for very small facecams.
+  - TikTok upload of 4K: TikTok accepts it, but check its file-size limit for long 4K clips (re-encode if needed).
+  - A per-clip platform override (today a clip posts to its kind's platforms, or Force upload's choice).
+  - Reels on phones: swipe gestures are native scroll-snap; consider preloading the next reel's preview only on Wi-Fi.

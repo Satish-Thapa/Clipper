@@ -8,13 +8,20 @@ posts them in **slots**: the times you set, never more than your daily limit, on
   - **Live:** a YouTube stream that is live now, recorded in pieces; each piece is clipped while the next records.
   - **Auto:** every day at your research time, it finds the best videos for up to three topics (gaming, podcast or
     sports), clips them, and fills each topic's share of the day's slots with its best clips.
-- **Slots and a hard daily limit.** You set how many shorts and longs post per day and at what times. Every platform
-  follows the same plan; weekend days get +1 of each. Nothing (manual, Live, Auto, a retry) ever posts more in a day.
+- **Slots and a hard daily limit.** You set how many shorts and longs post per day, at what times, and where each
+  kind posts (e.g. shorts everywhere, longs only to YouTube). Weekend days get +1 of each. Drag clips between slots. Nothing (manual, Live, Auto, a retry) ever posts more in a day.
   You can make as many clips as you like: the extra ones wait in **Clips** until you place them.
-- **Three framings, all full screen on a phone:** the video full screen, the streamer on top with the gameplay
-  below, or your clip on top with a background video below (split).
-- **On the video:** the topic header (in the middle when the streamer is on top, otherwise at the top) and
-  word-by-word subtitles at the bottom (the word being said in yellow). Each can be switched off per video.
+- **4K, best quality.** Sources are always downloaded in the best quality up to 4K, and clips render in 4K vertical
+  (2160x3840) with a colour grade, denoise and sharpening pass. YouTube, Facebook and TikTok get the 4K file;
+  Instagram (its API takes 1920px at most) gets a 1080x1920 copy made for it.
+- **Three framings, all full screen on a phone:** the video full screen; the streamer on top with the **whole**
+  gameplay under it (nothing cut off; a blurred copy of the game fills the rest); or your clip on top with a background
+  video below (split).
+- **On the video:** your logo small in the top-right corner, the topic header (in the middle when the streamer is on
+  top, otherwise at the top) and steady word-by-word subtitles at the bottom (the word being said in yellow).
+  Header, subtitles and logo can each be switched off.
+- **English only, for a US audience:** Auto only picks English videos (searched in the US), Whisper transcribes in
+  English, and YouTube uploads are marked English.
 - **The AI** reads the whole transcript and uses the audience signals (YouTube's most-replayed heatmap, chat bursts,
   timestamped comments, loudness, the streamer's reactions) as hints. **Tell the AI** adds your own instructions.
 - **Reports** from every platform's API (views, likes, comments, shares, saves, watch time, % watched, subscribers),
@@ -96,9 +103,10 @@ it does.
 | **Overview** | Today: shorts / longs posted against the limit, today's slots, what's working, Auto's state, warnings. |
 | **Create** | **Normal** (a YouTube link or a file) or **Live** (a stream live now). Clips to make, framing, header, subtitles, 4K, *Fill today's free slots*, Tell the AI. |
 | **Auto** | Switch Auto on, your up-to-three topics and their slots, the research time, Run now / Stop, today's research and decisions. |
-| **Jobs** | Every video being clipped: status, log, Stop, Retry; a live job's piece length / pieces / clips per piece can change while it records. |
-| **Clips** | Every clip: watch it (or all of them as full-screen reels), **Post** (uses one of today's free slots), **Slot** (put it in any free slot), Unslot, Retry failed platforms, Edit (title, header, description, hashtags), Why this clip?, Delete. Filters: Ready, In a slot, Posted, Failed. |
-| **Slots** | The next 7 days: every slot with its clip and state (free, kept for an Auto topic, scheduled, posted, missed). **Choose clip** fills a free slot. |
+| **Jobs** | Every video being clipped: a step bar (download / recording → transcribe → AI pick → render → done), its clips (with virality), the reason when it failed, the log, the **hype curves** with the picked clips marked, Stop, Retry; a live job's piece length / pieces / clips per piece can change while it records. Select several to delete. |
+| **Clips** | Every clip with its virality score, moment type and the AI's five scores (hook, flow, emotion, share, trend), and **why an upload failed** (hide the message with ×). **Post** (the next free slot today), **Slot** (any free slot ahead), Unslot, **Retry** (the failed platforms), **Force** (post now to the platforms you pick, past every limit, warnings first), Edit, Why this clip?, Delete. Filters: Ready, In a slot, Posted, Failed. Select several to delete. Only one video plays at a time. |
+| **Reels** | (Clips → Watch as reels) Full-screen, swipe / arrow keys, **search** at the top, all the clip's info, and Post / Slot / Force / Info / Delete right there. Only the reels near the one you watch keep a video loaded, so scrolling stays smooth. |
+| **Slots** | The next 7 days: every slot with its clip and state (free, kept for an Auto topic, scheduled, posted, passed). Where **shorts** post and where **longs** post (ticked here). **Drag** a clip onto another slot of its kind to move it (onto a taken one: they swap), or drag a ready clip from the tray onto a slot; on a phone use **Move** / **Choose clip** (with thumbnails). A slot whose time has passed never takes a clip. |
 | **Reports** | Every number from the platforms, views per day, breakdowns (platform, category, moment type, length, posting hour, weekday, shorts vs longs, topic), YouTube channel analytics, best and weakest clips, the day's decisions. |
 | **Socials** | Connected platforms, uploads in the last 24h, limit timers and errors; Connect / Reconnect YouTube; YouTube cookies. |
 | **Settings** | Slots and limits, how new clips look, Tell the AI, clip lengths, sources, the researcher, background videos, AI models (with tests). |
@@ -109,7 +117,7 @@ it does.
 ## Slots and the daily limit
 
 - **A day's plan:** one slot per short time and one per long time (Settings → Slots). One slot = one clip, posted at
-  that time to every platform ticked in Settings → *Post to*.
+  that time to the platforms ticked for its kind (Slots page: *Shorts post to* / *Longs post to*).
 - **Weekend:** on the weekend days you tick (default Friday and Saturday), each kind you post at all gets one extra
   slot, at *Weekend extra short at* / *Weekend extra long at*. (In the US and UK the weekend is usually Saturday and
   Sunday: change the days to suit your audience.)
@@ -119,15 +127,19 @@ it does.
 - **Extra clips wait.** Make as many clips as you like; the ones without a slot wait in **Clips** as *Ready*.
 - **Filling slots:**
   - **By hand:** Clips → **Slot** (any free slot in the next 7 days), or Slots → **Choose clip**.
-  - **Post now:** takes one of *today's* free slots of the clip's kind (even one whose time has passed) and posts
-    straight away. When today's are all used, it says so.
+  - **Post now:** takes the next *upcoming* free slot of the clip's kind today and posts straight away. A slot whose
+    time has passed is never used; when none is left today, it says so.
+  - **Force upload** (Clips / Reels): posts now to the platforms you tick, **past the daily limit, the slots and the
+    platforms' own limits**. It shows every warning first, and the log marks it `FORCE UPLOAD`. A forced post still
+    counts in today's numbers, so a later slot that day may then be held back on that platform.
   - **Fill today's free slots** (Create): the job's best clips take today's free slots as they're made, never the
     ones kept for Auto topics. The rest wait.
   - **Auto:** each topic fills its own share (see below).
 - **Posting:** every minute the app posts each clip whose slot time has come. If the app was off at a slot's time,
   that clip goes back to Clips (it never posts a day late).
-- **A failed upload:** if a clip went up nowhere, it gives its slot back and waits in Clips again. If it went up on
-  some platforms, **Retry** tries the others (the limit still applies).
+- **A failed upload:** the reason shows on the clip. If it went up nowhere, it gives its slot back and waits in Clips;
+  **Retry** then takes the next free slot today, like Post now. If it went up on some platforms, **Retry** tries the
+  others (the limit still applies).
 - **Changing slot times:** clips sitting in a slot that no longer exists go back to Clips.
 
 ---
@@ -159,7 +171,8 @@ For each topic (`scout.find_videos`):
    (the topic, angles like "first reaction" / "funny moments", the big creators, this week's news), the trending
    angles, and whether it's a game's launch week.
 2. **Search:** YouTube (US) uploads from this week; this month only while too few pass.
-3. **Hard filters** (logged with the reason): clipped before, live, shorter than *Min video length* (sports: 4 min)
+3. **Hard filters** (logged with the reason): clipped before, live, **not English** (YouTube's language, or a title
+   mostly in another script), shorter than *Min video length* (sports: 4 min)
    or **longer than an hour** (*Max video length*, 60 min at most), older than *Max age* (launch week: 7 days), or
    dead on arrival (under 5,000 views after 48h).
 4. **Full stats** for the shortlist: likes, comments, channel followers, heatmap, exact upload time.
@@ -177,7 +190,7 @@ For each topic (`scout.find_videos`):
 
 ## How a clip is made
 
-1. **Download** (up to 1440p, 4K with the box ticked) plus the chat replay and timestamped comments; a live stream is
+1. **Download** (the best quality up to 4K) plus the chat replay and timestamped comments; a live stream is
    recorded in pieces instead (picture and sound locked together, verified within 0.02s).
 2. **Long videos** (Settings → *Clip in pieces from*, 60 min by default) are clipped in pieces like a stream; each
    piece gets the previous piece's last minute in front, so a moment on a boundary can still be one clip.
@@ -185,8 +198,11 @@ For each topic (`scout.find_videos`):
 4. **Whisper** transcribes the whole video with word timings; the streamer's reactions ("no way", "bro", shouting) are
    found in it.
 5. **The AI picks the moments** from the whole transcript, the signals as hints. It is told:
+   - **Your priorities:** funny conversations and banter first; then attention grabbers (a loud scream, a shocked
+     "WHAT?!", surprise, panic, rage), which make the best hooks: the clip opens ON the scream.
    - **The hook comes first:** the first 2 seconds must stop the scroll (a bold line, a question, a shout, mid-action),
-     never "um", greetings or setup. The hook is 40% of the clip's score.
+     never "um", greetings or setup. The hook is 40% of the clip's score; a clip that opens on a scream (very loud
+     audio + shout words in its first 4 seconds) gets +3.
    - Build every clip as hook → content → ending; never end mid-thought; 20-60s is the sweet spot for shorts.
    - How to read the signals (a heatmap peak is the payoff, the setup is 5-20s before; chat reacts 5-15s late).
    - The category's rules (gaming / podcast / sports), today's decisions from the report, and your *Tell the AI*.
@@ -194,8 +210,9 @@ For each topic (`scout.find_videos`):
      +5 when 2+ audience signals peak inside the clip. Same-kind clips overlapping a better one are dropped.
    - Live pieces always make their best clip; extra ones need virality 60+.
 6. **Snap** to whole sentences, with a little lead-in and room after.
-7. **Render** 1080x1920 with the framing, the colour grade, the header and the subtitles. A master copy is kept so the
-   header can be edited later.
+7. **Render** in 4K (2160x3840) with the framing, the colour grade (contrast + vibrance) and detail pass (denoise +
+   sharpening), your logo, the header and the subtitles. A master copy is kept so the header can be edited later, and
+   the light preview the app plays is made straight away.
 
 Every prompt the AI gets is saved, with its reply, and linked from the job log and from *Why this clip?*.
 
@@ -320,12 +337,12 @@ in short:
 
 | Section | Settings |
 |---|---|
-| **Slots and daily limits** | Shorts per day + a time for each; longs per day + a time for each; weekend days and the extra slots' times; *Post to* (the platforms every slot posts to). |
-| **How new clips look** | Framing (Full screen / Streamer on top / Split), facecam position (Auto or a corner), the split's background video, topic header, subtitles, 4K source. The Create page starts from these; Auto uses them. |
+| **Slots and daily limits** | Shorts per day + a time for each; longs per day + a time for each; weekend days and the extra slots' times; *Shorts post to* and *Longs post to* (also on the Slots page). |
+| **How new clips look** | Framing (Full screen / Streamer on top / Split), facecam position (Auto or a corner), the split's background video, topic header, subtitles, logo top right. The Create page starts from these; Auto uses them. |
 | **Tell the AI** | Your instructions for every mode (a video can add its own; the more specific one wins). |
-| **Clip length** | Short min / max, long min / max (180s at most: YouTube Shorts' limit), the stretch allowed for setup or payoff, lead-in, room after, how far an edge may move to reach a sentence. |
+| **Clip length** | Short min / max (180s at most: YouTube Shorts' limit), long min / max (**your call**, up to an hour; a long over 180s posts to YouTube as a normal video, still vertical), the stretch allowed for setup or payoff, lead-in, room after, how far an edge may move to reach a sentence. |
 | **Sources** | Clip in pieces from (min), live piece length, keep source videos, Instagram max length. |
-| **Researcher (Auto)** | Min / max video length (60 min at most), max age, search country, skip talking heads. |
+| **Researcher (Auto)** | Min / max video length (60 min at most: longer videos are never picked), max age, search country, skip talking heads. |
 | **Background videos** | For the split layout: upload a file or download one from YouTube. One in use can't be deleted. |
 | **AI models** | The order (main + fallbacks), the model on each local server, and three tests per AI: **Speed**, **JSON** (follows the exact format) and **Real clip** (a sample stream through the real clip-picking prompt: valid answer, times inside the video, all 5 scores, found the obvious moment), with seconds and tokens per second. Test another model before switching to it. |
 
@@ -349,7 +366,7 @@ Only keys, logins and paths:
 | `FB_PAGE_ID`, `FB_PAGE_TOKEN`, `IG_USER_ID`, `IG_TOKEN`, `GRAPH_VERSION` | Facebook / Instagram. |
 | `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`, `TIKTOK_REFRESH_TOKEN`, `TIKTOK_PRIVACY` | TikTok. |
 | `CLIPPER_DATA` | Where the data folder is (default `data/`). |
-| `LOGO`, `FOLLOW_LINE`, `VOICE`, `WIKI_CONTACT` | News & facts posts only (switched off for now). |
+| `LOGO`, `FOLLOW_LINE`, `VOICE`, `WIKI_CONTACT` | News & facts posts only (switched off for now). The clips' logo is `clipper/assets/logo.png`: replace that file to change it. |
 
 ---
 
@@ -379,6 +396,9 @@ Only keys, logins and paths:
 
 **Self-checks:** `python -m clipper.<module>` for `pick`, `scout`, `quota`, `settings`, `render`, `signals`,
 `stats`, `insights`, `categories`, `autopilot` (with `CLIPPER_DATA` set to an empty temp folder).
+**Regression tests:** `tests/apitest.py` (every API rule: settings, jobs, slots, Post now, the quota guard, force
+upload, bulk delete, AI tests), `tests/autotest.py` (Auto's day: topic shares, weekend leftovers),
+`tests/cuttest.py` (a real 4K render of every framing). They always use a temp data folder and never upload.
 
 ---
 

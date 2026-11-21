@@ -61,9 +61,9 @@ def hook_lines(text, width=44):
 YELLOW = r"{\c&H00E5FF&}"  # ASS colours are BGR: this is the headline yellow
 EMOJI_FONT = "Segoe UI Emoji"
 # The word being said: yellow, pops up bigger and wiggles as it's pronounced, then settles (the rest of the line stays still).
-JIGGLE = (r"{\c&H00E5FF&\t(0,90,\fscx125\fscy125\frz-5)\t(90,170,\fscx112\fscy112\frz4)"
-          r"\t(170,250,\fscx115\fscy115\frz-2)\t(250,330,\fscx110\fscy110\frz0)}")
-UNJIGGLE = r"{\c&HFFFFFF&\fscx100\fscy100\frz0}"
+# The word being said: yellow, steady (no pop or wiggle: the owner wants the subtitles still); the rest stays white.
+JIGGLE = r"{\c&H00E5FF&}"
+UNJIGGLE = r"{\c&HFFFFFF&}"
 
 
 def _emoji(text):
@@ -165,7 +165,7 @@ def tts(text, out):
         return w.getnframes() / w.getframerate()
 
 
-CLIP_MAXRATE = 24  # Mbps peak for the clips: Instagram rejects Reels over 25 Mbps (on average); quality-based below it
+CLIP_MAXRATE = 60  # Mbps peak for the 4K clips (YouTube recommends 35-68 for 2160p); Instagram gets its own copy
 
 
 @lru_cache(maxsize=4)
@@ -217,12 +217,20 @@ def bitrate_mbps(path):
     return int(out) / 1e6 if out.isdigit() else 0
 
 
-def reencode(src, out, bitrate):
-    """Same video at a lower bitrate (for Instagram's 25 Mbps cap); audio copied."""
-    subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-i", str(src), *encoder()[:2], "-b:v", bitrate,
+def reencode(src, out, bitrate, width=None):
+    """Same video at a lower bitrate (Instagram: 25 Mbps cap) and, with `width`, smaller (Instagram: 1080 wide at
+    most); audio copied."""
+    vf = ["-vf", f"scale={width}:-2:flags=lanczos"] if width else []
+    subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-i", str(src), *vf, *encoder()[:2], "-b:v", bitrate,
                     "-maxrate", bitrate, "-bufsize", "28M", "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart",
                     str(out)], check=True, capture_output=True)
     return out
+
+
+def width_of(path):
+    out = subprocess.run([FFPROBE, "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width", "-of", "csv=p=0",
+                          str(path)], capture_output=True, text=True).stdout.strip()
+    return int(out) if out.isdigit() else 0
 
 
 PREVIEW_W, PREVIEW_RATE = 540, "1200k"  # light copy for watching in the app (over a tunnel: ~1/10 the data)
@@ -282,7 +290,8 @@ def encoder_name():
     return "GPU NVENC" if "h264_nvenc" in encoder() else "CPU x264"
 
 
-SHARPEN, CAM_SHARPEN = 0.4, 0.7  # contrast-adaptive sharpening after upscaling (0-1): the picture / the facecam panel
+CAM_SHARPEN = 0.7  # contrast-adaptive sharpening of the facecam panel (a small box blown up a lot)
+GAME_H = 608  # streamer on top: the gameplay shown whole, 1080 wide (a 16:9 frame is 608 tall)
 CAM_H = 700  # facecam layouts: the streamer's panel (~36% of 1920, full width); the gameplay gets the other 1220px
 CAM_CORNERS = {"tl": (0, 0, .3, .3), "tr": (.7, 0, .3, .3), "bl": (0, .7, .3, .3), "br": (.7, .7, .3, .3)}  # x, y, w, h
 
@@ -367,7 +376,11 @@ def _duration(path):
 
 # Colour grade for a richer, "higher quality" look: stream footage comes out flat and washed out. More saturation
 # (colours pop), a little more contrast, slightly deeper midtones. Applied before the scaling and sharpening.
-GRADE = "eq=contrast=1.07:saturation=1.25:gamma=0.97"
+GRADE = "eq=contrast=1.08:saturation=1.08:gamma=0.97,vibrance=intensity=0.18"  # vibrance: dull colours pop, skin stays natural
+# After scaling: a light denoise (stream compression noise looks soft and smeary when blown up) then contrast-adaptive
+# sharpening: crisp edges and text without halos. This is the "looks HD" pass.
+DETAIL = "hqdn3d=1:1:2:2,cas=0.55"
+OUT_K = 2  # clips render at 2x 1080x1920 = 2160x3840 (4K vertical); every layout number below is on 1080x1920
 TOP_Y = 330  # full / split: the header's centre line, near the top (clear of the phone apps' top icons)
 LAYOUTS = ("full", "cam", "split")  # the three framings (Settings → layout); every one fills a 1080x1920 phone screen
 
@@ -377,8 +390,20 @@ def layout_name(layout):
     return "cam" if str(layout).startswith("cam:") else "split" if str(layout).startswith("split:") else "full"
 
 
+BRAND_LOGO = Path(__file__).parent / "assets" / "logo.png"  # your logo, burned small into the top-right corner
+LOGO_W, LOGO_MARGIN, LOGO_TOP = 120, 32, 60  # px on the 1080x1920 frame (under the phone's status bar)
+
+
+def settings_logo():
+    from . import settings
+    try:
+        return settings.get().logo
+    except Exception:  # no database (a self-test)
+        return True
+
+
 def cut(src, out, start, end, words=(), headline="", layout=""):
-    """One reel: 1080x1920, full screen on a phone, original sound in sync.
+    """One reel: 4K vertical (2160x3840), full screen on a phone, original sound in sync.
     layout: "" = full (the video cropped to fill the screen); "cam:top:<auto|tl|tr|bl|br>" = the streamer's facecam on
             top, the gameplay below; "split:<file>" = the clip on top, that background video (data/fillers) below.
     words: subtitles at the bottom (() = none); headline: the header across the middle ("" = none).
@@ -404,39 +429,47 @@ def cut(src, out, start, end, words=(), headline="", layout=""):
         cap = CAM_H + 300 if cam and cam[0] == "bottom" else None
         sub.write_text(ass(words, start, end, headline, mid, cap, shift=pre), encoding="utf-8")
         subs = f",subtitles={sub.name}"  # relative name + cwd avoids ffmpeg path escaping
+    K, W, H = OUT_K, 1080 * OUT_K, 1920 * OUT_K  # rendered at 4K (2160x3840); the text is laid out on 1080x1920
     if filler:  # the clip fills the top (cropped to fill), your background video the bottom, muted
-        bot_h = 1920 - SPLIT_CLIP_H
-        head = (f"[0:v]scale=1080:{SPLIT_CLIP_H}:force_original_aspect_ratio=increase:flags=lanczos,"
-                f"crop=1080:{SPLIT_CLIP_H},cas={SHARPEN},setsar=1[clip];"
-                f"[1:v]scale=1080:{bot_h}:force_original_aspect_ratio=increase,crop=1080:{bot_h},setsar=1,fps=30[fill];"
+        top_h, bot_h = SPLIT_CLIP_H * K, (1920 - SPLIT_CLIP_H) * K
+        head = (f"[0:v]scale={W}:{top_h}:force_original_aspect_ratio=increase:flags=lanczos,"
+                f"crop={W}:{top_h},{DETAIL},setsar=1[clip];"
+                f"[1:v]scale={W}:{bot_h}:force_original_aspect_ratio=increase:flags=lanczos,crop={W}:{bot_h},setsar=1,fps=30[fill];"
                 f"[clip][fill]vstack=inputs=2:shortest=1{subs}")
     elif cam:
-        # The streamer's box cut out of the frame fills a 1080xCAM_H panel (cropped inside the box only), the gameplay
-        # (the middle of the frame, pushed off the facecam's side so the streamer isn't in it twice) the rest.
+        # The streamer's box cut out of the frame fills a full-width CAM_H panel (cropped inside the box only); the
+        # gameplay is shown WHOLE (the full frame, nothing cut off: full width, 608 of 1920 tall for 16:9) right under
+        # it; a blurred, darkened copy of the gameplay fills the rest of the screen (the subtitles sit there).
         x, y, w, h = cam[1]
-        cam_h, game_h = CAM_H, 1920 - CAM_H
-        gx = (f"min(max((iw-ow)/2,iw*{min(x + w + 0.05, 1):.4f}),iw-ow)" if x + w / 2 < 0.4 else
-              f"max(min((iw-ow)/2,iw*{max(x - 0.05, 0):.4f}-ow),0)" if x + w / 2 > 0.6 else "(iw-ow)/2")
-        panels = ["[cam]", "[game]"] if cam[0] == "top" else ["[game]", "[cam]"]
-        # Quality: the facecam is a small box blown up ~3x: a light denoise first (so the stream's compression blocks
-        # aren't enlarged), lanczos, then contrast-adaptive sharpening; the gameplay a lighter sharpen.
-        head = (f"[0:v]split=2[c][g];"
+        cam_h, game_h = CAM_H * K, GAME_H * K
+        game_y, cam_y = (cam_h, 0) if cam[0] == "top" else (0, game_h)
+        # Quality: the facecam is a small box blown up a lot: a light denoise first (so the stream's compression blocks
+        # aren't enlarged), lanczos, then contrast-adaptive sharpening; the gameplay the normal detail pass.
+        head = (f"[0:v]split=3[c][g][b];"
+                f"[b]scale={W // 4}:{H // 4}:force_original_aspect_ratio=increase,crop={W // 4}:{H // 4},boxblur=14:2,"
+                f"eq=brightness=-0.28:saturation=1.1,scale={W}:{H},setsar=1[bg];"
                 f"[c]crop=w=iw*{w:.4f}:h=ih*{h:.4f}:x=iw*{x:.4f}:y=ih*{y:.4f},hqdn3d=1.5:1.5:0:0,"
-                f"scale=1080:{cam_h}:force_original_aspect_ratio=increase:flags=lanczos,crop=1080:{cam_h},cas={CAM_SHARPEN},setsar=1[cam];"
-                f"[g]crop=w='min(iw,ih*{1080 / game_h:.4f})':h=ih:x='{gx}',"
-                f"scale=1080:{game_h}:force_original_aspect_ratio=increase:flags=lanczos,crop=1080:{game_h},cas={SHARPEN},setsar=1[game];"
-                f"{''.join(panels)}vstack=inputs=2{subs}")
+                f"scale={W}:{cam_h}:force_original_aspect_ratio=increase:flags=lanczos,crop={W}:{cam_h},cas={CAM_SHARPEN},setsar=1[cam];"
+                f"[g]scale={W}:{game_h}:force_original_aspect_ratio=decrease:flags=lanczos,"
+                f"pad={W}:{game_h}:(ow-iw)/2:(oh-ih)/2:color=black,{DETAIL},setsar=1[game];"
+                f"[bg][cam]overlay=0:{cam_y}[t];[t][game]overlay=0:{game_y}{subs}")
     else:  # full: the centre of the frame, cropped to 9:16 so it fills the phone (no black bars)
-        head = (f"[0:v]crop=w='min(iw,ih*9/16)':h='min(ih,iw*16/9)',scale=1080:1920:flags=lanczos,"
-                f"cas={SHARPEN},setsar=1{subs}")
-    graph = head.replace("[0:v]", f"[0:v]{GRADE},", 1) + "[o]"
+        head = (f"[0:v]crop=w='min(iw,ih*9/16)':h='min(ih,iw*16/9)',scale={W}:{H}:flags=lanczos,"
+                f"{DETAIL},setsar=1{subs}")
+    graph = head.replace("[0:v]", f"[0:v]{GRADE},", 1)
+    logo = BRAND_LOGO if settings_logo() and BRAND_LOGO.is_file() else None
+    if logo:  # your logo, small, top right
+        graph += (f"[v];[{2 if filler else 1}:v]scale={LOGO_W * K}:-1:flags=lanczos[l];"
+                  f"[v][l]overlay=W-w-{LOGO_MARGIN * K}:{LOGO_TOP * K}")
+    graph += "[o]"
     fill_in = []
     if filler:  # muted, from a random point, looped if it's shorter than the clip
         import random
         off = random.uniform(0, max(0.0, _duration(filler) - (end - start) - 1))
         fill_in = ["-stream_loop", "-1", "-ss", f"{off:.2f}", "-i", str(filler.resolve())]
     subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-ss", f"{start - pre:.3f}", "-t", f"{end - start + pre:.3f}",
-                    "-i", str(src.resolve()), *fill_in, "-filter_complex", graph, "-map", "[o]", "-map", "0:a?",
+                    "-i", str(src.resolve()), *fill_in, *(["-i", str(logo.resolve())] if logo else []),
+                    "-filter_complex", graph, "-map", "[o]", "-map", "0:a?",
                     "-ss", f"{pre:.3f}", "-t", str(end - start), "-af", "aresample=async=1:first_pts=0",
                     "-avoid_negative_ts", "make_zero", *encoder(), "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "256k",
                     "-ar", "48000", "-movflags", "+faststart", out.name], check=True, cwd=out.parent)

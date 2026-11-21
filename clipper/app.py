@@ -59,11 +59,10 @@ class Look(BaseModel):
     filler: str | None = Field(None, max_length=200)
     subtitles: bool | None = None
     header: bool | None = None
-    hq: bool | None = None
 
 
 def _look(j: Look):
-    """-> (layout string for render, header, subtitles, hq) with the Settings defaults filled in, validated."""
+    """-> (layout string for render, header, subtitles) with the Settings defaults filled in, validated."""
     s = settings.get()
     lay, corner, filler = j.layout or s.layout, j.cam_corner or s.cam_corner, (j.filler if j.filler is not None else s.filler)
     if lay == "split":
@@ -73,7 +72,7 @@ def _look(j: Look):
             _bad(400, f"the background video {filler} isn't there any more: pick another one")
     layout = {"full": "", "cam": f"cam:top:{corner}", "split": f"split:{_filler_name(filler) if filler else ''}"}[lay]
     pick = lambda v, d: int(d if v is None else v)
-    return layout, pick(j.header, s.header), pick(j.subtitles, s.subtitles), pick(j.hq, s.hq)
+    return layout, pick(j.header, s.header), pick(j.subtitles, s.subtitles)
 
 
 class NewJob(Look):
@@ -102,9 +101,9 @@ def create_job(j: NewJob):
     busy = [x for x in db.all("jobs", "url=?", (url,)) if x["status"] not in worker.FINISHED]
     if busy:
         _bad(409, f"this video is already being clipped (job #{busy[0]['id']})")
-    layout, header, subtitles, hq = _look(j)
+    layout, header, subtitles = _look(j)
     jid = db.insert("jobs", url=url, mode=j.mode, shorts=j.shorts, longs=j.longs, layout=layout, header=header,
-                    subtitles=subtitles, hq=hq, notes=j.notes.strip(), fill=int(j.fill), auto_upload=0,
+                    subtitles=subtitles, notes=j.notes.strip(), fill=int(j.fill), auto_upload=0,
                     chunk_minutes=j.chunk_minutes if j.mode == "live" else None,
                     max_chunks=j.max_chunks if j.mode == "live" else 0, created=time.time())
     worker.start(jid)
@@ -122,7 +121,7 @@ async def create_file_job(request: Request, filename: str = Query(max_length=300
     if ext not in VIDEO_EXT:
         _bad(400, f"unsupported file type {ext or '(none)'}: use {', '.join(VIDEO_EXT)}")
     _check_counts(shorts, longs)
-    lay, head, subs, _ = _look(Look(layout=layout, cam_corner=cam_corner, filler=filler, subtitles=subtitles, header=header))
+    lay, head, subs = _look(Look(layout=layout, cam_corner=cam_corner, filler=filler, subtitles=subtitles, header=header))
     jid = db.insert("jobs", url=f"file:{Path(filename).name}", title=Path(filename).stem, mode="normal", shorts=shorts,
                     longs=longs, layout=lay, header=head, subtitles=subs, notes=notes.strip(), fill=int(fill),
                     auto_upload=0, status="uploading", created=time.time())
@@ -209,6 +208,30 @@ def delete_job(jid: int):
     return {"ok": True}
 
 
+class Ids(BaseModel):
+    ids: list[int] = Field(min_length=1, max_length=500)
+
+
+@app.post("/api/jobs/delete")
+def delete_jobs(b: Ids):
+    """Several finished jobs' records at once (running ones are skipped and named); their clips stay."""
+    done, skipped = [], []
+    for jid in b.ids:
+        j = db.get("jobs", jid)
+        if j and j["status"] in worker.FINISHED:
+            db.delete("jobs", jid)
+            done.append(jid)
+        elif j:
+            skipped.append({"id": jid, "why": f"still {j['status']}: stop it first"})
+    return {"deleted": done, "skipped": skipped}
+
+
+@app.get("/api/jobs/{jid}/curves")
+def curves(jid: int):
+    """The hype curves of a job (one per video / piece), with its picked clips: the Jobs page graph."""
+    return [json.loads(p.read_text()) for p in sorted((DATA / "jobs" / str(jid)).glob("curves_*.json"))]
+
+
 # ---------- state ----------
 
 @app.get("/api/state")
@@ -221,7 +244,7 @@ def state():
             "youtube_cookies": download.cookies_state(), "youtube_scopes": upload.granted() if upload.connected() else {},
             "today": today, "auto": {"enabled": s.auto_enabled, "running": autopilot.LOCK.locked(),
                                      "stage": autopilot.STAGE[0]},
-            "post_to": s.platforms, "ig_max_seconds": s.ig_max_seconds, "now": time.time()}
+            "post_to": {"short": s.platforms, "long": s.long_platforms}, "ig_max_seconds": s.ig_max_seconds, "now": time.time()}
 
 
 # ---------- clips ----------
@@ -263,6 +286,19 @@ def assign_clip(cid: int, b: SlotIn):
         _bad(409, str(e))
 
 
+class MoveIn(BaseModel):
+    at: float  # the slot it's dropped on
+
+
+@app.post("/api/clips/{cid}/move")
+def move_clip(cid: int, b: MoveIn):
+    """Slots page drag and drop: into that slot; a clip already there swaps places (or goes back to Clips)."""
+    try:
+        return quota.assign(cid, b.at, swap=True)
+    except ValueError as e:
+        _bad(409, str(e))
+
+
 @app.post("/api/clips/{cid}/unassign")
 def unassign_clip(cid: int):
     c = db.get("clips", cid) or _bad(404, "clip not found")
@@ -274,8 +310,9 @@ def unassign_clip(cid: int):
 @app.post("/api/clips/{cid}/post")
 def post_now(cid: int):
     """Post now: it takes one of today's free slots of its kind (refused when they're all used), then uploads."""
-    if not settings.get().platforms:
-        _bad(400, "no platform to post to: pick them in Settings → Slots")
+    c0 = db.get("clips", cid) or _bad(404, "clip not found")
+    if not settings.platforms_for(c0["kind"]):
+        _bad(400, f"no platform to post {c0['kind']}s to: pick them on the Slots page")
     try:
         slot = quota.claim_now(cid)
     except ValueError as e:
@@ -293,7 +330,53 @@ def retry_upload(cid: int, force: bool = False):
         _bad(409, "this clip was never posted: use Post now or put it in a slot")
     if c["status"] in ("rendering", "uploading"):
         _bad(409, f"the clip is {c['status']}")
+    if not quota.posted_ok(c):  # it went up nowhere: like Post now, it needs one of today's upcoming free slots
+        try:
+            quota.claim_now(cid)
+        except ValueError as e:
+            _bad(409, str(e))
     threading.Thread(target=worker.upload_clip, args=(cid, None, force), daemon=True).start()
+    return {"ok": True}
+
+
+class ForceIn(BaseModel):
+    platforms: list[Platform] = Field(min_length=1, max_length=4)
+
+
+@app.get("/api/clips/{cid}/force")
+def force_check(cid: int):
+    """What Force upload would skip, per platform: the warnings shown before you confirm."""
+    c = db.get("clips", cid) or _bad(404, "clip not found")
+    s, limited, on = settings.get(), social.limit_timers(), social.connected()
+    done = json.loads(c.get("uploads") or "{}")
+    out = {}
+    for p in social.PLATFORMS:
+        w = []
+        if not on.get(p):
+            w.append("not connected: it will fail")
+        if (done.get(p) or {}).get("id"):
+            w.append("already posted there: skipped")
+        if quota.can_post(c, p):
+            w.append(quota.can_post(c, p) + ": this goes past it, and later slots today may then be held back")
+        if p in limited:
+            w.append(f"{p} said its upload limit was reached at {time.strftime('%I:%M %p', time.localtime(limited[p]['hit_at']))}")
+        if p == "instagram" and s.ig_max_seconds and c["end"] - c["start"] > s.ig_max_seconds:
+            w.append(f"{c['end'] - c['start']:.0f}s is over Instagram's {s.ig_max_seconds:.0f}s limit: it often fails")
+        out[p] = w
+    return {"warnings": out, "default": settings.platforms_for(c["kind"], s)}
+
+
+@app.post("/api/clips/{cid}/force")
+def force_upload(cid: int, b: ForceIn):
+    """Force upload: post now to the platforms you pick, past the daily quota, slots and platform limits (warned
+    first by GET). Logged as forced."""
+    c = db.get("clips", cid) or _bad(404, "clip not found")
+    if not c.get("path") or c["status"] in ("rendering", "uploading"):
+        _bad(409, f"the clip is {c['status']}")
+    if c["status"] == "scheduled":  # it leaves its slot: posting now instead
+        quota.unassign(cid, "force-uploaded now")
+    db.log(c["job_id"], f"#{cid} FORCE UPLOAD by you to {', '.join(b.platforms)}")
+    threading.Thread(target=worker.upload_clip, args=(cid, b.platforms, True, True), daemon=True).start()
     return {"ok": True}
 
 
@@ -314,17 +397,48 @@ def edit_clip(cid: int, e: ClipEdit):
         _bad(409, str(ex))
 
 
+def _drop_clip(c):
+    """Delete a clip's files and row (a slot it held is free again). Copies already posted stay online."""
+    if c["path"]:
+        mp4 = DATA / c["path"]
+        for f in (mp4, mp4.with_suffix(".ass"), mp4.with_name(f"{mp4.stem}_master.mp4"), mp4.with_name(f"{mp4.stem}_words.json")):
+            f.unlink(missing_ok=True)
+    db.delete("clips", c["id"])
+    prev = DATA / "jobs" / str(c["job_id"]) / "previews"
+    for f in (prev / f"{c['id']}.mp4", prev / f"{c['id']}.jpg"):
+        f.unlink(missing_ok=True)
+
+
 @app.delete("/api/clips/{cid}")
 def delete_clip(cid: int):
     c = db.get("clips", cid) or _bad(404, "clip not found")
     if c["status"] in ("rendering", "uploading"):
         _bad(409, f"clip is {c['status']}, try again when it finishes")
-    if c["path"]:
-        mp4 = DATA / c["path"]
-        for f in (mp4, mp4.with_suffix(".ass"), mp4.with_name(f"{mp4.stem}_master.mp4"), mp4.with_name(f"{mp4.stem}_words.json")):
-            f.unlink(missing_ok=True)
-    db.delete("clips", cid)  # a slot it held is free again
+    _drop_clip(c)
     return {"ok": True}
+
+
+@app.post("/api/clips/delete")
+def delete_clips(b: Ids):
+    """Several clips at once (rendering / uploading ones are skipped and named)."""
+    done, skipped = [], []
+    for cid in b.ids:
+        c = db.get("clips", cid)
+        if c and c["status"] in ("rendering", "uploading"):
+            skipped.append({"id": cid, "why": f"still {c['status']}"})
+        elif c:
+            _drop_clip(c)
+            done.append(cid)
+    return {"deleted": done, "skipped": skipped}
+
+
+@app.post("/api/clips/{cid}/clear-errors")
+def clear_errors(cid: int):
+    """Hide a clip's failed-upload messages (the platforms that worked stay)."""
+    c = db.get("clips", cid) or _bad(404, "clip not found")
+    ups = {p: u for p, u in json.loads(c.get("uploads") or "{}").items() if u.get("id")}
+    db.update("clips", cid, uploads=json.dumps(ups), **({"status": "rendered"} if c["status"] == "upload failed" else {}))
+    return db.get("clips", cid)
 
 
 # ---------- slots ----------

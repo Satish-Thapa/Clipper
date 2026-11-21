@@ -13,7 +13,7 @@
   --bg: #1A1A1A; --surface: #222; --card: #2A2A2A; --card2: #313131; --line: #3a3a3a; --line2: #4A4A4A;
   --text: #ECECEC; --muted: #BDBDBD; --dim: #8b8b8b;
   --green: #76B900; --green-hi: #8bd400; --glow: rgba(118,185,0,.22); --blue: #00BFFF; --ok: #6EFA5F;
-  --warn: #E8B339; --bad: #FF5A5F; --r: 8px;
+  --warn: #E8B339; --yellow: #FFD400; --bad: #FF5A5F; --r: 8px;
   --font: "Roboto Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --ease: cubic-bezier(.2,.8,.2,1);
 }
@@ -132,7 +132,7 @@ input[type=checkbox] { width: auto; accent-color: var(--green); }
 /* slots */
 .day { border: 1px solid var(--line); border-radius: var(--r); background: var(--card); margin-bottom: 14px; overflow: hidden; }
 .day-h { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
-.slot { display: grid; grid-template-columns: 70px 64px 1fr auto; gap: 12px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--line); }
+.slot { display: grid; grid-template-columns: 96px 64px 1fr auto; gap: 12px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--line); }
 .slot:last-child { border-bottom: 0; }
 .slot .t { font-weight: 700; font-size: 15px; }
 .slot img { width: 34px; height: 60px; object-fit: cover; border-radius: 4px; background: #000; vertical-align: middle; margin-right: 10px; }
@@ -177,7 +177,7 @@ pre.log { background: #141414; border: 1px solid var(--line); border-radius: 6px
 .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
 .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: 0; }
 /* modal, toast, reels */
-.modal { position: fixed; inset: 0; z-index: 300; background: rgba(0,0,0,.6); display: grid; place-items: center; padding: 16px; animation: fade .3s; }
+.modal { position: fixed; inset: 0; z-index: 400; background: rgba(0,0,0,.6); display: grid; place-items: center; padding: 16px; animation: fade .3s; }
 .modal[hidden] { display: none; }
 .modal .box { background: var(--card); border: 1px solid var(--line2); border-radius: var(--r); width: min(560px, 100%); max-height: 86dvh; overflow: auto; padding: 20px; animation: enter .4s var(--ease) both; }
 @keyframes fade { from { opacity: 0; } }
@@ -193,11 +193,52 @@ pre.log { background: #141414; border: 1px solid var(--line); border-radius: 6px
 #reelList { height: 100dvh; overflow-y: scroll; scroll-snap-type: y mandatory; }
 .reel { height: 100dvh; scroll-snap-align: start; position: relative; display: grid; place-items: center; }
 .reel video { height: 100dvh; max-width: 100vw; aspect-ratio: 9/16; object-fit: contain; }
-.reel .info { position: absolute; left: 16px; right: 84px; bottom: 24px; text-shadow: 0 1px 4px #000; }
 .reel .ra { position: absolute; right: 12px; bottom: 24px; display: grid; gap: 10px; }
 .reel .ra button { background: rgba(30,30,30,.8); border: 1px solid var(--line2); color: #fff; border-radius: 50%; width: 48px; height: 48px; display: grid; place-items: center; cursor: pointer; }
 .reel-top { position: fixed; top: 12px; left: 12px; right: 12px; display: flex; gap: 10px; align-items: center; z-index: 301; }
 .reel-top .btn { background: rgba(30,30,30,.85); color: #fff; }
+.chip.y { color: #111; background: var(--yellow); border-color: var(--yellow); }
+.vir { display: inline-grid; place-items: center; min-width: 38px; padding: 2px 8px; border-radius: 6px; background: var(--yellow); color: #111; font-weight: 700; }
+.facts { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.mini { display: inline-flex; gap: 3px; align-items: flex-end; height: 26px; margin-left: 4px; }
+.mini span { position: relative; width: 12px; height: 26px; background: var(--surface); border-radius: 2px; overflow: hidden; display: block; }
+.mini i { position: absolute; left: 0; right: 0; bottom: 0; background: var(--yellow); opacity: .85; }
+.mini b { position: absolute; left: 0; right: 0; bottom: 0; font-size: 8px; text-align: center; color: #111; }
+.errbox { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; color: var(--bad); background: rgba(255,90,95,.07); border: 1px solid rgba(255,90,95,.35); border-radius: 6px; padding: 6px 4px 6px 10px; }
+.errbox > div { flex: 1; } .errbox div + div { margin-top: 4px; }
+.warnbtn { color: var(--warn); }
+.selbox { position: absolute; top: 8px; left: 8px; background: rgba(17,17,17,.8); border-radius: 6px; padding: 4px 6px; display: grid; }
+.selbox input, input.sel { width: 16px; height: 16px; accent-color: var(--yellow); }
+.clip.picked { outline: 2px solid var(--yellow); }
+.steps { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 10px; }
+.st i { display: block; height: 4px; border-radius: 2px; background: var(--line2); }
+.st span { font-size: 11px; color: var(--dim); }
+.st.done i { background: var(--green); } .st.done span { color: var(--muted); }
+.st.now i { background: var(--blue); animation: pulse 1.2s ease-in-out infinite; } .st.now span { color: var(--text); }
+@keyframes pulse { 50% { opacity: .35; } }
+.thumbs { display: flex; gap: 6px; margin-top: 10px; overflow-x: auto; }
+.thumbs button, .tclip { position: relative; flex: none; border: 1px solid var(--line2); border-radius: 6px; overflow: hidden; padding: 0; background: #000; cursor: pointer; }
+.thumbs img { width: 45px; height: 80px; object-fit: cover; display: block; }
+.thumbs b, .tclip b { position: absolute; left: 2px; bottom: 2px; font-size: 10px; background: var(--yellow); color: #111; border-radius: 3px; padding: 0 4px; }
+.tray { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px; }
+.tclip { cursor: grab; } .tclip img { width: 54px; height: 96px; object-fit: cover; display: block; }
+.tclip .chip { position: absolute; top: 2px; left: 2px; padding: 0 5px; font-size: 9px; }
+.slot[draggable="true"] { cursor: grab; }
+.dragging { opacity: .45; }
+.slot.drop-ok { background: rgba(118,185,0,.06); box-shadow: inset 3px 0 0 var(--green); }
+.slot.over { background: rgba(255,212,0,.14); box-shadow: inset 3px 0 0 var(--yellow); }
+.pick { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 10px; }
+.pick button { position: relative; background: var(--surface); border: 1px solid var(--line2); border-radius: 8px; padding: 0 0 6px; color: var(--text); cursor: pointer; text-align: left; overflow: hidden; font: inherit; }
+.pick button:hover { border-color: var(--yellow); }
+.pick img { width: 100%; aspect-ratio: 9/16; object-fit: cover; display: block; }
+.pick .vir { position: absolute; top: 6px; left: 6px; }
+.pick .small { padding: 4px 6px 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+#reelSearch { width: min(280px, 45vw); padding: 7px 10px; background: rgba(30,30,30,.85); border-color: var(--yellow); }
+.reel .info { position: absolute; left: 16px; right: 84px; bottom: 24px; text-shadow: 0 1px 4px #000; display: grid; gap: 6px; max-height: 45dvh; overflow: auto; }
+.reel .rt { font-weight: 700; font-size: 15px; } .reel .rh { color: var(--yellow); font-weight: 600; }
+.reel .ra button { border-color: rgba(255,212,0,.5); flex-direction: column; gap: 0; }
+.reel .ra button:hover { background: var(--yellow); color: #111; }
+.reel .ra small { font-size: 9px; }
 @media (max-width: 900px) { .g2, .g2e { grid-template-columns: 1fr; } }
 @media (max-width: 768px) {
   .shell { grid-template-columns: 1fr; }
@@ -208,7 +249,7 @@ pre.log { background: #141414; border: 1px solid var(--line); border-radius: 6px
   main { padding: 18px 16px 80px; }
   h1 { font-size: 1.6rem; }
   .frames { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-  .slot { grid-template-columns: 56px 1fr; }
+  .slot { grid-template-columns: 84px 1fr; }
   .slot .what { grid-column: 1 / -1; }
   .slot .acts { grid-column: 1 / -1; }
   .clips { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
@@ -320,7 +361,7 @@ pre.log { background: #141414; border: 1px solid var(--line); border-radius: 6px
         <h2>On the video</h2>
         <label class="check"><span class="switch"><input type="checkbox" name="header"><span></span></span>Topic header <i class="tip" tabindex="0" data-tip="The clip's topic in big letters, e.g. SPEED FAILS THE HEIST. In the middle when the streamer is on top, otherwise at the top.">i</i></label>
         <label class="check"><span class="switch"><input type="checkbox" name="subtitles"><span></span></span>Subtitles <i class="tip" tabindex="0" data-tip="Word-by-word at the bottom, the word being said in yellow.">i</i></label>
-        <label class="check normOnly linkOnly"><span class="switch"><input type="checkbox" name="hq"><span></span></span>4K source <i class="tip" tabindex="0" data-tip="Download up to 4K instead of 1440p. Slower, a bit sharper.">i</i></label>
+        <p class="small dim" style="margin:6px 0 0">Always downloaded and rendered in 4K (2160x3840), the best quality there is.</p>
       </div>
       <div class="card">
         <h2>Posting</h2>
@@ -369,6 +410,7 @@ pre.log { background: #141414; border: 1px solid var(--line); border-radius: 6px
 <section class="page" id="p-jobs">
   <div class="head"><div><h1>Jobs</h1><p class="sub">Every video being clipped, live streams recording, and Auto's videos.</p></div>
     <div class="row"><button class="btn ghost sm" onclick="api('POST','/api/jobs/retry-failed').then(r=>toast(`Retrying ${r.started.length} job(s)`))"><svg class="i"><use href="#i-refresh"/></svg>Retry failed</button><button class="btn danger sm" onclick="confirmDo('Stop every running job? Clips already made stay.', () => api('POST','/api/jobs/stop-all'))"><svg class="i"><use href="#i-stop"/></svg>Stop all</button></div></div>
+  <div class="row" id="jobBulk" style="margin-bottom:12px"></div>
   <div id="jobList"></div>
 </section>
 
@@ -376,15 +418,17 @@ pre.log { background: #141414; border: 1px solid var(--line); border-radius: 6px
 <section class="page" id="p-clips">
   <div class="head"><div><h1>Clips</h1><p class="sub">Every clip made. Ready clips wait here until you put them in a slot or post them (Post now uses one of today's slots).</p></div>
     <button class="btn" onclick="openReels()"><svg class="i"><use href="#i-play"/></svg>Watch as reels</button></div>
-  <div class="row" style="margin-bottom:16px"><div class="tabs" id="clipTabs"></div><span class="sp"></span><select id="kindF" style="width:auto"><option value="">Shorts + longs</option><option value="short">Shorts</option><option value="long">Longs</option></select></div>
+  <div class="row" style="margin-bottom:16px"><div class="tabs" id="clipTabs"></div><span class="sp"></span><div class="row" id="clipBulk"></div><select id="kindF" style="width:auto"><option value="">Shorts + longs</option><option value="short">Shorts</option><option value="long">Longs</option></select></div>
   <div class="clips" id="clipGrid"></div>
   <p class="small dim" id="clipMore" style="text-align:center;margin-top:16px"></p>
 </section>
 
 <!-- SLOTS -->
 <section class="page" id="p-slots">
-  <div class="head"><div><h1>Slots</h1><p class="sub">The posting plan for the next 7 days. One slot = one clip, posted to every platform in Settings at that time. Fri / Sat-style weekend days get +1 of each.</p></div>
+  <div class="head"><div><h1>Slots</h1><p class="sub">The posting plan for the next 7 days. One slot = one clip. Drag a clip onto another slot to move it (onto a taken one: they swap); shorts go in short slots, longs in long slots. Weekend days get +1 of each.</p></div>
     <a class="btn ghost" href="#settings"><svg class="i"><use href="#i-set"/></svg>Change slots</a></div>
+  <div class="card" id="slotPlats"></div>
+  <div id="slotTray" style="margin-bottom:14px"></div>
   <div id="slotDays"></div>
 </section>
 
@@ -426,7 +470,7 @@ pre.log { background: #141414; border: 1px solid var(--line); border-radius: 6px
 </div>
 
 <div class="modal" id="modal" hidden onclick="if(event.target===this)closeModal()"><div class="box" id="modalBox"></div></div>
-<div id="reels" hidden><div class="reel-top"><button class="btn sm" onclick="closeReels()"><svg class="i"><use href="#i-x"/></svg>Close</button><span class="chip" id="reelCount"></span><span class="sp"></span><button class="btn sm" onclick="reelMute()" id="muteBtn"><svg class="i"><use href="#i-mute"/></svg></button></div><div id="reelList"></div></div>
+<div id="reels" hidden><div class="reel-top"><button class="btn sm" onclick="closeReels()"><svg class="i"><use href="#i-x"/></svg>Close</button><span class="chip" id="reelCount"></span><input id="reelSearch" placeholder="Search clips..." autocomplete="off"><span class="sp"></span><button class="btn sm" onclick="reelMute()" id="muteBtn"><svg class="i"><use href="#i-mute"/></svg></button></div><div id="reelList"></div></div>
 <div id="toasts"></div>
 
 <script>
@@ -437,8 +481,9 @@ const ico = (n, cls = "") => `<svg class="i ${cls}"><use href="#i-${n}"/></svg>`
 const tip = t => t ? ` <i class="tip" tabindex="0" data-tip="${esc(t)}">i</i>` : "";
 const PLAT = {youtube: "YouTube", facebook: "Facebook", instagram: "Instagram", tiktok: "TikTok"};
 const PCOL = {youtube: "#FF5A5F", facebook: "#00BFFF", instagram: "#c77dff", tiktok: "#6EFA5F"};
-const hhmm = t => new Date(t * 1000).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"});
-const when = t => new Date(t * 1000).toLocaleString([], {weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit"});
+const hhmm = t => new Date(t * 1000).toLocaleTimeString("en-US", {hour: "numeric", minute: "2-digit", hour12: true});
+const t12 = hm => { const [h, m] = String(hm).split(":").map(Number); return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`; };
+const when = t => new Date(t * 1000).toLocaleString("en-US", {weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit", hour12: true});
 const num = n => (+n || 0).toLocaleString();
 const mmss = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 const J = (s, d) => { try { return JSON.parse(s || "") ?? d; } catch (e) { return d; } };
@@ -469,7 +514,9 @@ function confirmDo(msg, fn, okMsg) {
 }
 
 // ---------- routing ----------
+document.addEventListener("play", e => { $$("video").forEach(v => v !== e.target && !v.paused && v.pause()); }, true);
 function route() {
+  $$("video").forEach(v => v.pause());
   page = (location.hash || "#home").slice(1) || "home";
   if (!$("#p-" + page)) page = "home";
   $$(".page").forEach(p => p.classList.toggle("on", p.id === "p-" + page));
@@ -509,26 +556,30 @@ function render() {
   if (page === "clips") renderClips();
   if (page === "socials") renderSocials();
   if (page === "auto") loadAuto();
-  if (page === "slots" && Date.now() - slotsAt > 15000) loadSlots();
+  if (page === "slots" && !dragCid && Date.now() - slotsAt > 15000) loadSlots();
   reelSync();
 }
+function dismissed() { try { return JSON.parse(localStorage.getItem("dismissed") || "[]"); } catch (e) { return []; } }
+function dismiss(m) { try { localStorage.setItem("dismissed", JSON.stringify(dismissed().concat([m]).slice(-50))); } catch (e) {} renderAlerts(); }
+const allPost = () => [...new Set([...(S.post_to.short || []), ...(S.post_to.long || [])])];
 function renderAlerts() {
   const out = [];
   const ck = S.youtube_cookies || {};
   if (ck.bot_check_at) out.push(["bad", `YouTube's bot check hit at ${hhmm(ck.bot_check_at)}: downloads fail until you add YouTube cookies on the <a href="#socials">Socials page</a>.`]);
   Object.entries(S.limit_timers || {}).forEach(([p, l]) => out.push(["", `${PLAT[p]} said its upload limit is reached (${hhmm(l.hit_at)}). It's skipped until ${hhmm(l.until)}.`]));
   Object.entries(S.uploads || {}).forEach(([p, u]) => u.error && !(S.limit_timers || {})[p] && out.push(["bad", `${PLAT[p]}: the last upload failed (clip #${u.error.clip}, ${hhmm(u.error.at)}): ${esc(u.error.error)}`]));
-  if (!S.post_to.length) out.push(["", `No platform to post to: pick them in <a href="#settings">Settings → Slots</a>.`]);
-  S.post_to.filter(p => !S.platforms[p]).forEach(p => out.push(["", `${PLAT[p]} is in your posting platforms but isn't connected (<a href="#socials">Socials</a>).`]));
-  const key = JSON.stringify(out);
-  if ($("#alerts").dataset.k !== key) { $("#alerts").dataset.k = key; $("#alerts").innerHTML = out.map(([c, m]) => `<div class="alert ${c}">${ico("alert")}<div>${m}</div></div>`).join(""); }
+  if (!allPost().length) out.push(["", `No platform to post to: pick them on the <a href="#slots">Slots page</a>.`]);
+  allPost().filter(p => !S.platforms[p]).forEach(p => out.push(["", `${PLAT[p]} is in your posting platforms but isn't connected (<a href="#socials">Socials</a>).`]));
+  const shown = out.filter(([, m]) => !dismissed().includes(m));
+  const k2 = JSON.stringify(shown);
+  if ($("#alerts").dataset.k !== k2) { $("#alerts").dataset.k = k2; $("#alerts").innerHTML = shown.map(([c, m]) => `<div class="alert ${c}">${ico("alert")}<div style="flex:1">${m}</div><button class="btn plain sm" title="Hide this message" onclick='dismiss(${esc(JSON.stringify(m))})'>${ico("x")}</button></div>`).join(""); }
 }
 
 // ---------- overview ----------
 function slotChip(x) {
   const c = x.clip;
   const label = {posted: "posted", scheduled: "scheduled", uploading: "posting", missed: "missed", free: x.reserved ? "kept for Auto" : "free"}[x.state];
-  return `<div class="tl ${x.state}"><b>${esc(x.time)}</b><span class="chip ${x.kind === "long" ? "b" : "g"}">${x.kind}${x.extra ? " +1" : ""}</span>
+  return `<div class="tl ${x.state}"><b>${esc(t12(x.time))}</b><span class="chip ${x.kind === "long" ? "b" : "g"}">${x.kind}${x.extra ? " +1" : ""}</span>
     <div class="small ${x.state === "posted" ? "" : "dim"}" style="margin-top:6px">${label}</div>
     ${c ? `<div class="small" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(c.title)}">${esc(c.title)}</div>` : ""}</div>`;
 }
@@ -543,7 +594,7 @@ function renderHome() {
   const key = JSON.stringify(k);
   if ($("#kpis").dataset.k !== key) { $("#kpis").dataset.k = key; $("#kpis").innerHTML = k.map(([c, v, l], i) => `<div class="kpi ${c}" style="animation-delay:${i * 120}ms"><b>${esc(v)}</b><span>${l}</span></div>`).join(""); }
   $("#homeSlots").innerHTML = t.slots.length ? t.slots.map(slotChip).join("") : `<p class="dim">No slots today: set them in <a href="#settings">Settings</a>.</p>`;
-  $("#homePlats").textContent = S.post_to.map(p => PLAT[p]).join(", ") || "nowhere yet";
+  $("#homePlats").textContent = `shorts: ${S.post_to.short.map(p => PLAT[p]).join(", ") || "nowhere"} · longs: ${S.post_to.long.map(p => PLAT[p]).join(", ") || "nowhere"}`;
   $("#homeAuto").innerHTML = `<h2>${ico("bot")} Auto <span class="chip ${S.auto.enabled ? "g" : ""}">${S.auto.enabled ? "on" : "off"}</span></h2>
     ${S.auto.running ? `<p><span class="chip b">running</span> ${esc(S.auto.stage)}</p>` : `<p class="dim">${S.auto.enabled ? "Researches, clips and fills its slots every day." : "Switch it on to clip trending videos every day."}</p>`}
     <a class="btn ghost sm" href="#auto">Open Auto</a>`;
@@ -562,7 +613,7 @@ async function prepCreate() {
   const f = $("#cf"), s = SET.values;
   if (!f.dataset.init) {
     f.dataset.init = 1; layout = s.layout;
-    f.header.checked = s.header; f.subtitles.checked = s.subtitles; f.hq.checked = s.hq; f.cam_corner.value = s.cam_corner;
+    f.header.checked = s.header; f.subtitles.checked = s.subtitles; f.cam_corner.value = s.cam_corner;
     f.chunk_minutes.value = s.live_chunk_minutes;
   }
   f.filler.innerHTML = SET.fillers.length ? SET.fillers.map(n => `<option ${n === s.filler ? "selected" : ""}>${esc(n)}</option>`).join("") : `<option value="">none yet: add one in Settings</option>`;
@@ -600,7 +651,7 @@ async function createJob(e) {
     } else {
       const url = f.url.value.trim();
       if (!/^https?:\/\/(www\.|m\.)?(youtube\.com\/(watch\?|live\/|shorts\/)|youtu\.be\/)/i.test(url)) throw new Error("Paste a YouTube link (youtube.com/watch?v=..., youtu.be/..., youtube.com/live/...).");
-      r = await api("POST", "/api/jobs", {url, mode, shorts, longs, notes: f.notes.value, fill: f.fill.checked, hq: f.hq.checked, ...look,
+      r = await api("POST", "/api/jobs", {url, mode, shorts, longs, notes: f.notes.value, fill: f.fill.checked, ...look,
                                           chunk_minutes: mode === "live" ? (+f.chunk_minutes.value || null) : null, max_chunks: mode === "live" ? (+f.max_chunks.value || 0) : 0});
     }
     toast(`Job #${r.id} started`); f.url.value = ""; f.file.value = ""; f.notes.value = ""; location.hash = "#jobs";
@@ -608,36 +659,110 @@ async function createJob(e) {
 }
 
 // ---------- jobs ----------
-const openLogs = new Set();
+// Each job card is built once and then only its changed parts are touched (status, steps, log text): no flicker,
+// and typing in a live job's controls is never interrupted.
+const openLogs = new Set(), openGraphs = new Set(), jobSel = new Set();
+const SIG = {hype: "hype (all signals)", heatmap: "YouTube most replayed", chat: "chat speed", comments: "timestamped comments", audio: "loudness", reaction: "streamer reactions"};
+const SIGCOL = {hype: "#76B900", audio: "#8b8b8b", heatmap: "#FF5A5F", chat: "#00BFFF", comments: "#c77dff", reaction: "#FFD400"};
+const STEPS = ["Download", "Transcribe", "AI pick", "Render", "Done"];
+function jobStep(j) {
+  const log = j.log || "";
+  if (j.status === "done") return 4;
+  return /STEP 6/.test(log) ? 3 : /STEP 5/.test(log) ? 2 : /STEP 4/.test(log) ? 1 : 0;
+}
+const setPart = (el, key, html) => { if (el && el.dataset.k !== key) { el.dataset.k = key; el.innerHTML = html; } };
+function jobHead(j) {
+  const run = !FINISHED.includes(j.status);
+  return `<input type="checkbox" class="sel" ${jobSel.has(j.id) ? "checked" : ""} ${run ? "disabled title='Running: stop it first'" : "title='Select'"} onchange="selJob(${j.id}, this.checked)">
+    ${modeChip(j)}<b>#${j.id}</b><span class="t" title="${esc(j.title || j.url)}">${esc(j.title || j.url)}</span>
+    <span class="chip ${j.status === "done" ? "ok" : j.status === "failed" ? "bad" : run ? "b" : ""}">${esc(j.status)}</span><span class="sp"></span>
+    ${run ? `<button class="btn danger sm" onclick="act(this, () => api('POST','/api/jobs/${j.id}/stop'), 'Stopping at the next step')">${ico("stop")}Stop</button>` : ""}
+    ${["failed", "interrupted", "stopped"].includes(j.status) && !/retried as job #/.test(j.log || "") ? `<button class="btn ghost sm" onclick="act(this, () => api('POST','/api/jobs/${j.id}/retry'), r => 'Retrying as job #' + r.id)">${ico("refresh")}Retry</button>` : ""}
+    ${!run ? `<button class="btn plain sm" title="Remove this record (its clips stay)" onclick="act(this, () => api('DELETE','/api/jobs/${j.id}'))">${ico("trash")}</button>` : ""}`;
+}
+function jobMeta(j) {
+  const lay = (j.layout || "").startsWith("cam:") ? "streamer on top" : (j.layout || "").startsWith("split:") ? "split" : "full screen";
+  const err = (String(j.log || "").match(/ERROR: ([^\n]+)/) || [])[1];
+  return `${j.shorts} short + ${j.longs} long${j.mode === "live" ? " per piece" : ""} · ${lay} · header ${j.header ? "on" : "off"} · subtitles ${j.subtitles ? "on" : "off"} · ${j.fill ? "fills free slots" : "clips wait in Clips"} · started ${when(j.created)}${(j.notes || "").trim() ? ` · <span title="${esc(j.notes)}">your AI note</span>` : ""}
+    ${err ? `<div style="color:var(--bad);margin-top:4px">${esc(err)}</div>` : ""}`;
+}
+function jobSteps(j) {
+  if (["failed", "stopped", "interrupted"].includes(j.status)) return "";
+  const at = jobStep(j), live = j.mode === "live" && !FINISHED.includes(j.status);
+  return `<div class="steps">${STEPS.map((n, i) => `<div class="st ${i < at || j.status === "done" ? "done" : i === at ? "now" : ""}"><i></i><span>${i === 0 && live ? "Recording" : n}</span></div>`).join("")}</div>`;
+}
+function jobThumbs(j) {
+  const cs = S.clips.filter(c => c.job_id === j.id && c.path).slice(0, 10);
+  return cs.length ? `<div class="thumbs">${cs.map(c => `<button title="${esc(c.title)} · virality ${Math.round(c.score || 0)}" onclick="openReels(${c.id})"><img loading="lazy" src="/api/clips/${c.id}/poster?v=${ver(c)}" alt=""><b>${Math.round(c.score || 0)}</b></button>`).join("")}</div>` : "";
+}
+function jobLive(j) {
+  return j.mode === "live" && !FINISHED.includes(j.status) ? `<div class="fields" style="margin-top:10px;max-width:640px">
+    <label class="f">Minutes per piece<input type="number" min="1" max="120" value="${j.chunk_minutes || SET?.values.live_chunk_minutes || 10}" id="lc${j.id}"></label>
+    <label class="f">Pieces (0 = until it ends)<input type="number" min="0" max="500" value="${j.max_chunks || 0}" id="lm${j.id}"></label>
+    <label class="f">Shorts / piece<input type="number" min="0" max="20" value="${j.shorts}" id="ls${j.id}"></label>
+    <label class="f">Longs / piece<input type="number" min="0" max="10" value="${j.longs}" id="ll${j.id}"></label></div>
+    <button class="btn ghost sm" style="margin-top:8px" onclick="act(this, () => api('POST','/api/jobs/${j.id}/live', {chunk_minutes:+$('#lc${j.id}').value, max_chunks:+$('#lm${j.id}').value, shorts:+$('#ls${j.id}').value, longs:+$('#ll${j.id}').value}), 'Applies from the next piece')">Apply to the next piece</button>` : "";
+}
 function renderJobs() {
-  if ($("#jobList").contains(document.activeElement) && document.activeElement.matches("input")) return;
-  const key = JSON.stringify(S.jobs.map(j => [j.id, j.status, (j.log || "").length, j.title, j.shorts, j.longs, j.chunk_minutes, j.max_chunks]) .concat([...openLogs]));
-  if ($("#jobList").dataset.k === key) return; $("#jobList").dataset.k = key;
-  const scroll = Object.fromEntries($$("#jobList pre.log").map(p => [p.dataset.id, p.scrollHeight - p.scrollTop - p.clientHeight < 30 ? -1 : p.scrollTop]));
-  $("#jobList").innerHTML = S.jobs.length ? S.jobs.slice(0, 60).map(j => {
-    const run = !FINISHED.includes(j.status), clips = S.clips.filter(c => c.job_id === j.id).length;
-    const lay = (j.layout || "").startsWith("cam:") ? "streamer on top" : (j.layout || "").startsWith("split:") ? "split" : "full screen";
-    return `<div class="job"><div class="row">${modeChip(j)}<b>#${j.id}</b><span class="t" title="${esc(j.title || j.url)}">${esc(j.title || j.url)}</span>
-      <span class="chip ${j.status === "done" ? "ok" : j.status === "failed" ? "bad" : run ? "b" : ""}">${esc(j.status)}</span><span class="sp"></span>
-      ${run ? `<button class="btn danger sm" onclick="act(this, () => api('POST','/api/jobs/${j.id}/stop'), 'Stopping at the next step')">${ico("stop")}Stop</button>` : ""}
-      ${["failed", "interrupted", "stopped"].includes(j.status) && !/retried as job #/.test(j.log || "") ? `<button class="btn ghost sm" onclick="act(this, () => api('POST','/api/jobs/${j.id}/retry'), r => 'Retrying as job #' + r.id)">${ico("refresh")}Retry</button>` : ""}
-      ${!run ? `<button class="btn plain sm" title="Remove this record (its clips stay)" onclick="act(this, () => api('DELETE','/api/jobs/${j.id}'))">${ico("trash")}</button>` : ""}</div>
-      <div class="small dim" style="margin-top:6px">${j.shorts} short + ${j.longs} long${j.mode === "live" ? " per piece" : ""} · ${lay} · header ${j.header ? "on" : "off"} · subtitles ${j.subtitles ? "on" : "off"} · ${j.fill ? "fills free slots" : "clips wait in Clips"} · ${clips} clip(s) made${(j.notes || "").trim() ? ` · <span title="${esc(j.notes)}">your AI note</span>` : ""}</div>
-      ${j.mode === "live" && run ? `<div class="fields" style="margin-top:10px;max-width:640px">
-        <label class="f">Minutes per piece<input type="number" min="1" max="120" value="${j.chunk_minutes || SET?.values.live_chunk_minutes || 10}" id="lc${j.id}"></label>
-        <label class="f">Pieces (0 = until it ends)<input type="number" min="0" max="500" value="${j.max_chunks || 0}" id="lm${j.id}"></label>
-        <label class="f">Shorts / piece<input type="number" min="0" max="20" value="${j.shorts}" id="ls${j.id}"></label>
-        <label class="f">Longs / piece<input type="number" min="0" max="10" value="${j.longs}" id="ll${j.id}"></label></div>
-        <button class="btn ghost sm" style="margin-top:8px" onclick="act(this, () => api('POST','/api/jobs/${j.id}/live', {chunk_minutes:+$('#lc${j.id}').value, max_chunks:+$('#lm${j.id}').value, shorts:+$('#ls${j.id}').value, longs:+$('#ll${j.id}').value}), 'Applies from the next piece')">Apply to the next piece</button>` : ""}
-      <details ${openLogs.has(j.id) ? "open" : ""} ontoggle="this.open ? openLogs.add(${j.id}) : openLogs.delete(${j.id})"><summary>log</summary><pre class="log" data-id="${j.id}">${esc(j.log || "")}</pre></details></div>`;
-  }).join("") : `<div class="card empty">${ico("act")}<p>No jobs yet.</p><a class="btn" href="#create">Clip a video</a></div>`;
-  $$("#jobList pre.log").forEach(p => { const s = scroll[p.dataset.id]; p.scrollTop = s === undefined || s === -1 ? p.scrollHeight : s; });
+  const box = $("#jobList"), list = S.jobs.slice(0, 60);
+  if (!list.length) { setPart(box, "empty", `<div class="card empty">${ico("act")}<p>No jobs yet.</p><a class="btn" href="#create">Clip a video</a></div>`); return; }
+  if (box.dataset.k === "empty") { box.dataset.k = ""; box.innerHTML = ""; }
+  const keep = new Set(list.map(j => String(j.id)));
+  $$(".job", box).forEach(el => keep.has(el.dataset.id) || el.remove());
+  let prev = null;
+  for (const j of list) {
+    let el = box.querySelector(`.job[data-id="${j.id}"]`);
+    if (!el) {
+      el = document.createElement("div"); el.className = "job"; el.dataset.id = j.id;
+      el.innerHTML = `<div class="row jh"></div><div class="small dim jm" style="margin-top:6px"></div><div class="js"></div><div class="jt"></div><div class="jl"></div>
+        <details class="jlog" ${openLogs.has(j.id) ? "open" : ""} ontoggle="this.open ? (openLogs.add(${j.id}), renderJobs()) : openLogs.delete(${j.id})"><summary>Log</summary><pre class="log"></pre></details>
+        <details class="jgraph" ${openGraphs.has(j.id) ? "open" : ""} ontoggle="this.open ? (openGraphs.add(${j.id}), drawCurves(${j.id})) : openGraphs.delete(${j.id})"><summary>Hype curves and picked clips</summary><div id="cv-${j.id}"><div class="skel" style="height:140px"></div></div></details>`;
+      if (openGraphs.has(j.id)) setTimeout(() => drawCurves(j.id));
+    }
+    if (prev ? prev.nextSibling !== el : box.firstChild !== el) prev ? prev.after(el) : box.prepend(el);
+    prev = el;
+    setPart(el.querySelector(".jh"), JSON.stringify([j.status, j.title, jobSel.has(j.id), /retried as job #/.test(j.log || "")]), jobHead(j));
+    setPart(el.querySelector(".jm"), JSON.stringify([j.shorts, j.longs, j.layout, j.header, j.subtitles, j.fill, j.notes, j.status]), jobMeta(j));
+    setPart(el.querySelector(".js"), JSON.stringify([j.status, jobStep(j)]), jobSteps(j));
+    setPart(el.querySelector(".jt"), JSON.stringify(S.clips.filter(c => c.job_id === j.id).map(c => [c.id, c.path, c.score])), jobThumbs(j));
+    if (!el.querySelector(".jl").contains(document.activeElement)) setPart(el.querySelector(".jl"), JSON.stringify([j.status, j.chunk_minutes, j.max_chunks, j.shorts, j.longs]), jobLive(j));
+    const pre = el.querySelector("pre.log");
+    if (openLogs.has(j.id) && pre.textContent.length !== (j.log || "").length) {
+      const bottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 30;
+      pre.textContent = j.log || "";
+      if (bottom) pre.scrollTop = pre.scrollHeight;
+    }
+    if (openGraphs.has(j.id) && !FINISHED.includes(j.status) && Date.now() - (+el.dataset.g || 0) > 15000) { el.dataset.g = Date.now(); drawCurves(j.id); }
+  }
+  setPart($("#jobBulk"), JSON.stringify([...jobSel]), jobSel.size ? `<span class="chip b">${jobSel.size} selected</span><button class="btn danger sm" onclick="delJobs(this)">${ico("trash")}Delete selected</button><button class="btn plain sm" onclick="jobSel.clear();renderJobs()">Clear</button>`
+    : `<button class="btn plain sm" onclick="S.jobs.filter(j => FINISHED.includes(j.status)).forEach(j => jobSel.add(j.id));renderJobs()">Select all finished</button>`);
+}
+function selJob(id, on) { on ? jobSel.add(id) : jobSel.delete(id); renderJobs(); }
+function delJobs(btn) {
+  const ids = [...jobSel];
+  confirmDo(`Delete ${ids.length} job record(s)? Their clips stay in Clips.`, async () => { const r = await api("POST", "/api/jobs/delete", {ids}); jobSel.clear(); if (r.skipped.length) toast(`${r.skipped.length} skipped: still running`, true); return r; }, r => `Deleted ${r.deleted.length}`);
+}
+async function drawCurves(id) {
+  const el = $(`#cv-${id}`); if (!el) return;
+  const data = await api("GET", `/api/jobs/${id}/curves`).catch(() => []);
+  if (!data.length) { el.innerHTML = `<p class="dim small">The graph appears once the loudness step is done.</p>`; return; }
+  el.innerHTML = data.map(c => {
+    const n = c.n || 1, W = 800, H = 140;
+    const lines = Object.entries(c.signals).map(([k, v]) => {
+      const step = Math.max(1, Math.floor(v.length / 400)), pts = [];
+      for (let i = 0; i < v.length; i += step) pts.push(`${(i / n * W).toFixed(1)},${(H - 4 - v[i] * (H - 10)).toFixed(1)}`);
+      return `<polyline points="${pts.join(" ")}" fill="none" stroke="${SIGCOL[k] || "#aaa"}" stroke-width="${k === "hype" ? 2 : 1}" opacity="${k === "hype" ? 1 : .55}" vector-effect="non-scaling-stroke"/>`;
+    }).join("");
+    const picks = (c.chosen || []).map(x => `<rect x="${x.start / n * W}" y="0" width="${Math.max(2, (x.end - x.start) / n * W)}" height="${H}" fill="${x.kind === "long" ? "rgba(0,191,255,.16)" : "rgba(255,212,0,.2)"}"><title>${esc(x.title)} · ${mmss(x.start)}-${mmss(x.end)}</title></rect>`).join("");
+    return `<div class="small dim" style="margin-top:8px">${esc(c.name)} · ${mmss(n)} · ${(c.chosen || []).length} clip(s) picked</div><svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="height:140px;background:var(--surface);border-radius:6px">${picks}${lines}</svg>`;
+  }).join("") + `<div class="legend" style="margin-top:6px">${Object.keys(SIGCOL).map(k => `<span><i style="background:${SIGCOL[k]}"></i>${SIG[k]}</span>`).join("")}<span><i style="background:rgba(255,212,0,.6)"></i>picked short</span><span><i style="background:rgba(0,191,255,.6)"></i>picked long</span></div>`;
 }
 
 // ---------- clips ----------
 const CF = {all: ["All", c => true], ready: ["Ready", c => c.status === "rendered"], slot: ["In a slot", c => c.status === "scheduled"],
-            posted: ["Posted", c => /^uploaded/.test(c.status)], failed: ["Failed", c => /failed/.test(c.status)]};
+            posted: ["Posted", c => /^uploaded/.test(c.status)], failed: ["Failed", c => /failed/.test(c.status) || Object.values(J(c.uploads, {})).some(u => u.error)]};
 let cf = "all", clipShown = 24;
+const clipSel = new Set();
 $("#clipTabs").innerHTML = Object.entries(CF).map(([k, [n]]) => `<button data-f="${k}" class="${k === cf ? "on" : ""}">${n}</button>`).join("");
 $("#clipTabs").onclick = e => { const b = e.target.closest("button"); if (!b) return; cf = b.dataset.f; clipShown = 24; $$("#clipTabs button").forEach(x => x.classList.toggle("on", x === b)); $("#clipGrid").dataset.k = ""; renderClips(); };
 $("#kindF").onchange = () => { $("#clipGrid").dataset.k = ""; renderClips(); };
@@ -646,51 +771,90 @@ const clipVideo = (c, attrs) => `<video src="/api/clips/${c.id}/preview?v=${ver(
 const STATUS = {rendered: ["Ready", "g"], scheduled: ["In a slot", "b"], uploading: ["Posting", "b"], rendering: ["Rendering", ""], uploaded: ["Posted", "ok"], "render failed": ["Render failed", "bad"], "upload failed": ["Upload failed", "bad"]};
 const statusChip = c => { const [n, k] = STATUS[c.status] || [c.status, /uploaded/.test(c.status) ? "warn" : ""]; return `<span class="chip ${k}">${esc(n)}</span>`; };
 function clipList() { const f = CF[cf][1], k = $("#kindF").value; return S.clips.filter(c => f(c) && (!k || c.kind === k)); }
-function clipActions(c) {
-  const ready = c.path && !["rendering", "uploading"].includes(c.status), posted = Object.values(J(c.uploads, {})).some(u => u.id);
-  const failed = Object.values(J(c.uploads, {})).some(u => u.error);
-  return [c.path ? `<button class="btn plain sm" title="Watch full screen from here" onclick="openReels(${c.id})">${ico("play")}</button>` : "",
-    ready && !posted ? `<button class="btn ghost sm" title="Post now: uses one of today's free ${c.kind} slots" onclick="postNow(${c.id}, this)">${ico("up")}Post</button>` : "",
-    ready && !posted && c.status !== "scheduled" ? `<button class="btn ghost sm" title="Put it in a free slot" onclick="slotPicker(${c.id})">${ico("clock")}Slot</button>` : "",
+const posted = c => Object.values(J(c.uploads, {})).some(u => u.id);
+const failedOn = c => Object.entries(J(c.uploads, {})).filter(([, u]) => u.error);
+function clipFacts(c) {  // virality + what kind of moment + the AI's five scores, compact
+  const w = J(c.why, {}), sc = w.scores || {};
+  return `<div class="facts"><span class="vir" title="Virality score (0-100)">${Math.round(c.score || 0)}</span>
+    ${w.moment ? `<span class="chip">${esc(w.moment)}</span>` : ""}${(w.confirmed || []).length ? `<span class="chip b" title="${esc(w.confirmed.join(" + "))} agree">+5 signals</span>` : ""}${w.scream_hook ? `<span class="chip y">scream hook</span>` : ""}
+    ${Object.keys(sc).length ? `<div class="mini">${["hook", "flow", "emotion", "share", "trend"].map(k => `<span title="${k}: ${sc[k] ?? "-"}/10"><i style="height:${(sc[k] || 0) * 10}%"></i><b>${k[0].toUpperCase()}</b></span>`).join("")}</div>` : ""}</div>`;
+}
+function clipErrors(c) {
+  const f = failedOn(c);
+  return f.length ? `<div class="errbox">${f.map(([p, u]) => `<div><b>${PLAT[p] || p} failed:</b> ${esc(u.error)}</div>`).join("")}<button class="btn plain sm" title="Hide these messages" onclick="act(this, () => api('POST','/api/clips/${c.id}/clear-errors'))">${ico("x")}</button></div>` : "";
+}
+function clipActions(c, inReels) {
+  const ready = c.path && !["rendering", "uploading"].includes(c.status), up = posted(c), fail = failedOn(c).length;
+  return [!inReels && c.path ? `<button class="btn plain sm" title="Watch full screen from here" onclick="openReels(${c.id})">${ico("play")}</button>` : "",
+    ready && !up && !fail ? `<button class="btn ghost sm" title="Post now: uses the next free ${c.kind} slot today" onclick="postNow(${c.id}, this)">${ico("up")}Post</button>` : "",
+    ready && fail ? `<button class="btn ghost sm" title="Try the failed platform(s) again (today's limit still applies)" onclick="act(this, () => api('POST','/api/clips/${c.id}/retry'), 'Retrying the upload')">${ico("refresh")}Retry</button>` : "",
+    ready && !up && c.status !== "scheduled" ? `<button class="btn ghost sm" title="Put it in a free slot" onclick="slotPicker(${c.id})">${ico("clock")}Slot</button>` : "",
     c.status === "scheduled" ? `<button class="btn ghost sm" title="Take it off its slot (it waits here)" onclick="act(this, () => api('POST','/api/clips/${c.id}/unassign'), 'Taken off its slot')">${ico("x")}Unslot</button>` : "",
-    ready && posted && failed ? `<button class="btn ghost sm" title="Retry the platforms that failed (today's quota still applies)" onclick="act(this, () => api('POST','/api/clips/${c.id}/retry'), 'Retrying')">${ico("refresh")}Retry</button>` : "",
-    ready ? `<button class="btn plain sm" title="Edit title, header, description, hashtags" onclick="editClip(${c.id})">${ico("edit")}</button>` : "",
-    `<button class="btn plain sm" title="Why this clip?" onclick="whyClip(${c.id})">${ico("info")}</button>`,
-    ready ? `<button class="btn plain sm" title="Delete" onclick="confirmDo('Delete this clip? Copies already posted stay online.', () => api('DELETE','/api/clips/${c.id}'), 'Deleted')">${ico("trash")}</button>` : ""].join("");
+    ready ? `<button class="btn ghost sm warnbtn" title="Post now to the platforms you pick, past every limit (warns first)" onclick="forcePicker(${c.id})">${ico("alert")}Force</button>` : "",
+    ready && !up ? `<button class="btn plain sm" title="Edit title, header, description, hashtags" onclick="editClip(${c.id})">${ico("edit")}</button>` : "",
+    `<button class="btn plain sm" title="Why this clip? (all its info)" onclick="whyClip(${c.id})">${ico("info")}</button>`,
+    ready || c.status === "render failed" ? `<button class="btn plain sm" title="Delete" onclick="delClips([${c.id}])">${ico("trash")}</button>` : ""].join("");
 }
 function clipCard(c, i) {
-  const ups = Object.entries(J(c.uploads, {})), views = J(c.views, {});
-  return `<div class="clip" style="animation-delay:${Math.min(i, 8) * 120}ms"><div class="media">${c.path ? clipVideo(c, "controls playsinline") : `<div class="skel" style="height:100%"></div>`}<span class="score">${Math.round(c.score || 0)}</span><span class="chip kind ${c.kind === "long" ? "b" : "g"}">${c.kind}</span></div>
+  const ups = Object.entries(J(c.uploads, {})).filter(([, u]) => u.id), views = J(c.views, {});
+  return `<div class="clip ${clipSel.has(c.id) ? "picked" : ""}" style="animation-delay:${Math.min(i, 8) * 120}ms"><div class="media">${c.path ? clipVideo(c, "controls playsinline") : `<div class="skel" style="height:100%"></div>`}
+      <label class="selbox" title="Select"><input type="checkbox" ${clipSel.has(c.id) ? "checked" : ""} onchange="selClip(${c.id}, this.checked)"></label><span class="chip kind ${c.kind === "long" ? "b" : "g"}">${c.kind}</span></div>
     <div class="body"><div class="row">${statusChip(c)}${c.status === "scheduled" && c.post_at ? `<span class="small dim">${when(c.post_at)}</span>` : ""}<span class="small dim">${mmss(c.end - c.start)}</span></div>
-      <div class="title">${esc(c.title)}</div>${c.headline ? `<div class="small" style="color:var(--green)">${esc(c.headline)}</div>` : ""}
-      ${ups.length ? `<div class="row small">${ups.map(([p, u]) => u.id ? `<a href="${esc(u.url)}" target="_blank" rel="noopener">${PLAT[p] || p}${views[p] != null ? ` · ${num(views[p])}` : ""}</a>` : `<span style="color:var(--bad)" title="${esc(u.error)}">${PLAT[p] || p} failed</span>`).join("")}</div>` : ""}</div>
+      <div class="title">${esc(c.title)}</div>${c.headline ? `<div class="small" style="color:var(--yellow)">${esc(c.headline)}</div>` : ""}
+      ${clipFacts(c)}
+      ${ups.length ? `<div class="row small">${ups.map(([p, u]) => `<a href="${esc(u.url)}" target="_blank" rel="noopener">${PLAT[p] || p}${views[p] != null ? ` · ${num(views[p])} views` : ""}</a>`).join("")}</div>` : ""}
+      ${clipErrors(c)}</div>
     <div class="acts">${clipActions(c)}</div></div>`;
 }
 function renderClips() {
   const list = clipList(), shown = list.slice(0, clipShown);
-  const key = JSON.stringify([cf, $("#kindF").value, shown.map(c => [c.id, c.status, c.path, c.uploads, c.views, c.post_at, c.title, c.headline])]);
-  if ($("#clipGrid").dataset.k === key) return; $("#clipGrid").dataset.k = key;
-  if ($$("#clipGrid video").some(v => !v.paused)) return;  // don't restart a playing video
+  const key = JSON.stringify([cf, $("#kindF").value, [...clipSel], shown.map(c => [c.id, c.status, c.path, c.uploads, c.views, c.post_at, c.title, c.headline])]);
+  setPart($("#clipBulk"), JSON.stringify([...clipSel]), clipSel.size ? `<span class="chip b">${clipSel.size} selected</span><button class="btn danger sm" onclick="delClips([...clipSel])">${ico("trash")}Delete selected</button><button class="btn plain sm" onclick="clipSel.clear();renderClips()">Clear</button>`
+    : `<button class="btn plain sm" onclick="clipList().slice(0, clipShown).forEach(c => clipSel.add(c.id));renderClips()">Select all shown</button>`);
+  if ($("#clipGrid").dataset.k === key) return;
+  if ($$("#clipGrid video").some(v => !v.paused)) return;  // never restart a playing video
+  $("#clipGrid").dataset.k = key;
   $("#clipGrid").innerHTML = shown.length ? shown.map(clipCard).join("") : `<div class="card empty" style="grid-column:1/-1">${ico("film")}<p>No clips here yet.</p><a class="btn" href="#create">Make some</a></div>`;
   $("#clipMore").textContent = list.length > shown.length ? `Showing ${shown.length} of ${list.length}: scroll for more` : "";
 }
+function selClip(id, on) { on ? clipSel.add(id) : clipSel.delete(id); $("#clipGrid").dataset.k = ""; renderClips(); }
+function delClips(ids) {
+  confirmDo(`Delete ${ids.length} clip(s)? Copies already posted stay online.`, async () => {
+    const r = await api("POST", "/api/clips/delete", {ids}); ids.forEach(i => clipSel.delete(i));
+    r.deleted.forEach(id => $(`#reelList .reel[data-id="${id}"]`)?.remove());
+    if (r.skipped.length) toast(`${r.skipped.length} skipped: still rendering / posting`, true); return r;
+  }, r => `Deleted ${r.deleted.length}`);
+}
 new IntersectionObserver(es => { if (es.some(e => e.isIntersecting) && S && page === "clips" && clipShown < clipList().length) { clipShown += 24; $("#clipGrid").dataset.k = ""; renderClips(); } }, {rootMargin: "600px"}).observe($("#clipMore"));
-async function postNow(id, btn) { await act(btn, () => api("POST", `/api/clips/${id}/post`), r => `Posting now in today's ${r.slot.time} slot`); }
+async function postNow(id, btn) { await act(btn, () => api("POST", `/api/clips/${id}/post`), r => `Posting now (the ${t12(r.slot.time)} slot)`); }
 async function slotPicker(id) {
   const c = S.clips.find(x => x.id === id);
   openModal(`<h2>${ico("clock")} Put it in a slot</h2><div class="skel" style="height:120px"></div>`);
   const days = await api("GET", "/api/slots?days=7");
-  const free = days.flatMap(d => d.slots.filter(x => x.kind === c.kind && x.state === "free" && x.at > Date.now() / 1000 + 60).map(x => ({...x, wd: d.weekday})));
-  $("#modalBox").innerHTML = `<h2>${ico("clock")} Put "${esc(c.title)}" in a slot</h2><p class="small dim">Free ${c.kind} slots in the next 7 days. Slots marked "kept for Auto" are free, but an Auto topic will want them today.</p>
-    <div class="stack">${free.length ? free.map(x => `<button class="btn ghost" style="width:100%;justify-content:space-between" onclick="assign(${id}, ${x.at}, this)"><span>${esc(x.wd)} ${new Date(x.at * 1000).toLocaleDateString([], {day: "numeric", month: "short"})} · ${esc(x.time)}${x.extra ? " (weekend +1)" : ""}</span>${x.reserved ? `<span class="chip b">kept for Auto</span>` : ""}</button>`).join("") : `<p>No free ${c.kind} slot in the next 7 days. Add slots in Settings or free one on the Slots page.</p>`}</div>
+  const now = Date.now() / 1000;  // only free slots still ahead: a passed slot can never be picked
+  const free = days.flatMap(d => d.slots.filter(x => x.kind === c.kind && x.state === "free" && x.at > now + 60).map(x => ({...x, wd: d.weekday})));
+  $("#modalBox").innerHTML = `<h2>${ico("clock")} Put "${esc(c.title)}" in a slot</h2><p class="small dim">Free ${c.kind} slots still ahead in the next 7 days. "Kept for Auto" slots are free, but an Auto topic wants them today.</p>
+    <div class="stack">${free.length ? free.map(x => `<button class="btn ghost" style="width:100%;justify-content:space-between" onclick="assign(${id}, ${x.at}, this)"><span>${esc(x.wd)} ${new Date(x.at * 1000).toLocaleDateString("en-US", {day: "numeric", month: "short"})} · ${esc(t12(x.time))}${x.extra ? " (weekend +1)" : ""}</span>${x.reserved ? `<span class="chip b">kept for Auto</span>` : ""}</button>`).join("") : `<p>No free ${c.kind} slot ahead in the next 7 days. Add slots in Settings or free one on the Slots page.</p>`}</div>
     <div class="row end" style="margin-top:14px"><button class="btn plain" onclick="closeModal()">Close</button></div>`;
 }
 async function assign(id, at, btn) { const r = await act(btn, () => api("POST", `/api/clips/${id}/assign`, {at}), "Placed in the slot"); if (r) { closeModal(); loadSlots(); } }
+async function forcePicker(id) {
+  const c = S.clips.find(x => x.id === id);
+  openModal(`<h2>${ico("alert")} Force upload</h2><div class="skel" style="height:120px"></div>`);
+  const r = await api("GET", `/api/clips/${id}/force`).catch(e => (toast(e.message, true), null)); if (!r) return closeModal();
+  $("#modalBox").innerHTML = `<h2>${ico("alert")} Force upload "${esc(c.title)}"</h2>
+    <p class="small">Posts now to the platforms you tick, <b>past the daily limit, the slots and the platforms' own limits</b>. Read the warnings first.</p>
+    <div class="stack">${Object.entries(r.warnings).map(([p, w]) => `<label class="check" style="align-items:flex-start;border:1px solid var(--line);border-radius:8px;padding:10px"><input type="checkbox" data-fp="${p}" ${r.default.includes(p) && !w.some(x => /already posted|not connected/.test(x)) ? "checked" : ""}>
+      <div><b>${PLAT[p]}</b>${w.length ? w.map(x => `<div class="small" style="color:var(--warn)">${ico("alert")} ${esc(x)}</div>`).join("") : `<div class="small dim">no warnings</div>`}</div></label>`).join("")}</div>
+    <div class="row end" style="margin-top:14px"><button class="btn plain" onclick="closeModal()">Cancel</button><button class="btn danger" id="forceGo">${ico("up")}Force upload now</button></div>`;
+  $("#forceGo").onclick = async e => { const platforms = $$("[data-fp]").filter(x => x.checked).map(x => x.dataset.fp); if (!platforms.length) return toast("Tick at least one platform", true);
+    if (await act(e.target, () => api("POST", `/api/clips/${id}/force`, {platforms}), `Force-uploading to ${platforms.map(p => PLAT[p]).join(", ")}`)) closeModal(); };
+}
 function editClip(id) {
-  const c = S.clips.find(x => x.id === id), posted = Object.values(J(c.uploads, {})).some(u => u.id);
+  const c = S.clips.find(x => x.id === id), up = posted(c);
   openModal(`<h2>${ico("edit")} Edit clip #${id}</h2><form class="stack" onsubmit="saveEdit(event, ${id})">
     <label class="f">Title${tip("Posted as the title (YouTube) / first line of the caption.")}<input name="title" maxlength="100" value="${esc(c.title)}"></label>
-    <label class="f">Header on the video${tip(posted ? "Already posted: the header on posted copies can't change." : "Changing it renders the clip again (a minute or two).")}<input name="headline" maxlength="60" value="${esc(c.headline)}" ${posted ? "disabled" : ""}></label>
+    <label class="f">Header on the video${tip(up ? "Already posted: the header on posted copies can't change." : "Changing it renders the clip again (a minute or two).")}<input name="headline" maxlength="60" value="${esc(c.headline)}" ${up ? "disabled" : ""}></label>
     <label class="f">Description<textarea name="description" maxlength="5000">${esc(c.description)}</textarea></label>
     <label class="f">Hashtags${tip("Separated by spaces or commas; the # is optional.")}<input name="tags" value="${esc(J(c.tags, []).map(t => "#" + t).join(" "))}"></label>
     <div class="err" id="edErr"></div><div class="row end"><button type="button" class="btn plain" onclick="closeModal()">Cancel</button><button class="btn">Save</button></div></form>`);
@@ -701,53 +865,85 @@ async function saveEdit(e, id) {
   if (!f.headline.disabled) body.headline = f.headline.value;
   try { await api("PATCH", `/api/clips/${id}`, body); closeModal(); toast("Saved"); refresh(); } catch (x) { $("#edErr").textContent = x.message; }
 }
-const SIG = {heatmap: "YouTube most replayed", chat: "chat speed", comments: "timestamped comments", audio: "loudness", reaction: "streamer reactions"};
 function whyHtml(c) {
-  const w = J(c.why, {});
+  const w = J(c.why, {}), sc = w.scores || {};
   const bar = v => `<div class="meter" style="width:120px;display:inline-block;vertical-align:middle"><i style="width:${Math.round(Math.min(v, 1) * 100)}%"></i></div>`;
   return `<p>${esc(c.reason)}</p>
-    <div class="row"><span class="chip g">virality ${Math.round(c.score || 0)}</span>${w.moment ? `<span class="chip">${esc(w.moment)}</span>` : ""}${(w.confirmed || []).length ? `<span class="chip b">+5: ${esc(w.confirmed.join(" + "))} agree</span>` : ""}${w.risk ? `<span class="chip ${w.risk === "high" ? "bad" : ""}">copyright ${esc(w.risk)}</span>` : ""}</div>
-    ${w.scores && Object.keys(w.scores).length ? `<h3 style="margin-top:14px">The AI's scores</h3><div class="bars">${Object.entries(w.scores).map(([k, v]) => `<div class="bar"><span class="lab">${esc(k)}</span><div class="meter"><i style="width:${v * 10}%"></i></div><span class="v">${v}/10</span></div>`).join("")}</div>` : ""}
+    <div class="row"><span class="vir">${Math.round(c.score || 0)}</span><span class="small dim">virality</span>${w.moment ? `<span class="chip">${esc(w.moment)}</span>` : ""}${(w.confirmed || []).length ? `<span class="chip b">+5: ${esc(w.confirmed.join(" + "))} agree</span>` : ""}${w.scream_hook ? `<span class="chip y">+3: opens on a scream</span>` : ""}${w.risk ? `<span class="chip ${w.risk === "high" ? "bad" : ""}">copyright ${esc(w.risk)}</span>` : ""}</div>
+    ${Object.keys(sc).length ? `<h3 style="margin-top:14px">The AI's scores</h3><div class="bars">${Object.entries(sc).map(([k, v]) => `<div class="bar"><span class="lab">${esc(k)}</span><div class="meter"><i style="width:${v * 10}%"></i></div><span class="v">${v}/10</span></div>`).join("")}</div>` : ""}
     ${Object.keys(w.signals || {}).length ? `<h3 style="margin-top:14px">Audience signals in this stretch</h3>${Object.entries(w.signals).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<div class="small">${bar(v)} ${SIG[k] || esc(k)}</div>`).join("")}` : ""}
+    <p class="small" style="margin-top:12px">${c.kind} · ${mmss(c.end - c.start)} · ${mmss(c.start)}-${mmss(c.end)} of the source${w.source ? ` "${esc(w.source)}"` : ""}${w.framing ? ` · suggested framing: ${esc(w.framing)}` : ""}</p>
     ${w.opening ? `<p class="small"><b>Opens:</b> "${esc(w.opening)}"</p>` : ""}${w.closing ? `<p class="small"><b>Ends:</b> "${esc(w.closing)}"</p>` : ""}
+    <p class="small">${esc(c.description || "")} ${J(c.tags, []).map(t => "#" + esc(t)).join(" ")}</p>
+    ${clipErrors(c)}
     ${w.by ? `<p class="small dim">Picked by ${esc(w.by)}${w.prompt ? ` · <a href="${esc(w.prompt)}" target="_blank">the prompt + reply</a>` : ""}${w.piece ? ` · piece ${w.piece}` : ""}</p>` : ""}`;
 }
 function whyClip(id) { const c = S.clips.find(x => x.id === id); openModal(`<h2>${ico("info")} ${esc(c.title)}</h2>${whyHtml(c)}<div class="row end"><button class="btn plain" onclick="closeModal()">Close</button></div>`); }
 
 // ---------- reels ----------
-let reelMuted = true, reelObs = null;
+// Only the reel on screen and its neighbours hold a video (the rest are emptied): the browser never runs out of
+// connections or memory, so scrolling past the 10th reel doesn't stall. Previews are made right after each render.
+let reelMuted = true, reelObs = null, reelIds = [], reelQ = "";
+const reelFind = c => !reelQ || [c.title, c.headline, c.reason, c.description, J(c.why, {}).moment, J(c.why, {}).source].join(" ").toLowerCase().includes(reelQ);
+function reelInfo(c) {
+  const ups = Object.entries(J(c.uploads, {})).filter(([, u]) => u.id), views = J(c.views, {});
+  return `<div class="row">${statusChip(c)}<span class="chip">${c.kind} · ${mmss(c.end - c.start)}</span></div>
+    <div class="rt">${esc(c.title)}</div>${c.headline ? `<div class="rh">${esc(c.headline)}</div>` : ""}
+    ${clipFacts(c)}
+    ${c.status === "scheduled" && c.post_at ? `<div class="small">Posts ${when(c.post_at)}</div>` : ""}
+    ${ups.length ? `<div class="small">${ups.map(([p, u]) => `<a href="${esc(u.url)}" target="_blank" rel="noopener">${PLAT[p]}${views[p] != null ? ` ${num(views[p])}` : ""}</a>`).join(" · ")}</div>` : ""}
+    ${clipErrors(c)}`;
+}
+function reelActs(c) {
+  const ready = c.path && !["rendering", "uploading"].includes(c.status), up = posted(c);
+  return [ready && !up ? `<button title="Post now (next free slot today)" onclick="postNow(${c.id}, this)">${ico("up")}<small>post</small></button>` : "",
+    ready && !up && c.status !== "scheduled" ? `<button title="Put in a slot" onclick="slotPicker(${c.id})">${ico("clock")}<small>slot</small></button>` : "",
+    ready ? `<button title="Force upload" onclick="forcePicker(${c.id})">${ico("alert")}<small>force</small></button>` : "",
+    `<button title="Why this clip?" onclick="whyClip(${c.id})">${ico("info")}<small>info</small></button>`,
+    `<button title="Open the 4K file" onclick="window.open('/media/${esc(c.path)}')">${ico("ext")}<small>file</small></button>`,
+    ready ? `<button title="Delete" onclick="delClips([${c.id}])">${ico("trash")}<small>delete</small></button>` : ""].join("");
+}
 function openReels(startId) {
-  let list = clipList().filter(c => c.path);
-  if (startId && !list.some(c => c.id === startId)) list = S.clips.filter(c => c.path);
+  let list = clipList().filter(c => c.path && reelFind(c));
+  if (startId && !list.some(c => c.id === startId)) { reelQ = ""; $("#reelSearch").value = ""; list = S.clips.filter(c => c.path); }
+  reelIds = list.map(c => c.id);
+  $$("#clipGrid video").forEach(v => v.pause());
   $("#reels").hidden = false; document.body.style.overflow = "hidden";
-  $("#reelList").innerHTML = list.length ? list.map(c => `<section class="reel" data-id="${c.id}">${clipVideo(c, `loop playsinline ${reelMuted ? "muted" : ""} onclick="this.paused ? this.play() : this.pause()"`)}<div class="info"><div class="row">${statusChip(c)}<span class="chip">${c.kind}</span><span class="chip g">${Math.round(c.score || 0)}</span></div><div style="font-weight:600;margin-top:6px">${esc(c.title)}</div></div><div class="ra"></div></section>`).join("") : `<section class="reel"><p>No clips here yet.</p></section>`;
+  $("#reelList").innerHTML = list.length ? list.map(c => `<section class="reel" data-id="${c.id}"><video data-src="/api/clips/${c.id}/preview?v=${ver(c)}" data-poster="/api/clips/${c.id}/poster?v=${ver(c)}" loop playsinline ${reelMuted ? "muted" : ""} preload="none" onclick="this.paused ? this.play() : this.pause()"></video><div class="info"></div><div class="ra"></div></section>`).join("")
+    : `<section class="reel"><p>${reelQ ? "No clip matches your search." : "No clips here yet."}</p></section>`;
   reelSync(true);
   reelObs && reelObs.disconnect();
-  reelObs = new IntersectionObserver(es => es.forEach(e => {
-    const v = e.target.querySelector("video");
-    if (e.isIntersecting) { const all = $$("#reelList .reel"); $("#reelCount").textContent = `${all.indexOf(e.target) + 1} / ${all.length}`; if (v) { v.muted = reelMuted; v.currentTime = 0; v.play().catch(() => {}); } const n = e.target.nextElementSibling?.querySelector("video"); if (n) n.preload = "auto"; }
-    else if (v) v.pause();
-  }), {threshold: 0.6});
-  $$("#reelList .reel").forEach(r => reelObs.observe(r));
+  reelObs = new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting) reelFocus(e.target); }), {root: $("#reelList"), threshold: 0.6});
+  $$("#reelList .reel[data-id]").forEach(r => reelObs.observe(r));
   ($(`#reelList .reel[data-id="${startId}"]`) || $("#reelList .reel"))?.scrollIntoView({behavior: "instant"});
 }
-function closeReels() { $("#reels").hidden = true; document.body.style.overflow = ""; reelObs && reelObs.disconnect(); $$("#reelList video").forEach(v => v.pause()); $("#reelList").innerHTML = ""; }
+function reelFocus(cur) {
+  const all = $$("#reelList .reel[data-id]"), i = all.indexOf(cur);
+  $("#reelCount").textContent = `${i + 1} / ${all.length}`;
+  all.forEach((r, k) => {
+    const v = r.querySelector("video"); if (!v) return;
+    if (Math.abs(k - i) <= 1) {  // this one and its neighbours: loaded (the next one starts buffering now)
+      if (!v.getAttribute("src")) { v.poster = v.dataset.poster; v.src = v.dataset.src; v.preload = k === i ? "auto" : "metadata"; }
+    } else if (v.getAttribute("src")) { v.pause(); v.removeAttribute("src"); v.load(); }  // far away: freed
+    if (k !== i && !v.paused) v.pause();
+  });
+  const v = cur.querySelector("video");
+  if (v) { v.muted = reelMuted; v.currentTime = 0; v.play().catch(() => {}); }
+}
+function closeReels() { $("#reels").hidden = true; document.body.style.overflow = ""; reelObs && reelObs.disconnect(); $$("#reelList video").forEach(v => { v.pause(); v.removeAttribute("src"); v.load(); }); $("#reelList").innerHTML = ""; }
 function reelMute() { reelMuted = !reelMuted; $$("#reelList video").forEach(v => v.muted = reelMuted); $("#muteBtn").innerHTML = ico(reelMuted ? "mute" : "vol"); }
-function reelSync() {
+$("#reelSearch").oninput = e => { clearTimeout(window._rs); window._rs = setTimeout(() => { reelQ = e.target.value.trim().toLowerCase(); openReels(); }, 300); };
+function reelSync(force) {
   if ($("#reels").hidden || !S) return;
   $$("#reelList .reel[data-id]").forEach(r => {
     const c = S.clips.find(x => x.id === +r.dataset.id); if (!c) return r.remove();
-    const k = JSON.stringify([c.status, c.uploads]); if (r.dataset.k === k) return; r.dataset.k = k;
-    const posted = Object.values(J(c.uploads, {})).some(u => u.id), ready = !["rendering", "uploading"].includes(c.status);
-    r.querySelector(".ra").innerHTML = [ready && !posted ? `<button title="Post now" onclick="postNow(${c.id}, this)">${ico("up")}</button>` : "",
-      ready && !posted && c.status !== "scheduled" ? `<button title="Put in a slot" onclick="closeReels();slotPicker(${c.id})">${ico("clock")}</button>` : "",
-      `<button title="Why this clip?" onclick="closeReels();whyClip(${c.id})">${ico("info")}</button>`,
-      `<button title="Open the file" onclick="window.open('/media/${esc(c.path)}')">${ico("ext")}</button>`].join("");
+    const k = JSON.stringify([c.status, c.uploads, c.views, c.post_at, c.title, c.headline]); if (!force && r.dataset.k === k) return; r.dataset.k = k;
+    r.querySelector(".info").innerHTML = reelInfo(c); r.querySelector(".ra").innerHTML = reelActs(c);
   });
 }
 document.addEventListener("keydown", e => {
   if (e.key === "Escape") { if (!$("#modal").hidden) closeModal(); else if (!$("#reels").hidden) closeReels(); }
-  if ($("#reels").hidden || /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;
+  if ($("#reels").hidden || !$("#modal").hidden || /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;
   const cur = $$("#reelList .reel")[Math.round($("#reelList").scrollTop / innerHeight)];
   if (["ArrowDown", "j"].includes(e.key)) { e.preventDefault(); cur?.nextElementSibling?.scrollIntoView({behavior: "smooth"}); }
   if (["ArrowUp", "k"].includes(e.key)) { e.preventDefault(); cur?.previousElementSibling?.scrollIntoView({behavior: "smooth"}); }
@@ -755,22 +951,51 @@ document.addEventListener("keydown", e => {
 });
 
 // ---------- slots ----------
-let slotsAt = 0;
+// Drag a clip from one slot onto another (same kind): it moves; onto a taken one: they swap. Drag a ready clip from
+// the tray onto a slot to place it. A passed slot never takes a clip. On a phone: Move / Choose clip buttons.
+let slotsAt = 0, slotDays = [], dragCid = null, dragKind = null;
 async function loadSlots() {
   slotsAt = Date.now();
-  const days = await api("GET", "/api/slots?days=7").catch(e => (toast(e.message, true), []));
-  $("#slotDays").innerHTML = days.map((d, i) => `<div class="day" style="animation:enter .54s ${i * 120}ms var(--ease) both">
-    <div class="day-h"><b>${i === 0 ? "Today" : i === 1 ? "Tomorrow" : esc(d.weekday)}</b><span class="dim small">${new Date(d.day + "T12:00").toLocaleDateString([], {weekday: "short", day: "numeric", month: "short"})}</span>${d.weekend ? `<span class="chip b">weekend +1</span>` : ""}<span class="sp"></span>
+  slotDays = await api("GET", "/api/slots?days=7").catch(e => (toast(e.message, true), []));
+  if (!SET) await loadSettings(true);
+  const now = Date.now() / 1000, v = SET.values;
+  const plats = (k, key) => `<div class="row small"><b style="min-width:110px">${k} post to${tip(`Every ${k === "Shorts" ? "short" : "long"} slot posts its clip to each of these.`)}</b>${Object.entries(PLAT).map(([p, n]) => `<label class="check"><input type="checkbox" ${v[key].includes(p) ? "checked" : ""} onchange="savePlats('${key}')" data-pk="${key}" value="${p}"> ${n}${S && !S.platforms[p] ? ` <span class="dim">(not connected)</span>` : ""}</label>`).join("")}</div>`;
+  $("#slotPlats").innerHTML = plats("Shorts", "platforms") + plats("Longs", "long_platforms");
+  const ready = (S?.clips || []).filter(c => c.status === "rendered" && c.path && !posted(c)).sort((a, b) => b.score - a.score).slice(0, 24);
+  $("#slotTray").innerHTML = ready.length ? `<div class="small dim" style="margin-bottom:6px">Ready clips: drag one onto a slot of its kind</div><div class="tray">${ready.map(c => `<div class="tclip" draggable="true" data-cid="${c.id}" data-kind="${c.kind}" title="${esc(c.title)}"><img loading="lazy" src="/api/clips/${c.id}/poster?v=${ver(c)}" alt=""><span class="chip ${c.kind === "long" ? "b" : "g"}">${c.kind}</span><b>${Math.round(c.score)}</b></div>`).join("")}</div>` : "";
+  $("#slotDays").innerHTML = slotDays.map((d, i) => `<div class="day">
+    <div class="day-h"><b>${i === 0 ? "Today" : i === 1 ? "Tomorrow" : esc(d.weekday)}</b><span class="dim small">${new Date(d.day + "T12:00").toLocaleDateString("en-US", {weekday: "short", day: "numeric", month: "short"})}</span>${d.weekend ? `<span class="chip b">weekend +1</span>` : ""}<span class="sp"></span>
       <span class="chip">${d.used.short}/${d.limit.short} shorts</span><span class="chip">${d.used.long}/${d.limit.long} longs</span></div>
-    ${d.slots.length ? d.slots.map(x => `<div class="slot"><span class="t">${esc(x.time)}</span><span class="chip ${x.kind === "long" ? "b" : "g"}">${x.kind}${x.extra ? " +1" : ""}</span>
-      <div class="what">${x.clip ? `${x.clip.path ? `<img loading="lazy" src="/api/clips/${x.clip.id}/poster?v=${ver(x.clip)}" alt="">` : ""}<div><div>${esc(x.clip.title)}</div><div class="small dim">${esc(x.clip.headline || "")} · score ${Math.round(x.clip.score || 0)}</div></div>` : `<span class="dim">${x.state === "missed" ? "passed, nothing posted" : x.reserved ? "free · kept for an Auto topic today" : "free"}</span>`}</div>
-      <div class="acts row">${{posted: `<span class="chip ok">${ico("check")}posted</span>`, uploading: `<span class="chip b">posting</span>`, missed: `<span class="chip">missed</span>`,
-        scheduled: `<span class="chip b">scheduled</span><button class="btn plain sm" title="Take the clip off this slot" onclick="act(this, () => api('POST','/api/clips/${x.clip?.id}/unassign'), 'Freed').then(loadSlots)">${ico("x")}</button>`,
-        free: `<button class="btn ghost sm" onclick="clipPicker('${x.kind}', ${x.at})">${ico("plus")}Choose clip</button>`}[x.state]}</div></div>`).join("") : `<p class="dim" style="padding:12px 16px">No slots.</p>`}</div>`).join("");
+    ${d.slots.length ? d.slots.map(x => { const open = x.at > now + 60 && ["free", "scheduled"].includes(x.state), c = x.clip;
+      return `<div class="slot ${open ? "drop" : ""}" data-at="${x.at}" data-kind="${x.kind}" ${c && x.state === "scheduled" ? `draggable="true" data-cid="${c.id}"` : ""}>
+      <span class="t">${esc(t12(x.time))}</span><span class="chip ${x.kind === "long" ? "b" : "g"}">${x.kind}${x.extra ? " +1" : ""}</span>
+      <div class="what">${c ? `${c.path ? `<img loading="lazy" src="/api/clips/${c.id}/poster?v=${ver(c)}" alt="">` : ""}<div><div>${esc(c.title)}</div><div class="small dim">${esc(c.headline || "")} · virality ${Math.round(c.score || 0)}</div></div>` : `<span class="dim">${x.state === "missed" ? "passed, nothing posted" : x.reserved ? "free · kept for an Auto topic today" : "free · drop a clip here"}</span>`}</div>
+      <div class="acts row">${{posted: `<span class="chip ok">${ico("check")}posted</span>`, uploading: `<span class="chip b">posting</span>`, missed: `<span class="chip">passed</span>`,
+        scheduled: open ? `<button class="btn plain sm" title="Move to another slot" onclick="movePicker(${c?.id}, '${x.kind}')">Move</button><button class="btn plain sm" title="Take the clip off this slot" onclick="act(this, () => api('POST','/api/clips/${c?.id}/unassign'), 'Freed').then(loadSlots)">${ico("x")}</button>` : `<span class="chip b">scheduled</span>`,
+        free: open ? `<button class="btn ghost sm" onclick="clipPicker('${x.kind}', ${x.at})">${ico("plus")}Choose clip</button>` : ""}[x.state] || ""}</div></div>`; }).join("") : `<p class="dim" style="padding:12px 16px">No slots.</p>`}</div>`).join("");
+}
+async function savePlats(key) {
+  const vals = $$(`[data-pk="${key}"]`).filter(x => x.checked).map(x => x.value);
+  try { SET.values = await api("POST", "/api/settings", {[key]: vals}); toast(`${key === "platforms" ? "Shorts" : "Longs"} post to ${vals.map(p => PLAT[p]).join(", ") || "nowhere"}`); refresh(); }
+  catch (e) { toast(e.message, true); loadSlots(); }
+}
+document.addEventListener("dragstart", e => { const t = e.target.closest?.("[data-cid][draggable]"); if (!t) return; dragCid = +t.dataset.cid; dragKind = t.dataset.kind || S.clips.find(c => c.id === dragCid)?.kind; e.dataTransfer.effectAllowed = "move"; t.classList.add("dragging");
+  $$(".slot.drop").forEach(s => s.classList.toggle("drop-ok", s.dataset.kind === dragKind)); });
+document.addEventListener("dragend", e => { e.target.classList?.remove("dragging"); $$(".slot").forEach(s => s.classList.remove("drop-ok", "over")); });
+document.addEventListener("dragover", e => { const s = e.target.closest?.(".slot.drop-ok"); if (!s || !dragCid) return; e.preventDefault(); $$(".slot.over").forEach(x => x !== s && x.classList.remove("over")); s.classList.add("over"); });
+document.addEventListener("drop", async e => {
+  const s = e.target.closest?.(".slot.drop-ok"); if (!s || !dragCid) return; e.preventDefault();
+  const cid = dragCid; dragCid = null;
+  await act(null, () => api("POST", `/api/clips/${cid}/move`, {at: +s.dataset.at}), "Moved"); loadSlots();
+});
+function movePicker(cid, kind) {
+  const now = Date.now() / 1000, c = S.clips.find(x => x.id === cid);
+  const opts = slotDays.flatMap(d => d.slots.filter(x => x.kind === kind && x.at > now + 60 && ["free", "scheduled"].includes(x.state) && x.clip?.id !== cid).map(x => ({...x, wd: d.weekday})));
+  openModal(`<h2>Move "${esc(c?.title || "")}"</h2><p class="small dim">A taken slot swaps the two clips.</p><div class="stack">${opts.map(x => `<button class="btn ghost" style="width:100%;justify-content:space-between" onclick="act(this, () => api('POST','/api/clips/${cid}/move', {at: ${x.at}}), 'Moved').then(r => { if (r) { closeModal(); loadSlots(); } })"><span>${esc(x.wd)} · ${esc(t12(x.time))}</span>${x.clip ? `<span class="chip b">swap with: ${esc(x.clip.title.slice(0, 30))}</span>` : `<span class="chip">free</span>`}</button>`).join("") || "<p>No other slot ahead.</p>"}</div><div class="row end" style="margin-top:14px"><button class="btn plain" onclick="closeModal()">Close</button></div>`);
 }
 function clipPicker(kind, at) {
-  const ready = S.clips.filter(c => c.kind === kind && c.status === "rendered" && c.path).sort((a, b) => b.score - a.score);
-  openModal(`<h2>${ico("clock")} Choose a ${kind} for ${hhmm(at)}</h2>${ready.length ? `<div class="stack">${ready.slice(0, 30).map(c => `<button class="btn ghost" style="width:100%;justify-content:flex-start;gap:12px" onclick="assign(${c.id}, ${at}, this)"><span class="chip g">${Math.round(c.score)}</span><span style="overflow:hidden;text-overflow:ellipsis">${esc(c.title)}</span></button>`).join("")}</div>` : `<p>No ready ${kind}s. <a href="#create" onclick="closeModal()">Make some</a>.</p>`}<div class="row end" style="margin-top:14px"><button class="btn plain" onclick="closeModal()">Close</button></div>`);
+  const ready = S.clips.filter(c => c.kind === kind && c.status === "rendered" && c.path && !posted(c)).sort((a, b) => b.score - a.score);
+  openModal(`<h2>${ico("clock")} Choose a ${kind} for ${hhmm(at)}</h2>${ready.length ? `<div class="pick">${ready.slice(0, 40).map(c => `<button onclick="assign(${c.id}, ${at}, this)" title="${esc(c.title)}"><img loading="lazy" src="/api/clips/${c.id}/poster?v=${ver(c)}" alt=""><span class="vir">${Math.round(c.score)}</span><div class="small">${esc(c.title)}</div></button>`).join("")}</div>` : `<p>No ready ${kind}s. <a href="#create" onclick="closeModal()">Make some</a>.</p>`}<div class="row end" style="margin-top:14px"><button class="btn plain" onclick="closeModal()">Close</button></div>`);
 }
 
 // ---------- auto ----------
@@ -881,7 +1106,7 @@ function renderSocials() {
   const key = JSON.stringify([S.platforms, S.uploads, S.limit_timers, S.youtube_cookies, S.youtube_scopes, S.today.used]);
   if ($("#socialCards").dataset.k === key) return; $("#socialCards").dataset.k = key;
   const SETUP = {facebook: "FB_PAGE_ID + FB_PAGE_TOKEN in .env (README: Facebook setup).", instagram: "IG_USER_ID + IG_TOKEN in .env (a business account linked to the Page).", tiktok: "TIKTOK_CLIENT_KEY / SECRET / REFRESH_TOKEN in .env."};
-  $("#socialCards").innerHTML = Object.entries(PLAT).map(([k, n]) => { const u = S.uploads[k] || {}, l = S.limit_timers[k]; return `<div class="card"><h2><span class="dot ${S.platforms[k] ? "ok" : ""}"></span>${n} ${S.post_to.includes(k) ? `<span class="chip g">slots post here</span>` : ""}</h2>
+  $("#socialCards").innerHTML = Object.entries(PLAT).map(([k, n]) => { const u = S.uploads[k] || {}, l = S.limit_timers[k]; return `<div class="card"><h2><span class="dot ${S.platforms[k] ? "ok" : ""}"></span>${n} ${allPost().includes(k) ? `<span class="chip g">slots post here</span>` : ""}</h2>
     <p class="${S.platforms[k] ? "" : "dim"}">${S.platforms[k] ? "Connected" : "Not set up"} · ${u.used || 0} upload(s) in the last 24h</p>
     ${l ? `<p class="small" style="color:var(--warn)">Its upload limit was hit at ${hhmm(l.hit_at)}: skipped until ${hhmm(l.until)}.</p>` : ""}
     ${u.error ? `<p class="small" style="color:var(--bad)">Last upload failed (${hhmm(u.error.at)}): ${esc(u.error.error)}</p>` : ""}
@@ -899,14 +1124,14 @@ async function connectYT(btn) { toast("Finish the Google sign-in in the browser 
 
 // ---------- settings ----------
 const SECTIONS = [
-  ["Slots and daily limits", "cal", "One slot = one clip, posted at that time to every platform below. Nothing (manual or automatic) posts more than these in a day.", ["shorts_per_day", "short_times", "longs_per_day", "long_times", "weekend_days", "weekend_short_time", "weekend_long_time", "platforms"]],
-  ["How new clips look", "film", "The defaults on the Create page and for Auto.", ["layout", "cam_corner", "filler", "header", "subtitles", "hq"]],
+  ["Slots and daily limits", "cal", "One slot = one clip, posted at that time to every platform below. Nothing (manual or automatic) posts more than these in a day.", ["shorts_per_day", "short_times", "longs_per_day", "long_times", "weekend_days", "weekend_short_time", "weekend_long_time", "platforms", "long_platforms"]],
+  ["How new clips look", "film", "The defaults on the Create page and for Auto.", ["layout", "cam_corner", "filler", "header", "subtitles", "logo"]],
   ["Tell the AI", "spark", "Your instructions for every mode (a video can add its own).", ["notes"]],
   ["Clip length", "clock", "", ["short_min", "short_max", "long_min", "long_max", "stretch", "pad_before", "pad_after", "snap_reach"]],
   ["Sources", "file", "", ["long_video_minutes", "live_chunk_minutes", "keep_sources", "ig_max_seconds"]],
   ["Researcher (Auto)", "bot", "Which videos Auto may pick.", ["topic_min_minutes", "topic_max_minutes", "topic_max_days", "search_region", "face_check"]]];
-const LABEL = {shorts_per_day: "Shorts per day", short_times: "Short times", longs_per_day: "Longs per day", long_times: "Long times", weekend_days: "Weekend days (+1 each)", weekend_short_time: "Weekend extra short at", weekend_long_time: "Weekend extra long at", platforms: "Post to",
-  layout: "Framing", cam_corner: "Facecam position", filler: "Background video (split)", header: "Topic header", subtitles: "Subtitles", hq: "4K source", notes: "Tell the AI", short_min: "Short: min (s)", short_max: "Short: max (s)", long_min: "Long: min (s)", long_max: "Long: max (s)",
+const LABEL = {shorts_per_day: "Shorts per day", short_times: "Short times", longs_per_day: "Longs per day", long_times: "Long times", weekend_days: "Weekend days (+1 each)", weekend_short_time: "Weekend extra short at", weekend_long_time: "Weekend extra long at", platforms: "Shorts post to", long_platforms: "Longs post to",
+  layout: "Framing", cam_corner: "Facecam position", filler: "Background video (split)", header: "Topic header", subtitles: "Subtitles", logo: "Logo top right", notes: "Tell the AI", short_min: "Short: min (s)", short_max: "Short: max (s)", long_min: "Long: min (s)", long_max: "Long: max (s)",
   stretch: "Stretch allowed (s)", pad_before: "Lead-in (s)", pad_after: "Room after (s)", snap_reach: "Sentence reach (s)", long_video_minutes: "Clip in pieces from (min)", live_chunk_minutes: "Live piece (min)", keep_sources: "Keep source videos", ig_max_seconds: "Instagram max (s)",
   topic_min_minutes: "Min video length (min)", topic_max_minutes: "Max video length (min)", topic_max_days: "Max age (days)", search_region: "Search country", face_check: "Skip talking heads"};
 let setDirty = {};
@@ -919,7 +1144,7 @@ async function loadSettings(quiet) {
     const p = P[k] || {}, d = p.description || "", val = v[k], L = `<span class="lbl">${LABEL[k] || k}${tip(d)}</span>`;
     if (k === "short_times" || k === "long_times") return `<label class="f" style="grid-column:1/-1">${L}<div class="row" id="t-${k}">${val.map((t, i) => `<input type="time" style="width:auto" value="${t}" data-k="${k}" data-i="${i}" onchange="setTimes('${k}')">`).join("") || `<span class="dim small">none</span>`}</div></label>`;
     if (k === "weekend_days") return `<div class="f" style="grid-column:1/-1">${L}<div class="row">${["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((n, i) => `<label class="check"><input type="checkbox" ${val.includes(i) ? "checked" : ""} onchange="setDays()" data-day="${i}"> ${n}</label>`).join("")}</div></div>`;
-    if (k === "platforms") return `<div class="f" style="grid-column:1/-1">${L}<div class="row">${Object.entries(PLAT).map(([p, n]) => `<label class="check"><input type="checkbox" ${val.includes(p) ? "checked" : ""} data-plat="${p}" onchange="setPlats()"> ${n}${S && !S.platforms[p] ? ` <span class="dim small">(not connected)</span>` : ""}</label>`).join("")}</div></div>`;
+    if (k === "platforms" || k === "long_platforms") return `<div class="f" style="grid-column:1/-1">${L}<div class="row">${Object.entries(PLAT).map(([p, n]) => `<label class="check"><input type="checkbox" ${val.includes(p) ? "checked" : ""} data-plat="${p}" data-pkey="${k}" onchange="setPlats('${k}')"> ${n}${S && !S.platforms[p] ? ` <span class="dim small">(not connected)</span>` : ""}</label>`).join("")}</div></div>`;
     if (k === "layout") return `<label class="f">${L}<select data-k="layout" onchange="dirty(this)"><option value="full" ${val === "full" ? "selected" : ""}>Full screen</option><option value="cam" ${val === "cam" ? "selected" : ""}>Streamer on top</option><option value="split" ${val === "split" ? "selected" : ""}>Split</option></select></label>`;
     if (k === "cam_corner") return `<label class="f">${L}<select data-k="cam_corner" onchange="dirty(this)">${[["auto", "Auto (find the face)"], ["tl", "Top left"], ["tr", "Top right"], ["bl", "Bottom left"], ["br", "Bottom right"]].map(([a, n]) => `<option value="${a}" ${val === a ? "selected" : ""}>${n}</option>`).join("")}</select></label>`;
     if (k === "filler") return `<label class="f">${L}<select data-k="filler" onchange="dirty(this)"><option value="">none</option>${SET.fillers.map(n => `<option ${n === val ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></label>`;
@@ -941,7 +1166,7 @@ function dirty(el) { const k = el.dataset.k; let v = el.type === "checkbox" ? el
 function showDirty() { const n = Object.keys(setDirty).length; $("#dirtyTxt").textContent = n ? `${n} unsaved change(s): ${Object.keys(setDirty).map(k => LABEL[k] || k).join(", ")}` : "No changes."; }
 function setTimes(k) { setDirty[k] = $$(`[data-k="${k}"][data-i]`).map(i => i.value); showDirty(); }
 function setDays() { setDirty.weekend_days = $$("[data-day]").filter(c => c.checked).map(c => +c.dataset.day); showDirty(); }
-function setPlats() { setDirty.platforms = $$("[data-plat]").filter(c => c.checked).map(c => c.dataset.plat); showDirty(); }
+function setPlats(k) { setDirty[k] = $$(`[data-pkey="${k}"]`).filter(c => c.checked).map(c => c.dataset.plat); showDirty(); }
 document.addEventListener("input", e => {  // the number of shorts/longs a day sets how many time boxes there are
   const k = e.target.dataset?.k; if (k !== "shorts_per_day" && k !== "longs_per_day") return;
   const tk = k === "shorts_per_day" ? "short_times" : "long_times", n = Math.max(0, Math.min(+e.target.value || 0, 24));

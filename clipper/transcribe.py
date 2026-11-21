@@ -55,7 +55,8 @@ def words(path, start, end):
                           "-i", str(path), "-ac", "1", "-ar", "16000", "-f", "f32le", "-"],
                          capture_output=True, check=True).stdout
     with _lock:
-        segs, _ = _model().transcribe(np.frombuffer(pcm, np.float32), word_timestamps=True, vad_filter=True)
+        segs, _ = _model().transcribe(np.frombuffer(pcm, np.float32), word_timestamps=True, vad_filter=True,
+                                      language="en")  # English content only (no misdetection on music)
         return [{"w": w.word.strip(), "s": round(w.start + start, 2), "e": round(w.end + start, 2)}
                 for seg in segs for w in (seg.words or [])]
 
