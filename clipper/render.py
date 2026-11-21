@@ -71,7 +71,7 @@ def _emoji(text):
     return re.sub(r"([\U0001F000-\U0001FAFF☀-➿]+)", rf"{{\\fn{EMOJI_FONT}}}\1{{\\fnArial Black}}", text)
 
 
-BIG_TITLE, BIG_CHARS = 110, 16  # reel title: font px, and characters per line that fit ~950px at that size
+BIG_TITLE, BIG_CHARS = 84, 21  # reel title: font px (on the 1080 grid), and characters per line that fit ~950px at that size
 # (measured: a line of Arial Black capitals + spaces is ~0.5 of the font size wide per character)
 
 
@@ -101,7 +101,7 @@ def big_title(headline, y, length):
         rows = _rows(words, n)
         if max(map(_width, rows)) <= BIG_CHARS * 1.15 or n == 3:
             break
-    size = max(60, min(BIG_TITLE, round(BIG_TITLE * BIG_CHARS / max(map(_width, rows)))))
+    size = max(50, min(BIG_TITLE, round(BIG_TITLE * BIG_CHARS / max(map(_width, rows)))))
     pulse = "".join(rf"\t({ms},{ms + 500},\fscx{104 if j % 2 == 0 else 100}\fscy{104 if j % 2 == 0 else 100})"
                     for j, ms in enumerate(range(900, min(int(length * 1000), 60000), 1800)))
     tags = (rf"{{\an5\q2\pos(540,{y})\fs{size}\bord8\shad4\fscx40\fscy40\t(0,180,\fscx110\fscy110)"
@@ -291,7 +291,7 @@ def encoder_name():
 
 
 CAM_SHARPEN = 0.7  # contrast-adaptive sharpening of the facecam panel (a small box blown up a lot)
-GAME_H = 608  # streamer on top: the gameplay shown whole, 1080 wide (a 16:9 frame is 608 tall)
+GAME_H = 860  # streamer on top: the gameplay panel, zoomed a bit (keeps ~70% of a 16:9 frame's width) to fill more
 CAM_H = 700  # facecam layouts: the streamer's panel (~36% of 1920, full width); the gameplay gets the other 1220px
 CAM_CORNERS = {"tl": (0, 0, .3, .3), "tr": (.7, 0, .3, .3), "bl": (0, .7, .3, .3), "br": (.7, .7, .3, .3)}  # x, y, w, h
 
@@ -442,6 +442,9 @@ def cut(src, out, start, end, words=(), headline="", layout=""):
         # it; a blurred, darkened copy of the gameplay fills the rest of the screen (the subtitles sit there).
         x, y, w, h = cam[1]
         cam_h, game_h = CAM_H * K, GAME_H * K
+        # the gameplay slice: the middle of the frame, pushed off the facecam's side so the streamer isn't in it twice
+        gx = (f"min(max((iw-ow)/2,iw*{min(x + w + 0.03, 1):.4f}),iw-ow)" if x + w / 2 < 0.4 else
+              f"max(min((iw-ow)/2,iw*{max(x - 0.03, 0):.4f}-ow),0)" if x + w / 2 > 0.6 else "(iw-ow)/2")
         game_y, cam_y = (cam_h, 0) if cam[0] == "top" else (0, game_h)
         # Quality: the facecam is a small box blown up a lot: a light denoise first (so the stream's compression blocks
         # aren't enlarged), lanczos, then contrast-adaptive sharpening; the gameplay the normal detail pass.
@@ -450,8 +453,8 @@ def cut(src, out, start, end, words=(), headline="", layout=""):
                 f"eq=brightness=-0.28:saturation=1.1,scale={W}:{H},setsar=1[bg];"
                 f"[c]crop=w=iw*{w:.4f}:h=ih*{h:.4f}:x=iw*{x:.4f}:y=ih*{y:.4f},hqdn3d=1.5:1.5:0:0,"
                 f"scale={W}:{cam_h}:force_original_aspect_ratio=increase:flags=lanczos,crop={W}:{cam_h},cas={CAM_SHARPEN},setsar=1[cam];"
-                f"[g]scale={W}:{game_h}:force_original_aspect_ratio=decrease:flags=lanczos,"
-                f"pad={W}:{game_h}:(ow-iw)/2:(oh-ih)/2:color=black,{DETAIL},setsar=1[game];"
+                f"[g]crop=w='min(iw,ih*{1080 / GAME_H:.4f})':h=ih:x='{gx}',"
+                f"scale={W}:{game_h}:force_original_aspect_ratio=increase:flags=lanczos,crop={W}:{game_h},{DETAIL},setsar=1[game];"
                 f"[bg][cam]overlay=0:{cam_y}[t];[t][game]overlay=0:{game_y}{subs}")
     else:  # full: the centre of the frame, cropped to 9:16 so it fills the phone (no black bars)
         head = (f"[0:v]crop=w='min(iw,ih*9/16)':h='min(ih,iw*16/9)',scale={W}:{H}:flags=lanczos,"

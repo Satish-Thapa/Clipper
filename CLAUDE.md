@@ -140,10 +140,11 @@ scream_hook, opening, closing, piece), `status`, `path`, `uploads` (JSON per pla
 - **Grade + detail:** `GRADE` = eq contrast 1.08 / saturation 1.08 / gamma 0.97 + `vibrance=0.18` (dull colours pop,
   skin stays natural); `DETAIL` = light `hqdn3d` + `cas=0.55` after scaling; facecam `hqdn3d` + `cas=0.7`.
 - **Framings:** full = centre crop to exactly 9:16, scaled to fill. cam = facecam box → full-width `CAM_H` (700) panel
-  on top; the gameplay WHOLE (scaled to full width, 608 tall for 16:9, never cropped) under it; a blurred darkened copy
-  of the gameplay fills the screen behind. split = clip on top (`SPLIT_CLIP_H` 1180) + background video from
+  on top; the gameplay under it in a `GAME_H` (860) panel: zoomed a bit (~70% of a 16:9 frame's width, the middle, pushed
+  off the facecam's side; the owner asked for this after the whole-frame 608 version); a blurred darkened copy of the
+  gameplay fills the strip below. split = clip on top (`SPLIT_CLIP_H` 1180) + background video from
   `data/fillers` below. `find_cam` (YuNet) for `auto`.
-- **Text:** `ass()` = header `big_title` centred on `mid_y` (cam: the seam `CAM_H`; else `TOP_Y` 330) + karaoke
+- **Text:** `ass()` = header `big_title` (max 84px on the 1080 grid, the owner wanted it a bit smaller) centred on `mid_y` (cam: the seam `CAM_H`; else `TOP_Y` 330) + karaoke
   subtitles at the bottom (`JIGGLE` is just the yellow colour now: steady). Logo: `assets/logo.png` (the owner's "THE
   CLIP DROP"), 120px wide (×K) at top right, `settings.logo`.
 - **Sync:** live chunks are recorded with `-copyts` and re-timed by `download._align` (verified within 0.02s); every cut

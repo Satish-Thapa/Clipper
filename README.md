@@ -14,8 +14,8 @@ posts them in **slots**: the times you set, never more than your daily limit, on
 - **4K, best quality.** Sources are always downloaded in the best quality up to 4K, and clips render in 4K vertical
   (2160x3840) with a colour grade, denoise and sharpening pass. YouTube, Facebook and TikTok get the 4K file;
   Instagram (its API takes 1920px at most) gets a 1080x1920 copy made for it.
-- **Three framings, all full screen on a phone:** the video full screen; the streamer on top with the **whole**
-  gameplay under it (nothing cut off; a blurred copy of the game fills the rest); or your clip on top with a background
+- **Three framings, all full screen on a phone:** the video full screen; the streamer on top with the gameplay under
+  it (zoomed a little to fill more of the screen; a blurred copy of the game fills the strip below); or your clip on top with a background
   video below (split).
 - **On the video:** your logo small in the top-right corner, the topic header (in the middle when the streamer is on
   top, otherwise at the top) and steady word-by-word subtitles at the bottom (the word being said in yellow).
