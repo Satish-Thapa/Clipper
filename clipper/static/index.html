@@ -26,7 +26,7 @@ a:hover { text-decoration: underline; }
 svg.i { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; vertical-align: -3px; }
 #net { position: fixed; inset: 0; z-index: 0; pointer-events: none; opacity: .5; }
 /* layout */
-.shell { position: relative; z-index: 1; display: grid; grid-template-columns: 236px 1fr; min-height: 100dvh; }
+.shell { position: relative; display: grid; /* no z-index: it would trap the phone drawer under its own overlay */ grid-template-columns: 236px 1fr; min-height: 100dvh; }
 aside { position: sticky; top: 0; height: 100dvh; background: rgba(26,26,26,.92); border-right: 1px solid var(--line); display: flex; flex-direction: column; z-index: 100; backdrop-filter: blur(6px); }
 .brand { display: flex; align-items: center; gap: 10px; padding: 20px 18px 16px; font-weight: 700; letter-spacing: .04em; }
 .brand .mark { width: 28px; height: 28px; border-radius: 6px; background: linear-gradient(135deg, var(--green), #3c6000); display: grid; place-items: center; box-shadow: 0 0 18px var(--glow); }
@@ -511,6 +511,9 @@ function confirmDo(msg, fn, okMsg) {
 
 // ---------- routing ----------
 document.addEventListener("play", e => { $$("video").forEach(v => v !== e.target && !v.paused && v.pause()); }, true);
+document.addEventListener("click", e => {  // phone menu open: a tap on the dark area (the body's overlay) closes it
+  if (document.body.classList.contains("menu") && e.target === document.body) document.body.classList.remove("menu");
+});
 function route() {
   $$("video").forEach(v => v.pause());
   page = (location.hash || "#home").slice(1) || "home";
