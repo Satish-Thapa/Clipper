@@ -9,7 +9,7 @@ a short close-up moment doesn't get a video rejected.
 
 Measured (share of frames with a face >= 3%): gameplay 0%, GTA RP with facecam 0-4%, group/IRL videos 3-11%,
 creator-in-a-box commentary 16-27%, close-up podcast 68%. Wide studio podcasts have small faces and pass here;
-DeepSeek's text check (pick.clippable) is what skips those."""
+the AI's text check (scout.judge) is what skips those."""
 from pathlib import Path
 
 import httpx
@@ -35,12 +35,14 @@ def tiles(img, rows, cols, w, h):
     return out
 
 
-def frames(url, n=FRAMES):
-    """~n storyboard frames spread evenly over the video ([] if YouTube has no storyboard for it)."""
+def frames(url, n=FRAMES, info=None):
+    """~n storyboard frames spread evenly over the video ([] if YouTube has no storyboard for it).
+    info: the video's full yt-dlp info when the caller already has it (scout.enrich), so it isn't fetched twice."""
     import cv2
     from .download import ydl
-    with ydl({"quiet": True, "skip_download": True, "no_warnings": True}) as y:
-        info = y.extract_info(url, download=False)
+    if info is None:
+        with ydl({"quiet": True, "skip_download": True, "no_warnings": True}) as y:
+            info = y.extract_info(url, download=False)
     sbs = [f for f in info.get("formats", []) if f.get("format_id", "").startswith("sb") and f.get("fragments")]
     if not sbs:
         return []
@@ -78,11 +80,11 @@ def static_share(fs):
     return sum(np.abs(a.astype(np.int16) - b).mean() < STILL_DIFF for a, b in pairs) / len(pairs) if pairs else 0.0
 
 
-def analyze(url):
+def analyze(url, info=None):
     """-> {"person": share of frames where a person fills the screen, "static": share of unchanging frames,
     "frames": how many were checked}. All 0 if YouTube has no storyboard for the video."""
     import cv2
-    fs = frames(url)
+    fs = frames(url, info=info)
     if not fs:
         return {"person": 0.0, "static": 0.0, "frames": 0}
     det = cv2.FaceDetectorYN.create(str(MODEL), "", (fs[0].shape[1] * 2, fs[0].shape[0] * 2), 0.6)

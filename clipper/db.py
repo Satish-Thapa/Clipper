@@ -53,11 +53,9 @@ CREATE TABLE IF NOT EXISTS news_runs (
 CREATE TABLE IF NOT EXISTS limit_hits (
   platform TEXT PRIMARY KEY, hit_at REAL, message TEXT
 );
-CREATE TABLE IF NOT EXISTS campaigns (
-  id INTEGER PRIMARY KEY, name TEXT, brief TEXT, rules TEXT DEFAULT '{}', platforms TEXT DEFAULT '[]',
-  shorts INTEGER DEFAULT 3, max_seconds INTEGER, aspect REAL, layout TEXT DEFAULT '', subtitles INTEGER DEFAULT 1,
-  onscreen INTEGER DEFAULT 1, trial_on_screen INTEGER DEFAULT 0, notes TEXT DEFAULT '',
-  status TEXT DEFAULT 'ready', log TEXT DEFAULT '', created REAL
+CREATE TABLE IF NOT EXISTS stats_daily (
+  day TEXT, clip_id INTEGER, platform TEXT, views INTEGER DEFAULT 0, data TEXT DEFAULT '{}',
+  PRIMARY KEY (day, clip_id, platform)
 );
 CREATE TABLE IF NOT EXISTS topics (
   id INTEGER PRIMARY KEY, topic TEXT, videos INTEGER, shorts INTEGER, longs INTEGER, mode TEXT,
@@ -90,16 +88,19 @@ def init():
                            ("clips", "post_to TEXT"),
                            ("jobs", "notes TEXT DEFAULT ''"), ("topics", "notes TEXT DEFAULT ''"),
                            ("clips", "why TEXT DEFAULT '{}'"),
-                           ("jobs", "campaign_id INTEGER"), ("jobs", "style TEXT DEFAULT 'full'"), ("jobs", "channel TEXT DEFAULT ''"), ("jobs", "whole INTEGER DEFAULT 0"), ("jobs", "post_every REAL"), ("jobs", "post_from REAL"), ("jobs", "as_is INTEGER DEFAULT 0"), ("clips", "caption TEXT DEFAULT ''")):  # campaign.py  # why: the Clips page "Why this clip?"  # post_to: platforms for a clip scheduled by hand  # columns added after v0.1
+                           ("jobs", "campaign_id INTEGER"), ("jobs", "style TEXT DEFAULT 'full'"), ("jobs", "channel TEXT DEFAULT ''"), ("jobs", "whole INTEGER DEFAULT 0"), ("jobs", "post_every REAL"), ("jobs", "post_from REAL"), ("jobs", "as_is INTEGER DEFAULT 0"), ("clips", "caption TEXT DEFAULT ''"), ("topics", "category TEXT DEFAULT ''"), ("jobs", "category TEXT DEFAULT ''"),
+                           ("jobs", "header INTEGER DEFAULT 1"), ("jobs", "fill INTEGER DEFAULT 0"), ("jobs", "auto_row INTEGER"),
+                           ("topics", "auto_row INTEGER"), ("clips", "stats TEXT DEFAULT '{}'")):  # campaign.py  # why: the Clips page "Why this clip?"  # post_to: platforms for a clip scheduled by hand  # columns added after v0.1
             try:
                 c.execute(f"ALTER TABLE {table} ADD COLUMN {col}")
             except sqlite3.OperationalError:
                 pass  # column already there
         # Threads die with the server; don't show them as still running.
         c.execute("UPDATE jobs SET status='interrupted' WHERE status NOT IN ('done','failed','stopped')")
-        # Topics still 'queued' are picked up again by topics.loop(); only a half-done one is interrupted.
-        c.execute("UPDATE topics SET status='interrupted' WHERE status NOT IN ('queued','done','failed','stopped')")
-        c.execute("UPDATE campaigns SET status='ready' WHERE status='reading the brief'")  # its thread died
+        # topics = Auto's research runs, one per topic per day: a half-done one died with the server
+        c.execute("UPDATE topics SET status='interrupted' WHERE status NOT IN ('done','failed','stopped')")
+        c.execute("UPDATE clips SET status='rendered' WHERE status='uploading'")  # its upload thread died
+        c.execute("UPDATE clips SET status=CASE WHEN path IS NULL THEN 'render failed' ELSE 'rendered' END WHERE status='rendering'")  # its render died (a header re-render keeps the old file)
 
 
 def insert(table, **row):

@@ -53,7 +53,7 @@ current state.
   - `h264_nvenc` is available, and Whisper runs on CUDA (`faster-whisper`, model `WHISPER_MODEL`).
   - The best NVENC settings (p7, spatial + temporal AQ, B-refs) work on this GPU.
 - **Node:** use it only to syntax-check the page's JS (see §8).
-- **AI (LLM), via the OpenAI-compatible client in `pick.py`:**
+- **AI (LLM), via the OpenAI-compatible client in `ai.py`:**
   - Main: `LLM_BASE_URL` / `LLM_MODEL` = `gpt-oss:20b` on the owner's OTHER machine (an Ollama server reached over
     the network).
   - Fallback: DeepSeek (`DEEPSEEK_API_KEY`).
@@ -76,13 +76,18 @@ clipper/
   download.py   everything YouTube-in: info, VOD download, live chunk recording (+ A/V alignment), chat, comments, cookies
   signals.py    loudness (ebur128) + heatmap/chat/comments -> one per-second "hype" curve, candidate windows, reactions
   transcribe.py faster-whisper word timestamps, sentence snapping
-  pick.py       all AI prompts and parsing: choose / choose_full, validate, fallback, headlines, notes (live, reel, user)
+  ai.py         every AI call: ask() with the provider order + fallback, JSON mode, prompt log, user_note
+  scout.py      CLIP-SCOUT, finding videos: topic -> category + queries -> search -> hard filters -> full stats ->
+                velocity/outlier/engagement score -> AI judge -> face check; and the autopilot's trending_topics
+  pick.py       CLIP-CUTTER, picking moments: the clip prompt, choose / choose_full, validate (5-part score ->
+                virality, overlap check), confirm (+5 multi-signal), fallback, headlines, notes (live, reel, user)
+  categories.py gaming / podcast / sports rules for both prompts ("scout" and "cut" blocks)
   render.py     ffmpeg: cut + framing/layouts + ASS subtitles/titles + encoder, previews, YouTube 1440p copy, as-is copy
   upload.py     YouTube Data API upload (OAuth token in data/)
   social.py     Facebook / Instagram / TikTok uploaders, upload status, limit timers
   channels.py   "Clip a whole channel": pick recent videos/Shorts, one job each, in the background
   autopilot.py  daily posting plan, trend research rounds, streamer live-watch, upload slots
-  topics.py     topic queue: topic -> search queries -> trending videos -> one job per video
+  topics.py     topic queue: scout.find_videos -> one job per video (category copied onto the job)
   news.py       News & facts posts (photo/video), and timed_tick() which posts every "timed" clip when due
   campaign.py   paid clipping campaigns (Whop style): their own flow, prompts and caption rules
   insights.py   learns what performs from view counts; stats.py view counts + WhatsApp report
@@ -253,7 +258,29 @@ Two branches inside `_process`:
   it).
 - Download / Open use the full file at `/media/...`.
 
-## 7. AI prompts (pick.py)
+## 7. AI prompts
+
+Prompts live next to the code that uses them; every call goes through `ai.ask(task, system, key, full)`.
+
+### Finding videos (scout.py, from the owner's CLIP-SCOUT spec)
+- `QUERIES_SYSTEM`: topic -> `{category, launch, queries (8-10), trending_angles}`.
+- Hard filters are code (`hard_filter`): clipped before, live, length (`TOPIC_MIN/MAX_MINUTES`, sports 4 min), age
+  (`TOPIC_MAX_DAYS` 14, launch week 7), dead on arrival (< 5k views after 48h).
+- **The stats are computed in code, never by the AI**: velocity, outlier, engagement, freshness, percentile ranks
+  within the batch; `score()` = 100 × (.40 v + .25 o + .15 e + .10 f + .10 clippability).
+- `JUDGE_SYSTEM` (keeps the owner's old clippability rules: no talking heads, tutorials, trailers) returns
+  clippability 0-10, drop reason (non-English, official league/broadcaster, music, re-upload), why, expected
+  moments, copyright risk, better_queries. Under `MIN_CLIPPABLE` (6) or risk "high" = skipped.
+- `enrich()` fetches full info once; `vision.analyze(url, info)` reuses it.
+
+### Picking moments (pick.py, from the owner's CLIP-CUTTER spec)
+- The AI returns 5 sub-scores (hook, flow, emotion, share, trend; 0-10). `virality()` computes the 0-100 score
+  (hook 40%), falling back to a plain "virality" number. `confirm()` adds +5 when 2+ of heatmap/chat/comments peak
+  (>= 0.6) inside the clip. `validate()` drops same-kind clips overlapping a better one by > 30%.
+- `category_note(job.category)` adds that category's cut rules (all of them when unknown, e.g. Create jobs).
+- `moment_type`, `framing`, `copyright_risk` and the scores are saved in the clip's `why` JSON (not used by render yet).
+- **Not taken from the spec, on purpose:** `hook_text` / cold opens (the owner removed the 3-second hook) and
+  "discard below 60" for videos (the owner's clip counts decide; live extras use `LIVE_MIN` = 60).
 
 - **`SYSTEM` / `FULL_TASK` / `pick_text(counts)`:**
   - The model gets the video's title and transcript (with `[sec]` markers), plus the signals.
@@ -289,7 +316,7 @@ db.init()
 subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=1280x720:d=120",
                 "-f", "lavfi", "-i", "sine=d=120", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-shortest", str(src)], check=True)
 transcribe.words = lambda f, s, e: [w for w in W if s <= w["s"] < e]      # fake words
-pick._ask = lambda task, system=None, key=None, full=False: {"clips": [...]}  # fake AI (capture `task` to check prompts)
+ai.ask = lambda task, system, key="clips", full=False: {"clips": [...]}  # fake AI (capture `task` to check prompts)
 worker.upload_clip = lambda cid, *a, **k: sent.append(cid)               # never upload
 worker.STOPS[jid] = threading.Event()
 worker._process(db.get("jobs", jid), src, "title", d)
@@ -305,7 +332,8 @@ worker._process(db.get("jobs", jid), src, "title", d)
 - **API:** use `fastapi.testclient.TestClient(app.app)` with `worker.start = lambda jid: None`, on temp data only.
 - **Page JS:** extract every `<script>` from index.html into `page.js` and run `node --check page.js`. To test a UI
   function's logic, slice it out of page.js and `eval` it in Node with stubs (`$`, `esc`, `PLATFORMS`, ...).
-- **Pure checks:** `python -m clipper.pick` runs pick.py's self-tests.
+- **Pure checks:** `python -m clipper.pick` / `clipper.scout` / `clipper.categories` / `clipper.signals` run self-tests
+  (with a temp `CLIPPER_DATA`; on the Mac also `FFMPEG=/opt/homebrew/bin/ffmpeg`, the checked-in `.env` is Windows').
 
 ### The regression scripts used last
 - Each prints `... OK`:
@@ -320,7 +348,9 @@ worker._process(db.get("jobs", jid), src, "title", d)
   - `queuetest.py`;
   - `createqueue.py`;
   - `previewtest.py`;
-  - `cookietest.py`.
+  - `cookietest.py`;
+  - `scouttest.py`: topic -> filters, stats, judge, face check, widening, jobs with category;
+  - `cuttest.py`: cutter prompt blocks, 5-part score, +5 bonus, overlap drop, why JSON, renders.
 - Recreate the relevant one when you change that area. Render tests take minutes, so run long suites in the background.
 
 ## 9. UI notes (static/index.html)
@@ -352,16 +382,15 @@ worker._process(db.get("jobs", jid), src, "title", d)
     are picked the same way.
 - **Gotcha:** `form.style` is the CSS object. Use `form.elements.style`.
 
-## 10. Current state (2026-11-20)
+## 10. Current state (2026-11-21)
 
-- **Last commits on `lib`:** `698d158` (big middle title, channel by views, Shorts as they are) and `3a92b3e` (reel
-  look, channel clipping, upload queue, quality).
-- **Uncommitted, built and tested, waiting for the owner to say "commit":**
-  - the "Upload one clip every N min" and "Start posting at" fields on the Create clips form (`NewJob.post_every` /
-    `post_from`, file jobs too);
-  - the new **Schedule** page.
-
-  README is updated for both.
+- **Last commits:** `c10412b` (Schedule page, posting interval and start time on Create), merged to `main` (#8).
+- **Uncommitted, built and tested, waiting for the owner to say "commit":** the split into `ai.py` (AI plumbing),
+  `scout.py` (finding videos, CLIP-SCOUT) and `categories.py`, with `pick.py` now only the cutter (CLIP-CUTTER
+  scoring, +5 multi-signal, overlap check). New columns `topics.category` / `jobs.category`; new `.env` key
+  `TOPIC_MAX_DAYS`; `TOPIC_MIN_MINUTES` default 3 -> 8 (the owner's own `.env` still says 3). README is updated.
+- **A Mac copy** lives at `~/Documents/gta6` (no NVIDIA there: x264 fallback, Whisper on CPU; its `.env` is the
+  Windows one).
 - **Known limits / ideas not done:**
   - Colour emoji (libass can't draw them).
   - AI upscaling of the facecam (Real-ESRGAN) was offered and not built.

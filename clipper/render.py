@@ -7,22 +7,17 @@ from functools import lru_cache
 from pathlib import Path
 
 from . import db
-from .config import CROP_ASPECT, END_CARD, FFMPEG, FOLLOW_LINE, FOLLOW_LINES, LOGO, VOICE
+from .config import FFMPEG, FOLLOW_LINE, FOLLOW_LINES, LOGO, VOICE  # the last four: news posts only (switched off)
 
 ASS_HEAD = """[Script Info]
 ScriptType: v4.00+
-PlayResX: {w}
-PlayResY: {h}
+PlayResX: 1080
+PlayResY: 1920
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, BorderStyle, Outline, Shadow, Alignment, MarginV
-Style: Cap,Arial Black,{size},&H00FFFFFF,&H00000000,&H80000000,1,1,6,2,2,{margin}
-Style: Top,Arial Black,{top_size},&H00FFFFFF,&H00000000,&H64000000,1,1,7,3,8,{top_margin}
-Style: EndBox,Arial Black,{end_size},&H00FFFFFF,&H002E2EFF,&H002E2EFF,1,3,22,0,5,0
-Style: End,Arial Black,{end_sub},&H00FFFFFF,&H00000000,&H80000000,1,1,7,3,5,0
-Style: EndSmall,Arial Black,{end_small},&H00FFFFFF,&H00000000,&H80000000,1,1,6,3,5,0
-Style: EndHi,Arial Black,{end_hi},&H0000E5FF,&H00000000,&H80000000,1,1,7,3,5,0
-Style: Hook,Arial Black,{hook_size},&H00FFFFFF,&H002E2EFF,&H002E2EFF,1,3,9,0,8,0
+Style: Cap,Arial Black,86,&H00FFFFFF,&H00000000,&H80000000,1,1,6,2,2,{margin}
+Style: Top,Arial Black,78,&H00FFFFFF,&H00000000,&H64000000,1,1,7,3,8,120
 
 [Events]
 Format: Layer, Start, End, Style, Text
@@ -38,69 +33,6 @@ def _t(sec):
 def _secs(t):
     h, m, s = t.split(":")
     return int(h) * 3600 + int(m) * 60 + float(s)
-
-
-def bar_height(aspect=CROP_ASPECT):
-    """Height of each black bar (top and bottom) when a w/h=aspect slice is scaled to 1080 wide on a 1080x1920 canvas."""
-    return max(0, (1920 - round(1080 / aspect)) // 2)
-
-
-END_SECONDS = 2.6  # end card length; only on clips of at least 3x this
-
-
-def end_seconds(text=END_CARD):
-    """How long the end card stays: long enough to read (~0.3s a word), 2.6-5s."""
-    return min(max(0.3 * len(text.replace("|", " ").split()) + 0.8, END_SECONDS), 5.0)
-
-
-def end_card(length, text=END_CARD, w=1080, h=1920):
-    """Animated call to action at the end of the clip.
-    With "|" in the text (e.g. "IF YOU MADE IT TO|THE END OF THIS VIDEO,|YOU LEGALLY HAVE TO|FOLLOW ME"):
-    the video dims, the lines come in one after another (white lines slide up, the second-to-last pops in yellow),
-    and the LAST line slams in on a red box with an overshoot and keeps pulsing.
-    Without "|": the first word pops on the red box and the rest slides up under it (the original card)."""
-    text = text.upper().replace("{", "").replace("}", "").strip()
-    secs = end_seconds(text)
-    if not text or length < secs * 3:
-        return []
-    if "|" in text:
-        return _end_lines([x.strip() for x in text.split("|") if x.strip()], length, secs, w, h)
-    first, _, rest = text.partition(" ")
-    a, b, cx, cy = _t(length - END_SECONDS), _t(length), w // 2, h // 2
-    pop = (rf"{{\an5\pos({cx},{cy - 70})\fad(100,180)\fscx20\fscy20\t(0,220,\fscx118\fscy118)\t(220,380,\fscx100\fscy100)"
-           r"\t(700,1000,\fscx108\fscy108)\t(1000,1300,\fscx100\fscy100)\t(1300,1600,\fscx108\fscy108)"
-           r"\t(1600,1900,\fscx100\fscy100)}")
-    out = [f"Dialogue: 2,{a},{b},EndBox,{pop}{first}"]
-    if rest:
-        out.append(f"Dialogue: 2,{a},{b},End," + rf"{{\an5\move({cx},{cy + 160},{cx},{cy + 90},250,550)\fad(450,180)}}" + rest)
-    return out
-
-
-def _end_lines(lines, length, secs, w, h):
-    """The multi-line end card (see end_card). Each line is its own event so it can start later (the stagger)."""
-    k = w / 1080  # 16:9 renders are 1920 wide: scale positions, sizes come from the styles
-    start, end, cx = length - secs, length, w // 2
-    hi = len(lines) - 2  # second-to-last line: yellow accent
-    heights = [int((170 if i == len(lines) - 1 else 100 if i == hi else 82) * k) for i in range(len(lines))]
-    y = h // 2 - sum(heights) // 2  # whole block centred on the screen
-    out = [  # dim the video behind the text (a full-screen 55%-black rectangle, fading in)
-        f"Dialogue: 1,{_t(start)},{_t(end)},End,"
-        + rf"{{\an7\pos(0,0)\bord0\shad0\1c&H000000&\1a&H90&\fad(300,150)\p1}}m 0 0 l {w} 0 {w} {h} 0 {h}{{\p0}}"]
-    for i, (line, lh) in enumerate(zip(lines, heights)):
-        cy, t0 = y + lh // 2, start + 0.15 + i * 0.38  # each line 0.38s after the one before
-        if i == len(lines) - 1:  # the punchline on the red box: slam in from big, overshoot, then keep pulsing
-            pulse = "".join(rf"\t({ms},{ms + 300},\fscx{106 if j % 2 == 0 else 100}\fscy{106 if j % 2 == 0 else 100})"
-                            for j, ms in enumerate(range(650, int((end - t0) * 1000), 300)))
-            tags = rf"{{\an5\q2\pos({cx},{cy})\fad(80,150)\fscx260\fscy260\t(0,180,\fscx92\fscy92)\t(180,320,\fscx100\fscy100){pulse}}}"
-            out.append(f"Dialogue: 3,{_t(t0)},{_t(end)},EndBox,{tags}{line}")
-        elif i == hi:  # yellow accent: pops from small
-            tags = rf"{{\an5\q2\pos({cx},{cy})\fad(120,150)\fscx40\fscy40\t(0,200,\fscx112\fscy112)\t(200,330,\fscx100\fscy100)}}"
-            out.append(f"Dialogue: 2,{_t(t0)},{_t(end)},EndHi,{tags}{line}")
-        else:  # white lines: slide up a little and fade in
-            tags = rf"{{\an5\q2\move({cx},{cy + int(40 * k)},{cx},{cy},0,260)\fad(220,150)}}"
-            out.append(f"Dialogue: 2,{_t(t0)},{_t(end)},EndSmall,{tags}{line}")
-        y += lh
-    return out
 
 
 def follow_line():
@@ -124,32 +56,6 @@ def hook_lines(text, width=44):
     """The follow message wrapped for its box (2-3 short lines read better than one long one)."""
     import textwrap
     return textwrap.wrap(text, width)[:3] if text else []
-
-
-HOOK_LINE_H, HEAD_H = 42, 106  # one follow-message line / the headline box (px) on a 1080x1920 canvas
-
-
-def split_head_y(hook):
-    """Split layout: the follow + headline block sits 28px into the background video (below the main clip)."""
-    n = len(hook_lines(hook))
-    return SPLIT_CLIP_H + 28 + (n * HOOK_LINE_H + (14 if n else 0) + HEAD_H) // 2
-
-
-def seam_block(y, lines=1):
-    """Like top_block, but the follow message + headline centred on line y (the facecam layout's seam, so they
-    don't cover the streamer's face)."""
-    hook_h = lines * HOOK_LINE_H + (14 if lines else 0)
-    top = y - (hook_h + HEAD_H) // 2
-    return top, top + hook_h, top + hook_h + HEAD_H
-
-
-def top_block(aspect=CROP_ASPECT, lines=1):
-    """Where the follow message and the headline go: (hook_y, headline_y, bottom). Centred in the top bar when it's
-    tall enough, else from y=110 (under YouTube's top icons), on the video. lines = follow-message lines (0 = none)."""
-    bar = bar_height(aspect)
-    hook_h = lines * HOOK_LINE_H + (14 if lines else 0)
-    y = max(110, (bar - hook_h - HEAD_H) // 2)
-    return y, y + hook_h, y + hook_h + HEAD_H
 
 
 YELLOW = r"{\c&H00E5FF&}"  # ASS colours are BGR: this is the headline yellow
@@ -220,58 +126,18 @@ def _caption_lines(ws, start, per_line, karaoke):
     return out
 
 
-def ass(words, start, end, vertical=True, headline="", per_line=3, aspect=CROP_ASPECT, hook=None, split=False,
-        cap_margin=None, head_y=None, ending=True, shift=0.0, karaoke=False, mid_y=None):
-    """Headline (white, black outline, no box: the video shows through) in the top black bar for the whole clip + big captions in the bottom black bar,
-    a few words at a time. With no bars (aspect 9/16) they sit on the video instead.
-    shift: every line this many seconds later (an exact cut decodes from `shift` s before the clip starts).
-    karaoke: the word being said in yellow (and bouncing).
-    mid_y: the reel title: big, centred on this line (the facecam seam / the middle of the screen)."""
-    if shift:
-        out = ass(words, start, end, vertical, headline, per_line, aspect, hook, split, cap_margin, head_y, ending,
-                  karaoke=karaoke, mid_y=mid_y)
-        return re.sub(r"^(Dialogue: \d+,)([\d:.]+),([\d:.]+),",
-                      lambda m: f"{m[1]}{_t(_secs(m[2]) + shift)},{_t(_secs(m[3]) + shift)},", out, flags=re.M)
+def ass(words, start, end, headline="", mid_y=960, cap_margin=None, shift=0.0, per_line=3):
+    """The reel's text as ASS (1080x1920): the header big across mid_y for the whole clip (the facecam / split seam,
+    or the middle of the screen), word-by-word subtitles at the bottom with the word being said in yellow.
+    shift: every line this many seconds later (an exact cut decodes from `shift` s before the clip starts)."""
     ws = [w for w in words if start <= w["s"] < end]
-    lines = _caption_lines(ws, start, per_line, karaoke)
-    if headline and mid_y and vertical:  # reel: big, eye-catching, centred on mid_y, pops in, then gently pulses
+    lines = _caption_lines(ws, start, per_line, True)
+    if headline:
         lines.insert(0, f"Dialogue: 2,{_t(0)},{_t(end - start)},Top,{big_title(headline, mid_y, end - start)}")
-    elif headline:
-        raw = headline.upper().replace("{", "").replace("}", "")
-        text = _emoji(raw)
-        if vertical:  # follow message on top, then the headline under it
-            hook = follow_line() if hook is None else hook
-            hl = hook_lines(hook)
-            hy, ty, _ = top_block(aspect, len(hl)) if head_y is None else seam_block(head_y, len(hl))
-            hook = r"\N".join(hl)
-            pulse = "".join(rf"\t({ms},{ms + 400},\fscx{105 if j % 2 == 0 else 100}\fscy{105 if j % 2 == 0 else 100})"
-                            for j, ms in enumerate(range(1200, min(int((end - start) * 1000), 60000), 1600)))
-            if hook:
-                lines.insert(0, f"Dialogue: 1,{_t(0)},{_t(end - start)},Hook,"
-                                + rf"{{\an8\pos(540,{hy})\fad(200,0)\fscx40\fscy40\t(0,220,\fscx108\fscy108)\t(220,360,\fscx100\fscy100){pulse}}}{hook}")
-            # a long headline (it now matches the title, up to 6 words) gets a smaller font so it stays inside 1080px
-            fit = rf"\fs{max(50, round(78 * 24 / len(raw)))}" if len(raw) > 24 else ""
-            lines.insert(0, f"Dialogue: 0,{_t(0)},{_t(end - start)},Top,{{\\an8\\pos(540,{ty if hook else hy}){fit}}}{text}")
-        else:
-            lines.insert(0, f"Dialogue: 0,{_t(0)},{_t(end - start)},Top,{text}")
-    elif hook and vertical:  # follow message without a headline: same spot, on its own
-        hl = hook_lines(hook)
-        hy = (top_block(aspect, len(hl)) if head_y is None else seam_block(head_y, len(hl)))[0]
-        lines.insert(0, f"Dialogue: 1,{_t(0)},{_t(end - start)},Hook,"
-                        + rf"{{\an8\pos(540,{hy})\fad(200,0)}}" + r"\N".join(hl))
-    # Headline: centred in the top bar (box is ~106px tall), but below YouTube's top icons (~120px).
-    # Captions: just under the video, so they stay above YouTube's title/channel overlay at the very bottom.
-    bar = bar_height(aspect)
-    size = (dict(w=1080, h=1920, size=86, margin=max(250, bar - 120), top_size=78, top_margin=max(120, (bar - 106) // 2),
-                 end_size=120, end_sub=84, end_small=62, end_hi=76, hook_size=31)
-            if vertical
-            else dict(w=1920, h=1080, size=64, margin=70, top_size=60, top_margin=50, end_size=90, end_sub=64, end_small=56, end_hi=68,
-                      hook_size=40))
-    if cap_margin and vertical:
-        size["margin"] = cap_margin  # captions this far from the bottom (facecam at the bottom: just above it)
-    if ending:
-        lines += end_card(end - start, w=size["w"], h=size["h"])
-    return ASS_HEAD.format(**size) + "\n".join(lines) + "\n"
+    if shift:
+        lines = [re.sub(r"^(Dialogue: \d+,)([\d:.]+),([\d:.]+),",
+                        lambda m: f"{m[1]}{_t(_secs(m[2]) + shift)},{_t(_secs(m[3]) + shift)},", ln) for ln in lines]
+    return ASS_HEAD.format(margin=cap_margin or 250) + "\n".join(lines) + "\n"
 
 
 # Windows built-in SAPI voice via PowerShell. Text and paths go in as env vars, so quotes can't break the script.
@@ -391,20 +257,6 @@ def _codec(path, stream):
                            "-of", "csv=p=0", str(path)], capture_output=True, text=True).stdout.strip()
 
 
-def as_is_copy(src, out):
-    """A video posted as it is: the same picture and sound in an .mp4 every platform takes. H.264 is copied untouched
-    (no quality lost); VP9 / AV1 (what YouTube often serves) is re-encoded once at top quality, since Instagram and
-    TikTok want H.264. -> what was done, for the log."""
-    out = Path(out)
-    copy_v = _codec(src, "v") == "h264"
-    copy_a = _codec(src, "a") in ("aac", "")
-    subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-i", str(Path(src).resolve()), "-map", "0:v:0", "-map", "0:a?",
-                    *(["-c:v", "copy"] if copy_v else [*encoder(), "-pix_fmt", "yuv420p"]),
-                    *(["-c:a", "copy"] if copy_a else ["-c:a", "aac", "-b:a", "256k", "-ar", "48000"]),
-                    "-movflags", "+faststart", str(out.resolve())], check=True, capture_output=True)
-    return "copied untouched" if copy_v else "re-encoded to H.264 at top quality, picture unchanged"
-
-
 def youtube_copy(path):
     """The copy that goes to YouTube: the clip upscaled to 1440p (1440x2560 vertical / 2560x1440 wide). YouTube gives
     1440p+ uploads its better encoding (VP9/AV1, higher bitrate), so they look clearly sharper to viewers even when
@@ -516,124 +368,78 @@ def _duration(path):
 # Colour grade for a richer, "higher quality" look: stream footage comes out flat and washed out. More saturation
 # (colours pop), a little more contrast, slightly deeper midtones. Applied before the scaling and sharpening.
 GRADE = "eq=contrast=1.07:saturation=1.25:gamma=0.97"
+TOP_Y = 330  # full / split: the header's centre line, near the top (clear of the phone apps' top icons)
+LAYOUTS = ("full", "cam", "split")  # the three framings (Settings → layout); every one fills a 1080x1920 phone screen
 
 
-def cut(src, out, start, end, vertical, words=(), headline="", voice=(), aspect=CROP_ASPECT, layout="", follow=True,
-        hook_text=None, clean=False, exact=False, reel=False):
-    """words: burn these as captions; headline: text at the top. Pass ()/"" for none.
-    voice: [(wav_path, seconds into clip)] voice-over lines; the original audio is ducked under them.
-    aspect: w/h of the kept slice of the frame (9/16 = fills the phone ... 16/9 = whole frame with bars).
-    layout: "split:<file>" = the clip on the top half, that background video (data/fillers) on the bottom half.
-            "cam:<top|bottom>:<where>" = the streamer's facecam (cut out of the frame) and the gameplay stacked full screen.
-    hook_text: shown in the follow message's place instead of it ("" = nothing there); campaigns put the required line here.
-    clean: no end card and no logo (campaign clips: only the official picture and sound).
-    exact: sync-safe cut for stream recordings (live clips, no text): seek a little early, then trim to the exact
-           frame, so picture and sound both start at 0 (see save_master). The headline / follow line are shifted to
-           match; no voice-over with it.
-    reel: the reel look: captions with the word being said in yellow (and bouncing)."""
-    if exact:
-        assert not voice, "exact cuts carry no voice-over"
-    pre = min(start, 20.0) if exact else 0.0  # exact: decode from `pre` s early, cut on the exact frame (output -ss)
-    filler = filler_path(layout) if vertical else None
-    cam = cam_layout(layout) if vertical and not filler else None
+def layout_name(layout):
+    """'' / 'full' -> full, 'cam:...' -> cam, 'split:...' -> split."""
+    return "cam" if str(layout).startswith("cam:") else "split" if str(layout).startswith("split:") else "full"
+
+
+def cut(src, out, start, end, words=(), headline="", layout=""):
+    """One reel: 1080x1920, full screen on a phone, original sound in sync.
+    layout: "" = full (the video cropped to fill the screen); "cam:top:<auto|tl|tr|bl|br>" = the streamer's facecam on
+            top, the gameplay below; "split:<file>" = the clip on top, that background video (data/fillers) below.
+    words: subtitles at the bottom (() = none); headline: the header across the middle ("" = none).
+    Sync-safe exact cut: decode from a little before `start`, then cut on the exact frame, so picture and sound both
+    start at 0 (see save_master); the text is shifted to match."""
+    src, out = Path(src), Path(out)
+    pre = min(start, 20.0)
+    filler = filler_path(layout)
+    if str(layout).startswith("split:") and not filler:
+        raise ValueError(f"the background video {str(layout)[6:]} is gone: pick another in Settings → Background videos")
+    cam = cam_layout(layout) if not filler else None
     if cam and cam[1] == "auto":
-        box = find_cam(src, start, end, face_at=0.68 if cam[0] == "top" else 0.45)  # top: room for the headline over it
+        box = find_cam(src, start, end, face_at=0.68 if cam[0] == "top" else 0.45)  # top: room for the header over it
         db.here(f"   facecam: found at x {box[0]:.0%} y {box[1]:.0%} ({box[2]:.0%} x {box[3]:.0%} of the frame)" if box
-                else "   facecam: no face found, using normal full-screen framing")
+                else "   facecam: no face found, using the full-screen framing")
         cam = (cam[0], box) if box else None
-    aspect = 9 / 16 if filler or cam else min(max(float(aspect or CROP_ASPECT), 9 / 16), 16 / 9)
-    # Vertical: keep a centred `aspect` slice of the frame (wider than a full 9:16 crop = more gameplay),
-    # fit it to 1080 wide, and pad to 1080x1920 with black bars that hold the headline and captions.
-    # ponytail: plain center crop; facecam/subject tracking is the upgrade if gameplay gets cut off
-    vf = (f"crop='min(iw,ih*{aspect})':ih,scale=1080:1920:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos,"
-          f"cas={SHARPEN},pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,setsar=1" if vertical else f"scale=-2:1080:flags=lanczos,cas={SHARPEN}")
-    hook = (_clean_hook(hook_text) if hook_text and vertical else "") if hook_text is not None else (
-        follow_line() if follow and vertical else "")  # the follow message: its own on/off, with or without a headline
-    logo = LOGO if LOGO and LOGO.exists() and not clean else None
     subs = ""
-    if words or headline or hook or (END_CARD.strip() and not clean):
+    if words or headline:
         sub = out.with_suffix(".ass")
-        # reel: the title in the middle (with a facecam: on the seam between streamer and gameplay); captions at the
-        # bottom (facecam at the bottom: on the gameplay, clear of the title)
-        mid = (CAM_H if cam[0] == "top" else 1920 - CAM_H) if reel and cam else 960 if reel and not filler else None
-        cap = (CAM_H + (300 if reel else 40)) if cam and cam[0] == "bottom" else None
-        sub.write_text(ass(words, start, end, vertical, headline, aspect=aspect, hook=hook, split=bool(filler),
-                           cap_margin=cap, head_y=split_head_y(hook) if filler else None, ending=not clean, shift=pre,
-                           karaoke=reel, mid_y=mid),
-                       encoding="utf-8")
+        # the header: with the streamer on top, in the middle (on the seam between streamer and gameplay); otherwise
+        # at the top (under the app's own top icons). Subtitles at the bottom, as always.
+        mid = (CAM_H if cam[0] == "top" else 1920 - CAM_H) if cam else TOP_Y
+        cap = CAM_H + 300 if cam and cam[0] == "bottom" else None
+        sub.write_text(ass(words, start, end, headline, mid, cap, shift=pre), encoding="utf-8")
         subs = f",subtitles={sub.name}"  # relative name + cwd avoids ffmpeg path escaping
-    n_in = 1 + (1 if logo else 0) + len(voice)  # the background video is the last input
-    if filler:
-        # Split: the main clip fills the top (full width, cropped to fill, the bigger part), your background video fills
-        # the bottom. The follow message + headline sit at the top of the background video, so the clip stays clean.
+    if filler:  # the clip fills the top (cropped to fill), your background video the bottom, muted
         bot_h = 1920 - SPLIT_CLIP_H
         head = (f"[0:v]scale=1080:{SPLIT_CLIP_H}:force_original_aspect_ratio=increase:flags=lanczos,"
-                f"crop=1080:{SPLIT_CLIP_H},setsar=1[clip];"
-                f"[{n_in}:v]scale=1080:{bot_h}:force_original_aspect_ratio=increase,crop=1080:{bot_h},setsar=1,fps=30[fill];"
+                f"crop=1080:{SPLIT_CLIP_H},cas={SHARPEN},setsar=1[clip];"
+                f"[1:v]scale=1080:{bot_h}:force_original_aspect_ratio=increase,crop=1080:{bot_h},setsar=1,fps=30[fill];"
                 f"[clip][fill]vstack=inputs=2:shortest=1{subs}")
     elif cam:
-        # Facecam stack, full screen: the streamer's box cut out of the frame fills the whole width of a 1080xCAM_H
-        # panel (cropped top/bottom inside the box only, so nothing around the facecam comes in), the gameplay (middle
-        # of the frame) fills the rest. Headline + follow message sit at the top, on the video; captions on the gameplay.
+        # The streamer's box cut out of the frame fills a 1080xCAM_H panel (cropped inside the box only), the gameplay
+        # (the middle of the frame, pushed off the facecam's side so the streamer isn't in it twice) the rest.
         x, y, w, h = cam[1]
         cam_h, game_h = CAM_H, 1920 - CAM_H
-        # Gameplay = a slice from the middle of the frame, pushed off the facecam's side so the streamer isn't in it twice.
         gx = (f"min(max((iw-ow)/2,iw*{min(x + w + 0.05, 1):.4f}),iw-ow)" if x + w / 2 < 0.4 else
               f"max(min((iw-ow)/2,iw*{max(x - 0.05, 0):.4f}-ow),0)" if x + w / 2 > 0.6 else "(iw-ow)/2")
         panels = ["[cam]", "[game]"] if cam[0] == "top" else ["[game]", "[cam]"]
+        # Quality: the facecam is a small box blown up ~3x: a light denoise first (so the stream's compression blocks
+        # aren't enlarged), lanczos, then contrast-adaptive sharpening; the gameplay a lighter sharpen.
         head = (f"[0:v]split=2[c][g];"
-                # Quality: the facecam is a small box blown up ~3x: a light denoise first (so the stream's compression
-                # blocks aren't enlarged), lanczos, then contrast-adaptive sharpening; the gameplay a lighter sharpen.
                 f"[c]crop=w=iw*{w:.4f}:h=ih*{h:.4f}:x=iw*{x:.4f}:y=ih*{y:.4f},hqdn3d=1.5:1.5:0:0,"
                 f"scale=1080:{cam_h}:force_original_aspect_ratio=increase:flags=lanczos,crop=1080:{cam_h},cas={CAM_SHARPEN},setsar=1[cam];"
                 f"[g]crop=w='min(iw,ih*{1080 / game_h:.4f})':h=ih:x='{gx}',"
                 f"scale=1080:{game_h}:force_original_aspect_ratio=increase:flags=lanczos,crop=1080:{game_h},cas={SHARPEN},setsar=1[game];"
                 f"{''.join(panels)}vstack=inputs=2{subs}")
-    else:
-        head = f"[0:v]{vf}{subs}"
-    if reel or not clean:  # the colour grade (not on campaign clips: only the official picture there)
-        head = head.replace("[0:v]", f"[0:v]{GRADE},", 1)
-    graph, logo_in = f"{head}[o]", []
-    if logo:
-        # Small logo top-right. Vertical with bars: in the top bar just above the video (clear of the headline and
-        # YouTube's own top icons). Vertical without bars: just under the headline box (which sits at y 120-226),
-        # so it never covers the headline. 16:9: in the video's top-right corner.
-        bar = bar_height(aspect) if vertical else 0
-        below = top_block(aspect, len(hook_lines(hook)))[2] if headline else 230  # bottom of the follow + headline block
-        if filler:  # split: the text block is on the background video, the logo just under it
-            below = seam_block(split_head_y(hook), len(hook_lines(hook)))[2] if headline or hook else SPLIT_CLIP_H
-        y = f"{bar}-h-24" if bar - below >= 110 else f"{max(bar, below) if vertical else 0}+24"  # h = logo height
-        logo_in = ["-i", str(LOGO.resolve())]
-        graph = f"{head}[v];[1:v]scale={220 if vertical else 260}:-1[l];[v][l]overlay=W-w-24:{y}[o]"
-    vo_in, amap = [], ["-map", "0:a?"]
-    if voice:
-        # Each line delayed to its spot -> mixed into one narration track [vo], louder than the TTS default.
-        # sidechaincompress pushes the original audio down while [vo] is talking (ducking), then the two are mixed.
-        k0 = 1 + len(logo_in) // 2  # index of the first voice input (after source and optional logo)
-        lines = []
-        for i, (wav, at) in enumerate(voice):
-            vo_in += ["-i", str(wav.resolve())]
-            lines.append(f"[{k0 + i}:a]aformat=sample_rates=48000:channel_layouts=stereo,"
-                         f"adelay={int(at * 1000)}:all=1[vo{i}]")
-        graph += (";" + ";".join(lines) + ";" + "".join(f"[vo{i}]" for i in range(len(voice)))
-                  + f"amix=inputs={len(voice)}:normalize=0:duration=longest,volume=1.6,asplit=2[vk][vm];"
-                  "[0:a]aformat=sample_rates=48000:channel_layouts=stereo[orig];"
-                  "[orig][vk]sidechaincompress=threshold=0.02:ratio=12:attack=15:release=400[duck];"
-                  "[duck][vm]amix=inputs=2:normalize=0:duration=first[a]")
-        amap = ["-map", "[a]"]
+    else:  # full: the centre of the frame, cropped to 9:16 so it fills the phone (no black bars)
+        head = (f"[0:v]crop=w='min(iw,ih*9/16)':h='min(ih,iw*16/9)',scale=1080:1920:flags=lanczos,"
+                f"cas={SHARPEN},setsar=1{subs}")
+    graph = head.replace("[0:v]", f"[0:v]{GRADE},", 1) + "[o]"
     fill_in = []
     if filler:  # muted, from a random point, looped if it's shorter than the clip
         import random
         off = random.uniform(0, max(0.0, _duration(filler) - (end - start) - 1))
         fill_in = ["-stream_loop", "-1", "-ss", f"{off:.2f}", "-i", str(filler.resolve())]
-    sync =["-af", "aresample=async=1:first_pts=0"] if exact and amap == ["-map", "0:a?"] else []
     subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-ss", f"{start - pre:.3f}", "-t", f"{end - start + pre:.3f}",
-                    "-i", str(src.resolve()), *logo_in, *vo_in, *fill_in, "-filter_complex", graph, "-map", "[o]", *amap,
-                    *(["-ss", f"{pre:.3f}"] if exact else []), "-t", str(end - start), *sync,
-                    *(["-avoid_negative_ts", "make_zero"] if exact else []),
-                    *encoder(), "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "256k", "-ar", "48000",
-                    "-movflags", "+faststart", out.name],
-                   check=True, cwd=out.parent)
+                    "-i", str(src.resolve()), *fill_in, "-filter_complex", graph, "-map", "[o]", "-map", "0:a?",
+                    "-ss", f"{pre:.3f}", "-t", str(end - start), "-af", "aresample=async=1:first_pts=0",
+                    "-avoid_negative_ts", "make_zero", *encoder(), "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "256k",
+                    "-ar", "48000", "-movflags", "+faststart", out.name], check=True, cwd=out.parent)
 
 
 NEWS_HEAD = """[Script Info]
@@ -763,15 +569,15 @@ def _news_render(out, sub, length, picture, voice, h, photo=False):
 
 
 if __name__ == "__main__":
-    a = ass([{"w": "no", "s": 10, "e": 10.4}, {"w": "way", "s": 10.4, "e": 11}, {"w": "{bro}", "s": 11, "e": 12},
-             {"w": "what", "s": 12, "e": 13}], 10, 20)
-    assert "0:00:00.00,0:00:02.00,Cap,NO WAY BRO" in a and "WHAT" in a and "PlayResY: 1920" in a, a
-    assert "PlayResX: 1920" in ass([], 0, 1, vertical=False)
-    a = ass([], 10, 20, headline="Cops remember you", hook="FOLLOW NOW")
-    assert r"Top,{\an8\pos(540,166)}COPS REMEMBER YOU" in a and "Hook," in a and "}FOLLOW NOW" in a, a  # hook above
-    assert r"Top,{\an8\pos(540,110)}X" in ass([], 0, 9, headline="x", hook="")  # no hook: headline on top
-    assert len(hook_lines(FOLLOW_LINES[1])) in (2, 3)  # long messages wrap
-    assert bar_height(1) == 420 and bar_height(9 / 16) == 0
-    a = ass([], 0, 1, headline="x", aspect=1, hook="")
-    assert "Cap,Arial Black,86,&H00FFFFFF,&H00000000,&H80000000,1,1,6,2,2,300" in a and ",8,157" in a, a  # inside the bars
+    W = [{"w": "no", "s": 10, "e": 10.4}, {"w": "way", "s": 10.4, "e": 11}, {"w": "{bro}", "s": 11, "e": 12},
+         {"w": "what", "s": 12, "e": 13}]
+    a = ass(W, 10, 20)
+    assert "Cap,{\\c&H00E5FF&" in a and "WAY BRO" in a and "PlayResY: 1920" in a and "Dialogue: 2," not in a, a  # karaoke, no header
+    a = ass([], 10, 20, headline="Speed fails 😭", mid_y=700)
+    assert "\\pos(540,700)" in a and "SPEED FAILS" in a and "Segoe UI Emoji" in a, a
+    a = ass(W, 10, 20, shift=5)
+    assert "Dialogue: 0,0:00:05.00," in a, a  # shifted for the exact cut
+    assert ",2,250" in ass([], 0, 1) and ",2,1000" in ass([], 0, 1, cap_margin=1000)
+    assert [layout_name(x) for x in ("", "cam:top:auto", "split:a.mp4")] == ["full", "cam", "split"]
+    assert cam_layout("cam:top:tr") == ("top", CAM_CORNERS["tr"]) and cam_layout("cam:x:y") is None
     print("render ok")

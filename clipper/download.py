@@ -11,7 +11,7 @@ from pathlib import Path
 
 import yt_dlp
 
-from .config import DATA, FFMPEG, SEARCH_REGION, YT_COOKIES, YT_COOKIES_FROM_BROWSER
+from .config import DATA, FFMPEG, YT_COOKIES, YT_COOKIES_FROM_BROWSER
 
 COOKIE_DIR = DATA / "cookies"  # more cookies.txt sets (from other computers / accounts); data/ is never committed
 
@@ -108,7 +108,8 @@ TODAY = "EgIIAg%3D%3D"  # uploaded today
 def search(query, n=20, recent=RECENT[0]):
     """YouTube search results (flat: id, title, duration, view_count, live_status...), no download."""
     # gl/hl = the country and language YouTube ranks results for (US English by default: US-trending videos).
-    url = (f"https://www.youtube.com/results?search_query={urllib.parse.quote(query)}&gl={SEARCH_REGION}&hl=en"
+    from . import settings
+    url = (f"https://www.youtube.com/results?search_query={urllib.parse.quote(query)}&gl={settings.get().search_region}&hl=en"
            + (f"&sp={recent}" if recent else ""))
     with ydl({"quiet": True, "extract_flat": True, "playlistend": n, "skip_download": True}) as y:
         es = y.extract_info(url, download=False).get("entries") or []

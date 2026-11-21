@@ -1,24 +1,28 @@
-"""What works on this channel, learned from the view counts of everything we posted (stats.refresh fills clips.views).
+"""What works on this channel, from the numbers of everything we posted (stats.refresh fills clips.stats / views).
 
-performance()  -> per clip / per topic / per platform / per clip length: views, views per clip, best and worst.
-history_text() -> the same, compact, for DeepSeek: the autopilot passes it when it picks trending topics, so it leans
-                  toward what got views here and away from what flopped (while still trying something new).
-learn_niche()  -> when the autopilot has no niche, DeepSeek turns that history into one (e.g. "GTA 6 NPC and
-                  gameplay moments"), saved as setting 'auto_learned' and shown on the Auto page.
+performance()  -> views per clip broken down by everything we can act on: category, topic, moment type, length,
+                  short/long, the hour and weekday it posted, platform; YouTube retention; best and weakest clips.
+history_text() -> the same, compact, for the AI.
+decide()       -> once a day (autopilot.daily_report): the AI reads the history and writes today's decisions:
+                    scout   - for the researcher (which categories / topics / creators to lean into or avoid)
+                    cutter  - for the clip picker (which moment types, lengths and hooks work)
+                    summary + suggestions for you (e.g. "move a slot to 19:00"; the app never changes your settings)
+                  saved as setting "decisions"; scout.trending_topics and pick.learned_note put them in their prompts.
 
-Clips keep their DB row (with views) after their file is deleted, so the history survives disk cleanups."""
+Clips keep their DB row (with numbers) after their file is deleted, so the history survives disk cleanups."""
 import json
 import time
 
-from . import db, pick
+from . import ai, db
 
-MIN_CLIPS = 5  # fewer posted clips with view counts than this = not enough to learn from yet
+MIN_CLIPS = 5  # fewer posted clips with numbers than this = not enough to learn from yet
 FLOP_AGE = 24 * 3600  # a clip only counts as a flop once it's had a day to get views
 LENGTHS = ((0, 20, "under 20s"), (20, 35, "20-35s"), (35, 60, "35-60s"), (60, 10_000, "over 60s"))
+DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 
 
 def _clips():
-    """Every clip that went up somewhere, with its views, topic and source video."""
+    """Every clip that went up somewhere, with its numbers and what it was."""
     jobs = {j["id"]: j for j in db.all("jobs")}
     topics = {t["id"]: t for t in db.all("topics")}
     out = []
@@ -26,100 +30,120 @@ def _clips():
         ups = {p: u for p, u in json.loads(c.get("uploads") or "{}").items() if u.get("id")}
         if not ups:
             continue
-        views = {p: int(v or 0) for p, v in json.loads(c.get("views") or "{}").items() if p in ups}
+        st = {p: v for p, v in json.loads(c.get("stats") or "{}").items() if p in ups}
+        views = {p: int(v.get("views") or 0) for p, v in st.items()} or \
+            {p: int(v or 0) for p, v in json.loads(c.get("views") or "{}").items() if p in ups}
         job = jobs.get(c["job_id"]) or {}
         topic = topics.get(job.get("topic_id"))
+        why = json.loads(c.get("why") or "{}")
         at = min((u.get("at") or time.time()) for u in ups.values())
-        if job.get("kind") in ("news", "fact"):  # news/fact posts: one group per kind, to compare with the clips
-            topic = {"topic": f"{job['kind']} posts", "source": "news"}
+        lt = time.localtime(at)
+        eng = sum(int(v.get(k) or 0) for v in st.values() for k in ("likes", "comments", "shares", "saves"))
         out.append({"id": c["id"], "title": c["title"], "headline": c.get("headline") or "", "kind": c["kind"],
                     "seconds": round(c["end"] - c["start"]), "views": views, "total": sum(views.values()),
-                    "platforms": list(ups), "at": at, "age_h": round((time.time() - at) / 3600, 1),
-                    "topic": topic["topic"] if topic else None, "auto": bool(topic and topic.get("source") == "auto"),
-                    "source": job.get("title") or job.get("url") or ""})
+                    "engagement": eng, "platforms": list(ups), "at": at, "age_h": round((time.time() - at) / 3600, 1),
+                    "hour": f"{lt.tm_hour:02d}:00", "weekday": DAYS[lt.tm_wday],
+                    "category": job.get("category") or "unknown", "moment": why.get("moment") or "unknown",
+                    "mode": job.get("mode") or "normal", "topic": topic["topic"] if topic else None,
+                    "source": job.get("title") or job.get("url") or "",
+                    "yt_pct": (st.get("youtube") or {}).get("avg_view_pct"), "subs": (st.get("youtube") or {}).get("subs") or 0})
     return out
+
+
+def _group(clips, key, label=None):
+    by = {}
+    for c in clips:
+        k = key(c)
+        g = by.setdefault(k, {"name": label(k) if label else k, "clips": 0, "views": 0, "engagement": 0})
+        g["clips"] += 1
+        g["views"] += c["total"]
+        g["engagement"] += c["engagement"]
+    return sorted(({**g, "per_clip": round(g["views"] / g["clips"])} for g in by.values()),
+                  key=lambda g: g["per_clip"], reverse=True)
 
 
 def performance():
     clips = _clips()
-    measured = [c for c in clips if c["views"]]
-    by = {}
-    for c in measured:
-        key = c["topic"] or f"video: {c['source'][:80]}"
-        g = by.setdefault(key, {"name": key, "topic": bool(c["topic"]), "clips": 0, "views": 0, "best": None})
-        g["clips"] += 1
-        g["views"] += c["total"]
-        if not g["best"] or c["total"] > g["best"]["total"]:
-            g["best"] = {"title": c["title"], "total": c["total"]}
-    groups = sorted(({**g, "per_clip": round(g["views"] / g["clips"])} for g in by.values()),
-                    key=lambda g: g["per_clip"], reverse=True)
+    m = [c for c in clips if c["views"]]
     plats = {}
-    for c in measured:
+    for c in m:
         for p, v in c["views"].items():
-            x = plats.setdefault(p, {"platform": p, "clips": 0, "views": 0})
+            x = plats.setdefault(p, {"name": p, "clips": 0, "views": 0})
             x["clips"] += 1
             x["views"] += v
-    plats = sorted(({**x, "per_clip": round(x["views"] / x["clips"])} for x in plats.values()),
-                   key=lambda x: x["per_clip"], reverse=True)
-    lengths = []
-    for lo, hi, name in LENGTHS:
-        cs = [c for c in measured if lo <= c["seconds"] < hi]
-        if cs:
-            lengths.append({"length": name, "clips": len(cs), "per_clip": round(sum(c["total"] for c in cs) / len(cs))})
-    ranked = sorted(measured, key=lambda c: c["total"], reverse=True)
+    length = lambda c: next(n for lo, hi, n in LENGTHS if lo <= c["seconds"] < hi)
+    ret = [c["yt_pct"] for c in m if c["yt_pct"]]
+    ranked = sorted(m, key=lambda c: c["total"], reverse=True)
     old = [c for c in ranked if time.time() - c["at"] > FLOP_AGE]
-    return {"at": time.time(), "posted": len(clips), "measured": len(measured),
-            "views": sum(c["total"] for c in measured), "enough": len(measured) >= MIN_CLIPS,
-            "topics": groups, "platforms": plats, "lengths": lengths,
+    return {"at": time.time(), "posted": len(clips), "measured": len(m), "views": sum(c["total"] for c in m),
+            "engagement": sum(c["engagement"] for c in m), "subs": sum(c["subs"] for c in m),
+            "retention": round(sum(ret) / len(ret), 1) if ret else None, "enough": len(m) >= MIN_CLIPS,
+            "by": {"category": _group(m, lambda c: c["category"]), "moment": _group(m, lambda c: c["moment"]),
+                   "length": _group(m, length), "kind": _group(m, lambda c: c["kind"]),
+                   "hour": _group(m, lambda c: c["hour"]), "weekday": _group(m, lambda c: c["weekday"]),
+                   "mode": _group(m, lambda c: c["mode"]),
+                   "topic": _group(m, lambda c: c["topic"] or f"video: {c['source'][:60]}")},
+            "platforms": sorted(({**x, "per_clip": round(x["views"] / x["clips"])} for x in plats.values()),
+                                key=lambda x: x["per_clip"], reverse=True),
             "top": ranked[:8], "flops": old[-5:][::-1] if len(old) > 8 else []}
 
 
-def history_text(perf=None, n=8):
-    """Compact channel history for DeepSeek ('' when there isn't enough yet)."""
+def history_text(perf=None, n=6):
+    """Compact channel history for the AI ('' when there isn't enough yet)."""
     perf = perf or performance()
     if not perf["enough"]:
         return ""
-    t = lambda c: f'"{c["title"]}" ({c["total"]:,} views, {c["seconds"]}s, topic: {c["topic"] or c["source"][:60]})'
-    lines = [f"Our channel so far: {perf['measured']} clips with view counts, {perf['views']:,} views in total.",
-             "Best clips: " + "; ".join(t(c) for c in perf["top"][:n]),
-             "Topics by views per clip: " + "; ".join(f'{g["name"]} = {g["per_clip"]:,}/clip over {g["clips"]} clips'
-                                                     for g in perf["topics"][:n])]
+    t = lambda c: (f'"{c["title"]}" ({c["total"]:,} views, {c["seconds"]}s, {c["category"]}, {c["moment"]}'
+                   + (f', {c["yt_pct"]:.0f}% watched' if c["yt_pct"] else "") + ")")
+    g = lambda name: "; ".join(f'{x["name"]} {x["per_clip"]:,}/clip ({x["clips"]})' for x in perf["by"][name][:n])
+    lines = [f"Our channel so far: {perf['measured']} clips with numbers, {perf['views']:,} views"
+             + (f", {perf['retention']:.0f}% average watched on YouTube" if perf["retention"] else "") + ".",
+             "Best clips: " + "; ".join(t(c) for c in perf["top"][:n])]
+    for name, what in (("category", "category"), ("topic", "topic"), ("moment", "moment type"), ("length", "length"),
+                       ("hour", "posting hour"), ("weekday", "weekday")):
+        if len(perf["by"][name]) > 1:
+            lines.append(f"Views per clip by {what}: {g(name)}")
     if perf["flops"]:
         lines.append("Weakest clips (a day or more old): " + "; ".join(t(c) for c in perf["flops"]))
     if perf["platforms"]:
-        lines.append("Views per clip by platform: " + ", ".join(f'{p["platform"]} {p["per_clip"]:,}' for p in perf["platforms"]))
-    if len(perf["lengths"]) > 1:
-        lines.append("Views per clip by length: " + ", ".join(f'{x["length"]} {x["per_clip"]:,}' for x in perf["lengths"]))
+        lines.append("Views per clip by platform: " + ", ".join(f'{p["name"]} {p["per_clip"]:,}' for p in perf["platforms"]))
     return "\n".join(lines)
 
 
-NICHE_SYSTEM = """You run a viral short-clip channel and decide what it should post next, based on how its past clips
-did. You get the channel's history: best clips, topics ranked by views per clip, weakest clips, platforms, lengths.
-Name the niche to search for trending videos in: double down on what clearly gets views, drop what flopped, and keep
-it broad enough to find new trending videos every day (a game/creator/subject area, not one single video). If the
-history is thin or flat, stay close to the best topic but allow related subjects. Reply as JSON:
-{"plan": {"niche": "3-10 words, the way you'd describe the channel", "why": "one line citing the numbers",
-"avoid": "one line: what to stay away from, or empty"}}"""
+DECIDE_SYSTEM = """You run the daily review of a short-clip channel (gaming, podcasts, sports). You get how every
+posted clip did: views per clip by category, topic, moment type, length, short/long, posting hour and weekday,
+platform; YouTube retention; the best and weakest clips. Decide for TODAY, citing the numbers:
+- "scout": 2-4 short lines for the researcher who picks the topics and videos to clip (which categories, topics,
+  creators to lean into or away from).
+- "cutter": 2-4 short lines for the editor who picks the moments inside a video (which moment types, lengths and
+  hooks got views, what flopped).
+- "summary": 2-3 plain sentences for the owner: what is working and what isn't.
+- "suggestions": up to 3 concrete changes the owner could make in Settings (e.g. "move the 10:00 short to 19:00:
+  evening posts get 2x the views", "give gaming one more slot"). The app never changes settings by itself.
+Never invent numbers. With thin or flat data say so and keep the advice light. Reply as JSON:
+{"scout": "...", "cutter": "...", "summary": "...", "suggestions": ["..."]}"""
 
 
-def learn_niche(perf=None):
-    """No niche set: DeepSeek picks one from the channel's history. -> {niche, why, avoid, at} or None (too little data)."""
+def decide(perf=None):
+    """Today's decisions from the history (see the module doc), saved and returned. Not enough data -> a note only."""
     perf = perf or performance()
     text = history_text(perf)
     if not text:
-        return None
-    plan = pick._ask(text, NICHE_SYSTEM, "plan")
-    if not isinstance(plan, dict) or not str(plan.get("niche", "")).strip():
-        return None
-    out = {"niche": str(plan["niche"]).strip()[:120], "why": str(plan.get("why", ""))[:300],
-           "avoid": str(plan.get("avoid", ""))[:200], "at": time.time(), "clips": perf["measured"], "views": perf["views"]}
-    db.set_setting("auto_learned", json.dumps(out))
-    db.syslog(f"autopilot learned niche from {perf['measured']} clips / {perf['views']:,} views: '{out['niche']}' ({out['why']})")
+        out = {"at": time.time(), "clips": perf["measured"], "scout": "", "cutter": "", "suggestions": [],
+               "summary": f"Not enough to learn from yet: {perf['measured']} of {MIN_CLIPS} posted clips have numbers."}
+    else:
+        a = ai.ask(text, DECIDE_SYSTEM, "decide", full=True)
+        out = {"at": time.time(), "clips": perf["measured"], "views": perf["views"], "by": getattr(ai.LAST, "model", "") or "",
+               "scout": str(a.get("scout") or "")[:600], "cutter": str(a.get("cutter") or "")[:600],
+               "summary": str(a.get("summary") or "")[:600],
+               "suggestions": [str(x)[:200] for x in a.get("suggestions") or []][:3]}
+    db.set_setting("decisions", json.dumps(out))
+    db.syslog(f"daily decisions ({perf['measured']} clips): {out['summary']}")
     return out
 
 
-def learned():
-    raw = db.get_setting("auto_learned")
+def decisions():
+    raw = db.get_setting("decisions")
     return json.loads(raw) if raw else None
 
 
@@ -128,13 +152,20 @@ if __name__ == "__main__":
     if "CLIPPER_DATA" not in os.environ:  # it writes test rows: never into the real data/
         raise SystemExit("run as: CLIPPER_DATA=<empty temp dir> python -m clipper.insights")
     db.init()
-    j = db.insert("jobs", url="u", title="src", shorts=1, longs=0, auto_upload=1, created=time.time())
-    for i, (v, s) in enumerate([(1500, 18), (200, 25), (5, 30), (3, 45), (0, 50), (900, 15)]):
+    j = db.insert("jobs", url="u", title="src", shorts=1, longs=0, auto_upload=0, created=time.time(), category="gaming")
+    for i, (v, s, moment) in enumerate([(1500, 18, "fail"), (200, 25, "reaction"), (5, 30, "fail"), (3, 45, "story"),
+                                        (0, 50, "story"), (900, 15, "fail")]):
         db.insert("clips", job_id=j, kind="short", start=0, end=s, score=1, title=f"c{i}", description="", tags="[]",
-                  reason="", uploads=json.dumps({"instagram": {"id": "x", "at": time.time() - 2 * 86400}}),
-                  views=json.dumps({"instagram": v}))
+                  reason="", why=json.dumps({"moment": moment}),
+                  uploads=json.dumps({"instagram": {"id": "x", "at": time.time() - 2 * 86400}}),
+                  stats=json.dumps({"instagram": {"views": v, "likes": v // 10}}))
     p = performance()
-    assert p["enough"] and p["top"][0]["title"] == "c0" and p["flops"] == [] and p["platforms"][0]["platform"] == "instagram"
-    assert p["lengths"][0] == {"length": "under 20s", "clips": 2, "per_clip": 1200}
-    assert "c0" in history_text(p)
+    assert p["enough"] and p["top"][0]["title"] == "c0" and p["platforms"][0]["name"] == "instagram"
+    assert p["by"]["length"][0] == {"name": "under 20s", "clips": 2, "views": 2400, "engagement": 240, "per_clip": 1200}
+    assert p["by"]["moment"][0]["name"] == "fail" and p["by"]["category"][0]["name"] == "gaming"
+    assert "moment type: fail" in history_text(p)
+    ai.ask = lambda task, system, key="clips", full=False: {"scout": "more gaming", "cutter": "fails win", "summary": "ok",
+                                                             "suggestions": ["a", "b", "c", "d"]}
+    d = decide(p)
+    assert decisions()["cutter"] == "fails win" and len(d["suggestions"]) == 3
     print("insights ok")

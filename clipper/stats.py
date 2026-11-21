@@ -1,185 +1,219 @@
-"""View counts for uploaded clips + an hourly WhatsApp report (Meta WhatsApp Cloud API, free: README → WhatsApp report).
+"""Numbers for everything we posted, from each platform's API. Refreshed every day at the research time
+(autopilot.daily_report) and when you press Refresh on the Reports page.
 
-refresh() asks each platform for the views of every clip we uploaded and stores them in clips.views (JSON
-{platform: views}). report() turns that into a short message: totals per platform, the change since the last
-report, the best platform and the top clips. loop() does both every REPORT_MINUTES."""
+refresh() -> per clip, per platform, into clips.stats ({platform: {views, likes, comments, shares, saves, ...}}) and
+clips.views ({platform: views}):
+  YouTube    Data API: views, likes, comments. Analytics API (needs YouTube reconnected once for read-only
+             analytics): minutes watched, average view duration and % watched, subscribers gained, shares; plus the
+             channel's views per day and where the views come from (traffic sources), last 28 days.
+  Facebook   Reel plays (or video views), reactions, comments, shares, average watch time.
+  Instagram  views, reach, likes, comments, shares, saves, average Reel watch time.
+  TikTok     views, likes, comments, shares (only for posts TikTok lists: app posts stay private until the app is
+             audited).
+daily() = refresh() + today's snapshot of every number (table stats_daily), so the Reports page can show growth.
+A platform that fails doesn't stop the others: its error is kept (errors()) and shown on the Reports page."""
 import json
-import re
-import threading
 import time
+from datetime import date, timedelta
 
 import httpx
 
 from . import db, upload as youtube
-from .config import (FB_PAGE_TOKEN, GRAPH_VERSION, IG_TOKEN, REPORT_MINUTES, WA_PHONE_NUMBER_ID, WA_TEMPLATE,
-                     WA_TEMPLATE_LANG, WA_TO, WA_TOKEN)
+from .config import FB_PAGE_TOKEN, GRAPH_VERSION, IG_TOKEN, TIKTOK_TOKEN
 
 GRAPH = f"https://graph.facebook.com/{GRAPH_VERSION}"
 NAMES = {"youtube": "YouTube", "facebook": "Facebook", "instagram": "Instagram", "tiktok": "TikTok"}
-LAST = {"totals": None, "at": 0, "errors": {}}  # totals at the previous report, for "+N since last time"
+IG_METRICS = ("views", "reach", "likes", "comments", "shares", "saved", "ig_reels_avg_watch_time")
+YT_ANALYTICS = "views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,subscribersGained,shares"
 
 
-def whatsapp_ready():
-    return bool(WA_PHONE_NUMBER_ID and WA_TOKEN and WA_TO)
+def _num(v):
+    try:
+        return int(float(v or 0))
+    except (TypeError, ValueError):
+        return 0
 
 
-def _wa(payload):
-    r = httpx.post(f"{GRAPH}/{WA_PHONE_NUMBER_ID}/messages", timeout=30, headers={"Authorization": f"Bearer {WA_TOKEN}"},
-                   json={"messaging_product": "whatsapp", "to": WA_TO, **payload})
-    return r, (r.json() if r.headers.get("content-type", "").startswith("application/json") else {})
+def _yt(ids, out, errors):
+    if not youtube.connected():
+        errors["youtube"] = "not connected: Connect YouTube on the Socials page"
+        return
+    try:
+        for vid, st in youtube.statistics(ids).items():
+            out.setdefault(vid, {}).update(views=_num(st.get("viewCount")), likes=_num(st.get("likeCount")),
+                                           comments=_num(st.get("commentCount")))
+    except Exception as e:
+        errors["youtube"] = db.scrub(e)[:200]
+        return
+    try:
+        for vid, row in youtube.analytics(ids, YT_ANALYTICS).items():
+            out.setdefault(vid, {}).update(watch_min=round(float(row.get("estimatedMinutesWatched") or 0), 1),
+                                           avg_view_s=round(float(row.get("averageViewDuration") or 0), 1),
+                                           avg_view_pct=round(float(row.get("averageViewPercentage") or 0), 1),
+                                           subs=_num(row.get("subscribersGained")), shares=_num(row.get("shares")))
+    except Exception as e:
+        errors["youtube_analytics"] = db.scrub(e)[:200]
 
 
-def send_whatsapp(text):
-    """WhatsApp only delivers free text within 24h of YOU messaging the sender number, and when that window is closed
-    the API still answers 200 (the failure only shows up later, in a webhook we don't have). So:
-    - WA_TEMPLATE set (recommended): always send that approved template; its one {{1}} variable gets the report on
-      one line, " | " between lines (template variables can't contain line breaks). Always delivered.
-    - no template: plain text with line breaks, only delivered inside the 24h window."""
-    if WA_TEMPLATE:
-        one_line = re.sub(r" {4,}", "   ", re.sub(r"\s*\n+\s*", " | ", text).replace("\t", " "))[:1000]
-        r, j = _wa({"type": "template", "template": {"name": WA_TEMPLATE, "language": {"code": WA_TEMPLATE_LANG},
-                    "components": [{"type": "body", "parameters": [{"type": "text", "text": one_line}]}]}})
-        how = "template"
-    else:
-        r, j = _wa({"type": "text", "text": {"body": text, "preview_url": False}})
-        how = "text (only delivered within 24h of you messaging the number; set WA_TEMPLATE)"
+def _graph(path, **params):
+    r = httpx.get(f"{GRAPH}/{path}", params=params, timeout=20)
     if r.is_error:
-        raise RuntimeError(f"WhatsApp: HTTP {r.status_code} {(j.get('error') or {}).get('message') or r.text[:300]}")
-    return how
+        raise RuntimeError(((r.json() if "json" in r.headers.get("content-type", "") else {}).get("error") or {})
+                           .get("message") or f"HTTP {r.status_code}")
+    return r.json()
 
 
-def start_loop():
-    threading.Thread(target=_loop, daemon=True).start()  # reports are always made (shown in the UI); WhatsApp if set up
-
-
-def _loop():
-    while True:
-        time.sleep(REPORT_MINUTES * 60)
-        try:
-            send_report()
-        except Exception as e:
-            db.syslog(f"report failed: {e!r}", exc=True)
-
-
-def _insight(media, metric, token):
-    """First value of one Graph API insights metric (Facebook video / Instagram media)."""
-    r = httpx.get(f"{GRAPH}/{media}/{'video_insights' if metric != 'views' else 'insights'}",
-                  params={"metric": metric, "access_token": token}, timeout=20)
-    r.raise_for_status()
-    data = r.json().get("data") or [{}]
-    return int((data[0].get("values") or [{}])[0].get("value") or 0)
+def _values(resp):
+    return {d["name"]: (d.get("values") or [{}])[0].get("value", d.get("total_value", {}).get("value")) for d in resp.get("data") or []}
 
 
 def _facebook(vid):
     if "_" in str(vid):  # a photo post ("<page>_<post>"): how many people saw it
-        r = httpx.get(f"{GRAPH}/{vid}/insights", params={"metric": "post_impressions_unique", "access_token": FB_PAGE_TOKEN},
-                      timeout=20)
-        r.raise_for_status()
-        return int(((r.json().get("data") or [{}])[0].get("values") or [{}])[0].get("value") or 0)
-    for metric in ("blue_reels_play_count", "total_video_views"):  # Reel, else a normal Page video
-        try:
-            return _insight(vid, metric, FB_PAGE_TOKEN)
-        except httpx.HTTPError:
-            continue
-    raise RuntimeError("facebook: no view metric for this video")
-
-
-def refresh():
-    """Fetch views for every uploaded clip -> {platform: error} for platforms that failed (shown in the report)."""
-    clips = [c for c in db.all("clips") if c.get("uploads") and c["uploads"] != "{}"]
-    ups = {c["id"]: json.loads(c["uploads"]) for c in clips}
-    views = {c["id"]: json.loads(c.get("views") or "{}") for c in clips}
-    errors = {}
-    yt = {u["youtube"]["id"]: cid for cid, u in ups.items() if u.get("youtube", {}).get("id")}
-    if yt and not youtube.connected():
-        errors["youtube"] = "not connected: click Connect YouTube on the Socials page"
-    elif yt:
-        try:
-            for vid, n in youtube.views(list(yt)).items():
-                views[yt[vid]]["youtube"] = n
-        except Exception as e:
-            errors["youtube"] = db.scrub(e)[:150]
-    for cid, u in ups.items():
-        for p, fetch in (("facebook", _facebook), ("instagram", lambda m: _insight(m, "views", IG_TOKEN))):
-            if u.get(p, {}).get("id"):
-                try:
-                    views[cid][p] = fetch(u[p]["id"])
-                except Exception as e:
-                    errors[p] = db.scrub(e)[:150]
-        if u.get("tiktok", {}).get("id"):
-            # TikTok's API only gives view counts for public posts listed with the video.list scope; app posts stay
-            # private until TikTok audits the app, so there is nothing to read yet.
-            errors["tiktok"] = "TikTok doesn't report views for private app posts yet"
-    for cid, v in views.items():
-        db.update("clips", cid, views=json.dumps(v))
-    LAST["errors"] = errors
-    db.set_setting("views_at", str(time.time()))
-    db.syslog(f"views refreshed for {len(views)} clips: {totals()}" + (f", errors: {errors}" if errors else ""))
-    return errors
-
-
-def totals(clips=None):
-    clips = clips if clips is not None else db.all("clips")
+        v = _values(_graph(f"{vid}/insights", metric="post_impressions_unique", access_token=FB_PAGE_TOKEN))
+        return {"views": _num(v.get("post_impressions_unique"))}
     out = {}
-    for c in clips:
-        for p, n in json.loads(c.get("views") or "{}").items():
-            out[p] = out.get(p, 0) + n
+    for metric in ("blue_reels_play_count", "total_video_views"):  # a Reel, else a normal Page video
+        try:
+            out["views"] = _num(_values(_graph(f"{vid}/video_insights", metric=metric, access_token=FB_PAGE_TOKEN)).get(metric))
+            break
+        except RuntimeError:
+            continue
+    try:
+        v = _values(_graph(f"{vid}/video_insights", metric="post_video_avg_time_watched", access_token=FB_PAGE_TOKEN))
+        out["avg_view_s"] = round(_num(v.get("post_video_avg_time_watched")) / 1000, 1)
+    except RuntimeError:
+        pass
+    try:
+        p = _graph(vid, fields="likes.summary(true).limit(0),comments.summary(true).limit(0)", access_token=FB_PAGE_TOKEN)
+        out.update(likes=_num(((p.get("likes") or {}).get("summary") or {}).get("total_count")),
+                   comments=_num(((p.get("comments") or {}).get("summary") or {}).get("total_count")))
+    except RuntimeError:
+        pass
+    if "views" not in out:
+        raise RuntimeError("no view metric for this Facebook video")
     return out
 
 
-def report_text(clips, now_totals, before, errors, top=5):
-    """The WhatsApp message (plain text, *bold* works in WhatsApp)."""
-    lines = [f"*Clipper report* {time.strftime('%d %b %H:%M')}"]
-    if not now_totals:
-        lines.append("No view counts yet.")
-    for p, n in sorted(now_totals.items(), key=lambda x: -x[1]):
-        gain = f" (+{n - before.get(p, 0):,})" if before is not None else ""
-        lines.append(f"{NAMES.get(p, p)}: {n:,} views{gain}")
-    if now_totals:
-        best = max(now_totals, key=now_totals.get)
-        lines.append(f"Best platform: *{NAMES.get(best, best)}*")
-    ranked = sorted(clips, key=lambda c: -sum(json.loads(c.get("views") or "{}").values()))
-    ranked = [c for c in ranked if json.loads(c.get("views") or "{}")][:top]
-    if ranked:
-        lines.append("")
-        lines.append("*Top clips*")
-    for i, c in enumerate(ranked, 1):
-        v = json.loads(c["views"])
-        best = max(v, key=v.get)
-        per = ", ".join(f"{NAMES.get(p, p)} {n:,}" for p, n in sorted(v.items(), key=lambda x: -x[1]))
-        lines.append(f"{i}. {c['title'][:60]}: {sum(v.values()):,} ({per}; best on {NAMES.get(best, best)})")
-    for p, e in errors.items():
-        lines.append(f"! {NAMES.get(p, p)}: {e}")
-    return "\n".join(lines)[:1500]
+def _instagram(mid):
+    try:
+        v = _values(_graph(f"{mid}/insights", metric=",".join(IG_METRICS), access_token=IG_TOKEN))
+    except RuntimeError:  # an older post / a photo: not every metric exists
+        v = _values(_graph(f"{mid}/insights", metric="views", access_token=IG_TOKEN))
+    out = {"views": _num(v.get("views"))}
+    for k, name in (("reach", "reach"), ("likes", "likes"), ("comments", "comments"), ("shares", "shares"), ("saved", "saves")):
+        if v.get(k) is not None:
+            out[name] = _num(v[k])
+    if v.get("ig_reels_avg_watch_time") is not None:
+        out["avg_view_s"] = round(_num(v["ig_reels_avg_watch_time"]) / 1000, 1)
+    return out
 
 
-def send_report():
-    """Refresh views, build the report, save it (Reports page), send it on WhatsApp if set up. -> the report row."""
-    errors = refresh()
-    clips = db.all("clips")
-    now = totals(clips)
-    text = report_text(clips, now, LAST["totals"], errors)
-    LAST.update(totals=now, at=time.time())
-    text = db.scrub(text)
-    rid = db.insert("reports", at=time.time(), text=text)
-    if not whatsapp_ready():
-        sent = "not sent: WhatsApp not set up (shown here only)"
-    else:
+def _tiktok(ids):
+    """{video_id: {...}} via the Display API's video/query (needs the video.list scope)."""
+    token = json.loads(TIKTOK_TOKEN.read_text()).get("access_token") if TIKTOK_TOKEN.exists() else ""
+    if not token:
+        raise RuntimeError("TikTok not connected")
+    r = httpx.post("https://open.tiktokapis.com/v2/video/query/?fields=id,view_count,like_count,comment_count,share_count",
+                   headers={"Authorization": f"Bearer {token}"}, json={"filters": {"video_ids": ids[:20]}}, timeout=20)
+    j = r.json() if "json" in r.headers.get("content-type", "") else {}
+    if r.is_error or (j.get("error") or {}).get("code") not in (None, "ok"):
+        raise RuntimeError(((j.get("error") or {}).get("message")) or f"HTTP {r.status_code}")
+    return {str(v["id"]): {"views": _num(v.get("view_count")), "likes": _num(v.get("like_count")),
+                           "comments": _num(v.get("comment_count")), "shares": _num(v.get("share_count"))}
+            for v in (j.get("data") or {}).get("videos") or []}
+
+
+def refresh():
+    """Fetch every number for every posted clip. -> {platform: error} for the platforms that failed."""
+    clips = [c for c in db.all("clips") if c.get("uploads") and c["uploads"] != "{}"]
+    ups = {c["id"]: json.loads(c["uploads"]) for c in clips}
+    st = {c["id"]: json.loads(c.get("stats") or "{}") for c in clips}
+    errors = {}
+    ids = lambda p: {u[p]["id"]: cid for cid, u in ups.items() if (u.get(p) or {}).get("id") and u[p]["id"] != "manual"}
+    yt = ids("youtube")
+    if yt:
+        got = {}
+        _yt(list(yt), got, errors)
+        for vid, v in got.items():
+            st[yt[vid]]["youtube"] = v
         try:
-            sent = f"sent on WhatsApp as {send_whatsapp(text)}"
+            db.set_setting("yt_channel", json.dumps(youtube.channel_report()))
         except Exception as e:
-            sent = f"WhatsApp failed: {e}"[:300]
-    db.update("reports", rid, sent=sent)
-    db.syslog(f"report #{rid} made ({len(text)} chars): {sent}")
-    return db.get("reports", rid)
+            errors.setdefault("youtube_analytics", db.scrub(e)[:200])
+    for p, fetch in (("facebook", _facebook), ("instagram", _instagram)):
+        for vid, cid in ids(p).items():
+            try:
+                st[cid][p] = fetch(vid)
+            except Exception as e:
+                errors[p] = db.scrub(e)[:200]
+    tt = ids("tiktok")
+    if tt:
+        try:
+            for vid, v in _tiktok(list(tt)).items():
+                if vid in tt:
+                    st[tt[vid]]["tiktok"] = v
+        except Exception as e:
+            errors["tiktok"] = "TikTok doesn't report numbers for private app posts yet" if "scope" in str(e).lower() \
+                else db.scrub(e)[:200]
+    for cid, v in st.items():
+        db.update("clips", cid, stats=json.dumps(v), views=json.dumps({p: x.get("views", 0) for p, x in v.items()}))
+    db.set_setting("stats_errors", json.dumps(errors))
+    db.set_setting("views_at", str(time.time()))
+    db.syslog(f"stats refreshed for {len(st)} posted clip(s): {totals()}" + (f", errors: {errors}" if errors else ""))
+    return errors
+
+
+def daily():
+    """refresh() + today's snapshot of every clip's numbers (stats_daily). -> errors."""
+    errors = refresh()
+    day = date.today().isoformat()
+    with db.conn() as c:
+        for clip in db.all("clips", "stats != '{}' AND stats IS NOT NULL"):
+            for p, v in json.loads(clip["stats"] or "{}").items():
+                c.execute("INSERT OR REPLACE INTO stats_daily (day, clip_id, platform, views, data) VALUES (?, ?, ?, ?, ?)",
+                          (day, clip["id"], p, v.get("views", 0), json.dumps(v)))
+    return errors
+
+
+def errors():
+    return json.loads(db.get_setting("stats_errors") or "{}")
+
+
+def totals(clips=None):
+    """{platform: views} over every clip."""
+    out = {}
+    for c in clips if clips is not None else db.all("clips"):
+        for p, n in json.loads(c.get("views") or "{}").items():
+            out[p] = out.get(p, 0) + (n or 0)
+    return out
+
+
+def series(days=30):
+    """Views gained per day per platform from the daily snapshots: [{"day", platform: gained...}], oldest first."""
+    since = (date.today() - timedelta(days=days)).isoformat()
+    with db.conn() as c:
+        rows = c.execute("SELECT day, clip_id, platform, views FROM stats_daily WHERE day >= ? ORDER BY day", (since,)).fetchall()
+    last, out = {}, {}
+    for day, cid, p, views in rows:
+        gained = max(0, views - last.get((cid, p), 0))
+        last[(cid, p)] = views
+        out.setdefault(day, {"day": day})
+        out[day][p] = out[day].get(p, 0) + gained
+    return list(out.values())
 
 
 if __name__ == "__main__":
-    C = lambda t, v: {"title": t, "views": json.dumps(v)}
-    clips = [C("Heist fail", {"youtube": 900, "instagram": 100}), C("Cop chase", {"youtube": 50}), C("No views", {})]
-    t = totals(clips)
-    assert t == {"youtube": 950, "instagram": 100}
-    msg = report_text(clips, t, {"youtube": 900}, {"tiktok": "x"})
-    assert "YouTube: 950 views (+50)" in msg and "Best platform: *YouTube*" in msg and "1. Heist fail: 1,000" in msg, msg
-    assert "No views" not in msg and "! TikTok: x" in msg
+    import os
+    if "CLIPPER_DATA" not in os.environ:
+        raise SystemExit("run as: CLIPPER_DATA=<empty temp dir> python -m clipper.stats")
+    db.init()
+    assert totals([{"views": json.dumps({"youtube": 900, "instagram": 100})}, {"views": json.dumps({"youtube": 50})}]) == \
+        {"youtube": 950, "instagram": 100}
+    assert _values({"data": [{"name": "views", "values": [{"value": 12}]}, {"name": "reach", "total_value": {"value": 7}}]}) == \
+        {"views": 12, "reach": 7}
+    with db.conn() as c:
+        for day, v in (("2026-11-18", 100), ("2026-11-19", 160), ("2026-11-20", 150)):  # a dip never counts as negative
+            c.execute("INSERT INTO stats_daily (day, clip_id, platform, views) VALUES (?, 1, 'youtube', ?)", (day, v))
+    s = {r["day"]: r["youtube"] for r in series(10_000)}
+    assert s == {"2026-11-18": 100, "2026-11-19": 60, "2026-11-20": 0}, s
     print("stats ok")

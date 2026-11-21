@@ -25,8 +25,8 @@ from xml.etree import ElementTree
 
 import httpx
 
-from . import db, pick, render
-from .config import DATA, SEARCH_REGION, WIKI_CONTACT
+from . import ai, db, render, scout, settings
+from .config import DATA, WIKI_CONTACT
 
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
                     "Chrome/130.0 Safari/537.36", "Accept-Language": "en-US,en;q=0.9"}
@@ -75,7 +75,7 @@ def _rss(url):
 def google_news(q, n=25):
     out = []
     url = (f"https://news.google.com/rss/search?q={urllib.parse.quote(q + ' when:3d')}"
-           f"&hl=en-{SEARCH_REGION}&gl={SEARCH_REGION}&ceid={SEARCH_REGION}:en")
+           f"&hl=en-{settings.get().search_region}&gl={settings.get().search_region}&ceid={settings.get().search_region}:en")
     for it in list(_rss(url))[:n]:
         title, src = it.findtext("title") or "", it.find("source")
         source = src.text if src is not None else ""
@@ -88,7 +88,7 @@ def google_news(q, n=25):
 
 def bing_news(q, n=25):
     out = []
-    url = f"https://www.bing.com/news/search?q={urllib.parse.quote(q)}&format=rss&setlang=en-{SEARCH_REGION}&cc={SEARCH_REGION}"
+    url = f"https://www.bing.com/news/search?q={urllib.parse.quote(q)}&format=rss&setlang=en-{settings.get().search_region}&cc={settings.get().search_region}"
     for it in list(_rss(url))[:n]:
         link = it.findtext("link") or ""
         real = urllib.parse.parse_qs(urllib.parse.urlparse(link).query).get("url", [link])[0]  # bing wraps the URL
@@ -244,8 +244,8 @@ def pick_stories(topic, stories, n, posted):
     rows = [{"id": i, "title": s["title"], "source": s["source"], "hours_ago": s["age_h"], "snippet": s["snippet"][:160],
              "full_article": s.get("via") == "bing"}
             for i, s in enumerate(stories[:40])]
-    picks = pick._ask(f"Topic: {topic}\nPick at most {n}.\nAlready posted: {json.dumps(posted[-30:])}\n"
-                      f"Candidates: {json.dumps(rows, indent=1)}", PICK_SYSTEM, "picks")
+    picks = ai.ask(f"Topic: {topic}\nPick at most {n}.\nAlready posted: {json.dumps(posted[-30:])}\n"
+                   f"Candidates: {json.dumps(rows, indent=1)}", PICK_SYSTEM, "picks")
     out = []
     for p in picks if isinstance(picks, list) else []:
         i = p.get("id") if isinstance(p, dict) else None
@@ -259,7 +259,7 @@ def write_post(story, kind="news", posted=()):
     task = (f"Source: {story['source']}\nHeadline: {story['title']}\nPublished: {story.get('age_h')} hours ago\n"
             f"Article text: {text or '(not available: use only the headline)'}"
             + (f"\nFacts already posted: {json.dumps(list(posted)[-20:])}" if kind == "fact" else ""))
-    p = pick._ask(task, FACT_SYSTEM if kind == "fact" else WRITE_SYSTEM, "post")
+    p = ai.ask(task, FACT_SYSTEM if kind == "fact" else WRITE_SYSTEM, "post")
     if not isinstance(p, dict) or not p.get("headline"):
         raise RuntimeError(f"AI returned no post: {p!r}"[:200])
     lines = [str(x)[:90] for x in (p.get("lines") or []) if str(x).strip()][:3]
@@ -309,7 +309,7 @@ def make_post(story, kind="news", platforms=(), voiceover=False, picture=True, l
             say(f"   article read: {len(story.get('text') or '')} chars of text, picture: {'yes' if story.get('image') else 'no'}"
                 + ("" if story.get("text") else " → written from the headline only"))
         posted = [r["headline"] for r in _used() if r.get("kind") == "fact"]
-        with db.step(jid, f"{pick.ai_name()} writing the post"):
+        with db.step(jid, f"{ai.ai_name()} writing the post"):
             p = write_post(story, kind, posted)
         db.log(jid, f"post: [{p['badge']}] {p['headline']} | " + " | ".join(p["lines"]))
         say(f"   AI wrote: [{p['badge']}] {p['headline']} | " + " | ".join(p["lines"]))
@@ -354,7 +354,7 @@ def _ago(h):
 
 
 def queries_for(topic):
-    return pick.search_queries(f"latest news about {topic}")[:4] if topic else []
+    return scout.search_queries(f"latest news about {topic}")[:4] if topic else []
 
 
 def facts(topic, n, log=None):
