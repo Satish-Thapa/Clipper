@@ -188,7 +188,8 @@ scream_hook, opening, closing, piece), `status`, `path`, `uploads` (JSON per pla
 - Clips: `clipKey`-style keyed re-render (`#clipGrid.dataset.k`), never re-render while a video plays; one video plays
   at a time (document `play` listener); route change pauses all.
 - Reels: windowed `src` (current ±1 loaded, others emptied), search, actions inside; modal z-index 400 > reels 300.
-- Slots: HTML5 drag and drop (`dragCid`), `.drop-ok` only on same-kind future slots; Move / Choose clip for touch.
+- Slots: HTML5 drag and drop of SCHEDULED clips only, slot to slot (`dragCid`; the owner doesn't want a tray of all
+  clips), `.drop-ok` only on same-kind future slots; Move for touch; Choose clip fills a free slot.
 - Alerts can be hidden (remembered in localStorage per browser). Times are 12-hour (`hhmm`, `t12`).
 
 ## 10. Current state (2026-11-21)

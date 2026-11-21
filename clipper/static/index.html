@@ -217,12 +217,9 @@ pre.log { background: #141414; border: 1px solid var(--line); border-radius: 6px
 .st.now i { background: var(--blue); animation: pulse 1.2s ease-in-out infinite; } .st.now span { color: var(--text); }
 @keyframes pulse { 50% { opacity: .35; } }
 .thumbs { display: flex; gap: 6px; margin-top: 10px; overflow-x: auto; }
-.thumbs button, .tclip { position: relative; flex: none; border: 1px solid var(--line2); border-radius: 6px; overflow: hidden; padding: 0; background: #000; cursor: pointer; }
+.thumbs button { position: relative; flex: none; border: 1px solid var(--line2); border-radius: 6px; overflow: hidden; padding: 0; background: #000; cursor: pointer; }
 .thumbs img { width: 45px; height: 80px; object-fit: cover; display: block; }
-.thumbs b, .tclip b { position: absolute; left: 2px; bottom: 2px; font-size: 10px; background: var(--yellow); color: #111; border-radius: 3px; padding: 0 4px; }
-.tray { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px; }
-.tclip { cursor: grab; } .tclip img { width: 54px; height: 96px; object-fit: cover; display: block; }
-.tclip .chip { position: absolute; top: 2px; left: 2px; padding: 0 5px; font-size: 9px; }
+.thumbs b { position: absolute; left: 2px; bottom: 2px; font-size: 10px; background: var(--yellow); color: #111; border-radius: 3px; padding: 0 4px; }
 .slot[draggable="true"] { cursor: grab; }
 .dragging { opacity: .45; }
 .slot.drop-ok { background: rgba(118,185,0,.06); box-shadow: inset 3px 0 0 var(--green); }
@@ -428,7 +425,6 @@ pre.log { background: #141414; border: 1px solid var(--line); border-radius: 6px
   <div class="head"><div><h1>Slots</h1><p class="sub">The posting plan for the next 7 days. One slot = one clip. Drag a clip onto another slot to move it (onto a taken one: they swap); shorts go in short slots, longs in long slots. Weekend days get +1 of each.</p></div>
     <a class="btn ghost" href="#settings"><svg class="i"><use href="#i-set"/></svg>Change slots</a></div>
   <div class="card" id="slotPlats"></div>
-  <div id="slotTray" style="margin-bottom:14px"></div>
   <div id="slotDays"></div>
 </section>
 
@@ -951,8 +947,8 @@ document.addEventListener("keydown", e => {
 });
 
 // ---------- slots ----------
-// Drag a clip from one slot onto another (same kind): it moves; onto a taken one: they swap. Drag a ready clip from
-// the tray onto a slot to place it. A passed slot never takes a clip. On a phone: Move / Choose clip buttons.
+// Only clips already in the schedule are dragged: from one slot onto another of the same kind (it moves; onto a
+// taken one: they swap). A passed slot never takes a clip. On a phone: the Move button.
 let slotsAt = 0, slotDays = [], dragCid = null, dragKind = null;
 async function loadSlots() {
   slotsAt = Date.now();
@@ -961,13 +957,11 @@ async function loadSlots() {
   const now = Date.now() / 1000, v = SET.values;
   const plats = (k, key) => `<div class="row small"><b style="min-width:110px">${k} post to${tip(`Every ${k === "Shorts" ? "short" : "long"} slot posts its clip to each of these.`)}</b>${Object.entries(PLAT).map(([p, n]) => `<label class="check"><input type="checkbox" ${v[key].includes(p) ? "checked" : ""} onchange="savePlats('${key}')" data-pk="${key}" value="${p}"> ${n}${S && !S.platforms[p] ? ` <span class="dim">(not connected)</span>` : ""}</label>`).join("")}</div>`;
   $("#slotPlats").innerHTML = plats("Shorts", "platforms") + plats("Longs", "long_platforms");
-  const ready = (S?.clips || []).filter(c => c.status === "rendered" && c.path && !posted(c)).sort((a, b) => b.score - a.score).slice(0, 24);
-  $("#slotTray").innerHTML = ready.length ? `<div class="small dim" style="margin-bottom:6px">Ready clips: drag one onto a slot of its kind</div><div class="tray">${ready.map(c => `<div class="tclip" draggable="true" data-cid="${c.id}" data-kind="${c.kind}" title="${esc(c.title)}"><img loading="lazy" src="/api/clips/${c.id}/poster?v=${ver(c)}" alt=""><span class="chip ${c.kind === "long" ? "b" : "g"}">${c.kind}</span><b>${Math.round(c.score)}</b></div>`).join("")}</div>` : "";
   $("#slotDays").innerHTML = slotDays.map((d, i) => `<div class="day">
     <div class="day-h"><b>${i === 0 ? "Today" : i === 1 ? "Tomorrow" : esc(d.weekday)}</b><span class="dim small">${new Date(d.day + "T12:00").toLocaleDateString("en-US", {weekday: "short", day: "numeric", month: "short"})}</span>${d.weekend ? `<span class="chip b">weekend +1</span>` : ""}<span class="sp"></span>
       <span class="chip">${d.used.short}/${d.limit.short} shorts</span><span class="chip">${d.used.long}/${d.limit.long} longs</span></div>
     ${d.slots.length ? d.slots.map(x => { const open = x.at > now + 60 && ["free", "scheduled"].includes(x.state), c = x.clip;
-      return `<div class="slot ${open ? "drop" : ""}" data-at="${x.at}" data-kind="${x.kind}" ${c && x.state === "scheduled" ? `draggable="true" data-cid="${c.id}"` : ""}>
+      return `<div class="slot ${open ? "drop" : ""}" data-at="${x.at}" data-kind="${x.kind}" ${open && c && x.state === "scheduled" ? `draggable="true" data-cid="${c.id}"` : ""}>
       <span class="t">${esc(t12(x.time))}</span><span class="chip ${x.kind === "long" ? "b" : "g"}">${x.kind}${x.extra ? " +1" : ""}</span>
       <div class="what">${c ? `${c.path ? `<img loading="lazy" src="/api/clips/${c.id}/poster?v=${ver(c)}" alt="">` : ""}<div><div>${esc(c.title)}</div><div class="small dim">${esc(c.headline || "")} · virality ${Math.round(c.score || 0)}</div></div>` : `<span class="dim">${x.state === "missed" ? "passed, nothing posted" : x.reserved ? "free · kept for an Auto topic today" : "free · drop a clip here"}</span>`}</div>
       <div class="acts row">${{posted: `<span class="chip ok">${ico("check")}posted</span>`, uploading: `<span class="chip b">posting</span>`, missed: `<span class="chip">passed</span>`,
