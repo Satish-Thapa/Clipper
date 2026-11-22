@@ -191,7 +191,8 @@ def _repost(job, d):
     db.log(jid, f"reel: {title} | by {who or '?'} | {dur:.0f}s | {i.get('width') or '?'}x{i.get('height') or '?'} source")
     db.update("jobs", jid, status="downloading")
     with db.step(jid, "downloading (best quality, up to 4K)"):
-        download.download_vod(job["url"], d / "source.%(ext)s", 2160, STOPS.get(jid))
+        lang, note = download.download_vod(job["url"], d / "source.%(ext)s", 2160, STOPS.get(jid))
+    db.log(jid, f"audio track: {lang}{f' ({note})' if note else ''}")
     src = next(x for x in d.glob("source.*") if x.suffix not in (".part", ".ytdl"))
     dur = render._duration(src) or dur
     tags = [re.sub(r"\W", "", t) for t in (i.get("tags") or []) if re.sub(r"\W", "", t)][:5] or \
@@ -290,7 +291,10 @@ def _vod(job, i, d):
         chat = ex.submit(download.chat_replay_times, url)
         h = download.height_for(job.get("hq"))
         with db.step(jid, f"downloading video (up to {h}p, {download.FRAGMENTS} chunks at once)"):
-            download.download_vod(url, d / "source.%(ext)s", h, stop=STOPS.get(jid))
+            lang, note = download.download_vod(url, d / "source.%(ext)s", h, stop=STOPS.get(jid))
+        db.log(jid, f"audio track: {lang}{f' ({note})' if note else ''}")
+        if lang != "?" and not lang.lower().startswith("en"):
+            db.log(jid, f"WARNING: no English audio track on this video (got {lang}): the clips will be in that language")
         _check(jid)
         with db.step(jid, "waiting for comments + chat replay"):
             comments = download.comment_times(meta.result().get("comments"))

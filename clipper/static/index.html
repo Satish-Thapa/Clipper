@@ -448,7 +448,7 @@ pre.log { background: #141414; border: 1px solid var(--line); border-radius: 6px
   <div class="head"><div><h1>Clips</h1><p class="sub">Every clip made. Ready clips wait here until you put them in a slot or post them (Post now uses one of today's slots).</p></div>
     <button class="btn" onclick="openReels()"><svg class="i"><use href="#i-play"/></svg>Watch as reels</button></div>
   <div class="row" style="margin-bottom:16px"><div class="tabs" id="clipTabs"></div><input id="clipSearch" placeholder="Search clips..." autocomplete="off" style="width:min(240px,100%)"><span class="sp"></span><div class="row" id="clipBulk"></div>
-    <select id="sortF" style="width:auto" title="Sort"><option value="score">Highest virality</option><option value="new">Newest made</option><option value="posted">Latest posted</option><option value="views">Most views</option><option value="len">Longest</option><option value="short">Shortest</option></select>
+    <select id="sortF" style="width:auto" title="Sort"><option value="new" selected>Newest made</option><option value="score">Highest virality</option><option value="posted">Latest posted</option><option value="views">Most views</option><option value="len">Longest</option><option value="short">Shortest</option></select>
     <select id="kindF" style="width:auto"><option value="">Shorts + longs</option><option value="short">Shorts</option><option value="long">Longs</option></select></div>
   <div class="clips" id="clipGrid"></div>
   <p class="small dim" id="clipMore" style="text-align:center;margin-top:16px"></p>
@@ -888,7 +888,7 @@ const SORTS = {score: (a, b) => (b.score || 0) - (a.score || 0), new: (a, b) => 
                views: (a, b) => totalViews(b) - totalViews(a), len: (a, b) => (b.end - b.start) - (a.end - a.start), short: (a, b) => (a.end - a.start) - (b.end - b.start)};
 function clipList() {
   const f = CF[cf][1], k = $("#kindF").value;
-  return S.clips.filter(c => f(c) && (!k || c.kind === k) && reelFind(c)).sort(SORTS[$("#sortF").value] || SORTS.score);
+  return S.clips.filter(c => f(c) && (!k || c.kind === k) && reelFind(c)).sort(SORTS[$("#sortF").value] || SORTS.new);
 }
 const posted = c => Object.values(J(c.uploads, {})).some(u => u.id);
 const failedOn = c => Object.entries(J(c.uploads, {})).filter(([, u]) => u.error);

@@ -89,8 +89,14 @@ def height_for(hq=None):
 
 
 def fmt(height):
-    """yt-dlp format + sort: best video up to `height` (highest fps first) + best audio."""
-    return f"bv*[height<={height}]+ba/b[height<={height}]/b", [f"res:{height}", "fps", "vbr", "abr"]
+    """yt-dlp format + sort: best video up to `height` (highest fps first) + the ENGLISH audio track.
+    Big channels add dubbed audio (MrBeast-style videos carry 70+ tracks: Thai, Hindi, ...): "best audio" by bitrate
+    picked a random dub. Now: an English track first (ba[language^=en]); else the original one ("lang" comes before
+    the bitrates in the sort: YouTube gives the original track the top language_preference), never a dub just because
+    its bitrate is higher. res / fps stay first so the video side is still the best picture (they don't apply to audio)."""
+    h = height
+    return (f"bv*[height<={h}]+ba[language^=en]/bv*[height<={h}]+ba/b[height<={h}][language^=en]/b[height<={h}]/b",
+            [f"res:{h}", "fps", "lang", "vbr", "abr"])
 
 
 def info(url, comments=False):
@@ -127,7 +133,9 @@ def download_vod(url, out_path, height=1080, stop=None):
             "format_sort": sort, "concurrent_fragment_downloads": FRAGMENTS, "ffmpeg_location": FFMPEG,
             "progress_hooks": [hook]}
     with ydl(opts) as y:
-        y.download([url])
+        i = y.extract_info(url, download=True)
+    a = [f for f in (i or {}).get("requested_formats") or [i or {}] if f.get("acodec") not in (None, "none")]
+    return (a[0].get("language") or "?", a[0].get("format_note") or "") if a else ("?", "")  # the audio track it got
 
 
 def record_live_chunk(url, out_path, seconds, stop, height=1080):
