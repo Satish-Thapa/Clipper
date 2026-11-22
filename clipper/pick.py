@@ -329,26 +329,43 @@ def learned_note():
             "decides):\n" + t + "\n") if t else ""
 
 
-REPOST_SYSTEM = """You write the title for a short vertical video (a Reel / Short / TikTok) that a US channel posts
-again. You get the original post's title / caption, its creator and its length. Write a NEW title for YouTube Shorts,
-Facebook Reels and Instagram, in English, for a US audience:
-- 40-70 characters, a hook that makes people stop scrolling, about what actually happens (only what the caption
-  says or clearly implies: never invent events, names or results).
-- Put the searchable keyword (game, show, sport or topic name, e.g. "GTA 6") in it naturally.
-- Name the creator ONLY when it's a big individual creator people search for (e.g. IShowSpeed, Kai Cenat, MrBeast):
-  never a small channel, a clip page, a podcast or show name.
-- No hashtags and no emoji in the title, no ALL CAPS sentences (one CAPS word for emphasis is fine), no clickbait lies.
-Also: up to 5 hashtags (no #, no spaces, specific: game / topic / creator) and a one-line description (a sentence
-that adds to the title, no hashtags).
+REPOST_SYSTEM = """You polish the title of a short vertical video (a Reel / Short / TikTok) that a US channel posts
+again. THE VIDEO'S OWN TITLE IS YOUR MAIN REFERENCE: it was written by the creator and it's what the video is about.
+- Keep its subject, its meaning and its key words (names, game, the thing that happens). Don't change the story,
+  don't swap in a different angle, don't make up a hook it doesn't have. If it's already a good title, keep it almost
+  as it is.
+- Just clean it up: drop hashtags, emoji, @handles, links, "| Facebook" style tails and spammy bits; fix the
+  capitalization (Title Case or normal case, one CAPS word for emphasis is fine); make it read smoothly in English;
+  40-80 characters is ideal but never cut its meaning to fit.
+- Use the caption only to fill in what the title leaves out (e.g. the game or the person's name), never to replace it.
+- Only when the title is missing or useless (e.g. just "Facebook", "Instagram", "Video by someone") write it from the
+  caption, same rules: only what it says, no invented events, names or results.
+- Name a creator only when the title / caption does and it's a big individual creator (e.g. IShowSpeed, Kai Cenat).
+Also: up to 5 hashtags taken from the title / caption's own topic (no #, no spaces) and a one-line description (a
+plain sentence that goes with the title, no hashtags).
 Answer JSON only: {"title": "...", "description": "...", "hashtags": ["..."]}"""
+
+# Titles Facebook / Instagram give a video that has none of its own: useless as a title.
+_GENERIC = re.compile(r"^\s*((facebook|instagram|youtube|reels?|videos?|watch|untitled)(\s+(video|reel|watch))?"
+                      r"|(video|reel|post)\s+by\s+.+|.+\s+on\s+instagram.*)\s*$", re.I)
+
+
+def clean_title(title):
+    """The video's own title, tidied (no hashtags, @handles, links, emoji, " | Facebook" tails); '' when it's a
+    generic one ("Facebook", "Video by ...")."""
+    t = re.sub(r"https?://\S+|[#@]\w+|[\U0001F000-\U0001FAFF☀-➿️‍]", " ", str(title or ""))
+    t = re.sub(r"\s*[|\-–]\s*(facebook|instagram|youtube)\s*$", "", " ".join(t.split()), flags=re.I).strip(" -|·")
+    return "" if not t or _GENERIC.match(t) else t[:100]
 
 
 def repost_title(title, caption, creator, seconds):
-    """Cheat page: the AI's title / description / hashtags for a reposted reel, from its original title and caption.
-    -> dict (empty when every AI fails: the caller keeps the original title)."""
+    """Cheat page: the AI's title / description / hashtags for a reposted reel, built on its OWN title (the caption
+    only fills gaps). -> dict (empty when every AI fails: the caller keeps the cleaned original title)."""
     from . import ai
-    task = (f"Original title: {(title or '').strip()[:300] or '(none)'}\n"
-            f"Original caption: {(caption or '').strip()[:1200] or '(none)'}\n"
+    own = clean_title(title)
+    task = (f"The video's own title (MAIN REFERENCE): {(title or '').strip()[:300] or '(none)'}"
+            + ("" if own else "  <- missing / generic: write it from the caption") + "\n"
+            f"Caption (only to fill gaps): {(caption or '').strip()[:1200] or '(none)'}\n"
             f"Creator: {creator or '(unknown)'}\nLength: {seconds:.0f} seconds")
     try:
         a = ai.ask(task, REPOST_SYSTEM, "repost", full=True)

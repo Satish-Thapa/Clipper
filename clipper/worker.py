@@ -183,8 +183,9 @@ def _repost(job, d):
     dur = float(i.get("duration") or 0)
     if dur > REPOST_MAX_MIN * 60:
         raise ValueError(f"it's {dur / 60:.0f} min long: the Cheat page is for reels and shorts (up to {REPOST_MAX_MIN} min)")
-    raw = (job.get("title") or i.get("title") or i.get("description") or "").strip()
-    title = raw.splitlines()[0][:100] if raw else "Reel"
+    # the video's own title first (cleaned); a generic one ("Facebook", "Video by ...") -> the caption's first line
+    title = (pick.clean_title(job.get("title")) or pick.clean_title(i.get("title"))
+             or pick.clean_title((i.get("description") or "").strip().split("\n")[0]) or "Reel")
     who = i.get("uploader") or i.get("channel") or ""
     db.update("jobs", jid, title=title, channel=who)
     db.log(jid, f"reel: {title} | by {who or '?'} | {dur:.0f}s | {i.get('width') or '?'}x{i.get('height') or '?'} source")

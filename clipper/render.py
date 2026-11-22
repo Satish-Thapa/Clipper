@@ -93,15 +93,19 @@ def _rows(words, n):
     return best or [" ".join(words)]
 
 
+BIG_MIN = 40  # the smallest a one-line title gets (on the 1080 grid): ~50 characters still fit across
+
+
 def big_title(headline, y, length):
-    """The reel title as ASS: black caps on a white box (the owner's look), 1-3 balanced lines (the fewest that keep it
-    big; a smaller font only when even 3 lines are too long), centred on y; steady (no animation)."""
+    """The reel title as ASS: black caps on a white box (the owner's look), always ONE line (the owner: a 2-3 line
+    box blocks too much of the video): the font is as big as fits (84px max), smaller for a longer title; words that
+    still don't fit at BIG_MIN are dropped from the end. Centred on y; steady (no animation)."""
     words = headline.upper().replace("{", "").replace("}", "").replace("\\", "/").split()
-    for n in (1, 2, 3):
-        rows = _rows(words, n)
-        if max(map(_width, rows)) <= BIG_CHARS * 1.15 or n == 3:
-            break
-    size = max(50, min(BIG_TITLE, round(BIG_TITLE * BIG_CHARS / max(map(_width, rows)))))
+    fit = int(BIG_CHARS * BIG_TITLE / BIG_MIN)  # characters that fit across at the smallest size
+    while len(words) > 1 and _width(" ".join(words)) > fit:
+        words = words[:-1]
+    rows = [" ".join(words)]
+    size = max(BIG_MIN, min(BIG_TITLE, int(BIG_TITLE * BIG_CHARS / max(1, _width(rows[0])))))
     # BorderStyle 3 (the Top style): each line gets an opaque box in the outline colour (white), \bord = its padding.
     # Still: no pop-in, no pulse (the owner wants the title steady, like the subtitles).
     tags = rf"{{\an5\q2\pos(540,{y})\fs{size}\bord14\shad0\1c&H000000&\3c&HFFFFFF&\4c&HFFFFFF&}}"

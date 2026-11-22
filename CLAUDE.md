@@ -46,7 +46,7 @@ gotchas, current state, and what's next.
 - Main content: GTA (5 / 6) gaming streams and streamers (IShowSpeed-style), podcasts, sports talk; English, for a US
   audience.
 - **Explicit look choices (don't change without asking):** header in the middle when the streamer is on top, otherwise
-  at the top, black text on a white box, completely still (no pop-in, no pulse), max 84px; the header/title names the
+  at the top, black text on a white box, completely still (no pop-in, no pulse), ONE line only (never wrapped: a tall box blocks the video), max 84px; the header/title names the
   creator only for a big individual creator ("SPEED ..."), never a small channel or a show; subtitles at the bottom,
   steady (no pop/wiggle), the said word yellow; logo small top right; NO text hook in the first 3 seconds; clips start
   right on the moment (no lead-in: `snap` walks back at most 1.5s, `pad_before` 0); everything 4K; when several clips
@@ -135,7 +135,7 @@ scream_hook, opening, closing, piece), `status`, `path`, `uploads` (JSON per pla
 - After a job / piece: `_fill` (only when `jobs.fill`): `quota.fill(days=jobs.fill)` gives its best clips (by virality)
   the earliest free slots of the next N days.
 - Cheat page (`mode=repost`, `POST /api/reposts`): `worker._repost` downloads a FB / IG / YouTube reel (best up to
-  4K), `_to_4k` fits it into 2160x3840 / 3840x2160 as it is (no cut, no text), one clip (virality 90, AI title, credit line), `_fill`.
+  4K), `_to_4k` fits it into 2160x3840 / 3840x2160 as it is (no cut, no text), one clip (virality 90, AI title built on the video's own title (`pick.clean_title`; the caption only fills gaps), credit line), `_fill`.
 - Reset (`POST /api/reset`, Settings): erases jobs, files, Auto runs, reports, stats, logs (+ clips unless kept: kept
   ones lose their slots and move to `data/jobs/0`, their layout/subtitles copied into `why`). Keeps Settings, fillers, logins, `limit_hits`, and
   today's upload count (`quota.carry_posted` -> setting `posted_carry`, added in `quota.posted`: the limit holds).
@@ -162,7 +162,7 @@ scream_hook, opening, closing, piece), `status`, `path`, `uploads` (JSON per pla
   off the facecam's side; the owner asked for this after the whole-frame 608 version); a blurred darkened copy of the
   gameplay fills the strip below. split = clip on top (`SPLIT_CLIP_H` 1180) + background video from
   `data/fillers` below. `find_cam` (YuNet) for `auto`.
-- **Text:** `ass()` = header `big_title` (max 84px on the 1080 grid, the owner wanted it a bit smaller) centred on `mid_y` (cam: the seam `CAM_H`; else `TOP_Y` 330) + karaoke
+- **Text:** `ass()` = header `big_title` (one line, 84px max on the 1080 grid, smaller to fit, `BIG_MIN` 40; words past that dropped) centred on `mid_y` (cam: the seam `CAM_H`; else `TOP_Y` 330) + karaoke
   subtitles at the bottom (`JIGGLE` is just the yellow colour now: steady). Header style `Top` = BorderStyle 3 (opaque
   white box, black text), no animation tags. Logo: `assets/logo.png` (the owner's "THE
   CLIP DROP"), 120px wide (×K) at top right, `settings.logo`.
