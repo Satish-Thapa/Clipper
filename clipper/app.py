@@ -330,10 +330,14 @@ def post_now(cid: int, b: PostIn | None = None):
 
 
 @app.post("/api/clips/{cid}/retry")
-def retry_upload(cid: int, force: bool = False):
-    """Retry the platforms that failed for a posted clip (the daily quota still applies). force: also Instagram over
-    the length limit / a platform at its own upload limit."""
+def retry_upload(cid: int, force: bool = False, b: PostIn | None = None):
+    """Retry the upload to the platforms you pick (body {platforms}; none = where its kind posts, so the failed ones).
+    Platforms that already have it are skipped; the daily quota still applies. force: also Instagram over the length
+    limit / a platform at its own upload limit."""
     c = db.get("clips", cid) or _bad(404, "clip not found")
+    plats = (b.platforms if b else []) or None
+    if plats and all(json.loads(c.get("uploads") or "{}").get(p, {}).get("id") for p in plats):
+        _bad(409, "it's already posted on every platform you picked")
     if not quota.posted_ok(c) and not json.loads(c.get("uploads") or "{}"):
         _bad(409, "this clip was never posted: use Post now or put it in a slot")
     if c["status"] in ("rendering", "uploading"):
@@ -343,7 +347,7 @@ def retry_upload(cid: int, force: bool = False):
             quota.claim_now(cid)
         except ValueError as e:
             _bad(409, str(e))
-    threading.Thread(target=worker.upload_clip, args=(cid, None, force), daemon=True).start()
+    threading.Thread(target=worker.upload_clip, args=(cid, plats, force), daemon=True).start()
     return {"ok": True}
 
 

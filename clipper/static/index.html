@@ -176,6 +176,16 @@ pre.log { background: #141414; border: 1px solid var(--line); border-radius: 6px
 .chart { width: 100%; height: 180px; display: block; }
 .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
 .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: 0; }
+/* jobs hype graph: legend checkboxes + hover readout */
+.cvlegend label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; padding: 2px 0; }
+.cvlegend input { margin: 0; accent-color: var(--green, #76B900); }
+.cvlegend label.off { opacity: .45; }
+.cvwrap { position: relative; }
+.cvwrap .cvline { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(255,255,255,.5); pointer-events: none; display: none; }
+.cvwrap .cvtip { position: absolute; top: 6px; z-index: 5; pointer-events: none; display: none; background: #111; border: 1px solid #444;
+  border-radius: 6px; padding: 6px 8px; font-size: 11px; line-height: 1.5; white-space: nowrap; color: var(--text); box-shadow: 0 4px 14px rgba(0,0,0,.5); }
+.cvwrap .cvtip i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; }
+.cvwrap .cvtip b { color: #fff; }
 /* modal, toast, reels */
 .modal { position: fixed; inset: 0; z-index: 400; background: rgba(0,0,0,.6); display: grid; place-items: center; padding: 16px; animation: fade .3s; }
 .modal[hidden] { display: none; }
@@ -758,16 +768,54 @@ async function drawCurves(id) {
   const el = $(`#cv-${id}`); if (!el) return;
   const data = await api("GET", `/api/jobs/${id}/curves`).catch(() => []);
   if (!data.length) { el.innerHTML = `<p class="dim small">The graph appears once the loudness step is done.</p>`; return; }
-  el.innerHTML = data.map(c => {
+  curveData[id] = data;
+  const present = Object.keys(SIGCOL).filter(k => data.some(c => c.signals && c.signals[k]));
+  el.innerHTML = data.map((c, ci) => {
     const n = c.n || 1, W = 800, H = 140;
     const lines = Object.entries(c.signals).map(([k, v]) => {
       const step = Math.max(1, Math.floor(v.length / 400)), pts = [];
       for (let i = 0; i < v.length; i += step) pts.push(`${(i / n * W).toFixed(1)},${(H - 4 - v[i] * (H - 10)).toFixed(1)}`);
-      return `<polyline points="${pts.join(" ")}" fill="none" stroke="${SIGCOL[k] || "#aaa"}" stroke-width="${k === "hype" ? 2 : 1}" opacity="${k === "hype" ? 1 : .55}" vector-effect="non-scaling-stroke"/>`;
+      return `<polyline data-k="${k}" points="${pts.join(" ")}" fill="none" stroke="${SIGCOL[k] || "#aaa"}" stroke-width="${k === "hype" ? 2 : 1}" opacity="${k === "hype" ? 1 : .55}" vector-effect="non-scaling-stroke"/>`;
     }).join("");
-    const picks = (c.chosen || []).map(x => `<rect x="${x.start / n * W}" y="0" width="${Math.max(2, (x.end - x.start) / n * W)}" height="${H}" fill="${x.kind === "long" ? "rgba(0,191,255,.16)" : "rgba(255,212,0,.2)"}"><title>${esc(x.title)} · ${mmss(x.start)}-${mmss(x.end)}</title></rect>`).join("");
-    return `<div class="small dim" style="margin-top:8px">${esc(c.name)} · ${mmss(n)} · ${(c.chosen || []).length} clip(s) picked</div><svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="height:140px;background:var(--surface);border-radius:6px">${picks}${lines}</svg>`;
-  }).join("") + `<div class="legend" style="margin-top:6px">${Object.keys(SIGCOL).map(k => `<span><i style="background:${SIGCOL[k]}"></i>${SIG[k]}</span>`).join("")}<span><i style="background:rgba(255,212,0,.6)"></i>picked short</span><span><i style="background:rgba(0,191,255,.6)"></i>picked long</span></div>`;
+    const picks = (c.chosen || []).map(x => `<rect data-k="pick_${x.kind === "long" ? "long" : "short"}" x="${x.start / n * W}" y="0" width="${Math.max(2, (x.end - x.start) / n * W)}" height="${H}" fill="${x.kind === "long" ? "rgba(0,191,255,.16)" : "rgba(255,212,0,.2)"}"></rect>`).join("");
+    return `<div class="small dim" style="margin-top:8px">${esc(c.name)} · ${mmss(n)} · ${(c.chosen || []).length} clip(s) picked</div>
+      <div class="cvwrap" data-job="${id}" data-ci="${ci}" onmousemove="curveHover(event, this)" onmouseleave="curveHover(null, this)" ontouchstart="curveHover(event, this)" ontouchmove="curveHover(event, this)">
+        <svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="height:140px;background:var(--surface);border-radius:6px">${picks}${lines}</svg>
+        <div class="cvline"></div><div class="cvtip"></div></div>`;
+  }).join("") + `<div class="legend cvlegend" style="margin-top:6px">${[...present.map(k => [k, SIGCOL[k], SIG[k]]), ["pick_short", "rgba(255,212,0,.6)", "picked short"], ["pick_long", "rgba(0,191,255,.6)", "picked long"]]
+    .map(([k, col, name]) => `<label title="${esc(SIGTIP[k] || name)}" class="${curveHide.has(k) ? "off" : ""}"><input type="checkbox" data-ck="${k}" ${curveHide.has(k) ? "" : "checked"} onchange="curveToggle('${k}', this.checked)"><i style="background:${col}"></i>${esc(name)}</label>`).join("")}</div>`;
+  curveApply(el);
+}
+// the graph: which lines are shown (unticked ones are remembered per browser) + the hover readout
+const SIGTIP = {hype: "All signals mixed into one score: what the AI sees as the hottest parts", heatmap: "YouTube's 'most replayed' graph: where viewers rewatch",
+  chat: "Chat messages per second (live / chat replay)", comments: "Comments that mention a timestamp (e.g. 12:34)", audio: "How loud it is (screams, laughs, hype)",
+  reaction: "Streamer reactions found in the transcript (screams, laughs, 'no way')", pick_short: "Where the shorts were cut", pick_long: "Where the long clips were cut"};
+const curveData = {};
+let curveHide; try { curveHide = new Set(JSON.parse(localStorage.getItem("curveHide") || "[]")); } catch { curveHide = new Set(); }
+function curveApply(root) {
+  $$("[data-k]", root).forEach(x => x.style.display = curveHide.has(x.dataset.k) ? "none" : "");
+}
+function curveToggle(k, on) {
+  on ? curveHide.delete(k) : curveHide.add(k);
+  try { localStorage.setItem("curveHide", JSON.stringify([...curveHide])); } catch {}
+  $$(`.cvlegend input[data-ck="${k}"]`).forEach(i => { i.checked = on; i.closest("label").classList.toggle("off", !on); });
+  $$(".jgraph").forEach(curveApply);
+}
+function curveHover(e, box) {
+  const line = box.querySelector(".cvline"), tip = box.querySelector(".cvtip");
+  if (!e) { line.style.display = tip.style.display = "none"; return; }
+  const c = (curveData[box.dataset.job] || [])[+box.dataset.ci]; if (!c) return;
+  const r = box.getBoundingClientRect(), p = e.touches ? e.touches[0] : e;
+  const fx = Math.min(1, Math.max(0, (p.clientX - r.left) / r.width)), n = c.n || 1, t = Math.min(n - 1, Math.floor(fx * n));
+  const rows = Object.keys(SIGCOL).filter(k => c.signals[k] && !curveHide.has(k))
+    .map(k => `<div><i style="background:${SIGCOL[k]}"></i>${esc(SIG[k])}: <b>${Math.round((c.signals[k][t] || 0) * 100)}</b></div>`);
+  const pick = (c.chosen || []).filter(x => t >= x.start && t <= x.end && !curveHide.has(x.kind === "long" ? "pick_long" : "pick_short"))
+    .map(x => `<div style="color:${x.kind === "long" ? "#00BFFF" : "#FFD400"}">picked ${x.kind}: ${esc(x.title || "")} (${mmss(x.start)}-${mmss(x.end)})</div>`);
+  tip.innerHTML = `<div><b>${mmss(t)}</b> <span class="dim">(0-100)</span></div>${rows.join("") || `<div class="dim">every line is unticked</div>`}${pick.join("")}`;
+  line.style.display = tip.style.display = "block";
+  line.style.left = `${fx * 100}%`;
+  const x = fx * r.width, tw = tip.offsetWidth;
+  tip.style.left = `${x + 12 + tw > r.width ? Math.max(0, x - 12 - tw) : x + 12}px`;
 }
 
 // ---------- clips ----------
@@ -807,7 +855,7 @@ function clipActions(c, inReels) {
   const ready = c.path && !["rendering", "uploading"].includes(c.status), up = posted(c), fail = failedOn(c).length;
   return [!inReels && c.path ? `<button class="btn plain sm" title="Watch full screen from here" onclick="openReels(${c.id})">${ico("play")}</button>` : "",
     ready && !up && !fail ? `<button class="btn ghost sm" title="Post now: uses the next free ${c.kind} slot today" onclick="postNow(${c.id})">${ico("up")}Post</button>` : "",
-    ready && fail ? `<button class="btn ghost sm" title="Try the failed platform(s) again (today's limit still applies)" onclick="act(this, () => api('POST','/api/clips/${c.id}/retry'), 'Retrying the upload')">${ico("refresh")}Retry</button>` : "",
+    ready && fail ? `<button class="btn ghost sm" title="Pick the platform(s) to try again (today's limit still applies)" onclick="retryPicker(${c.id})">${ico("refresh")}Retry</button>` : "",
     ready && !up && c.status !== "scheduled" ? `<button class="btn ghost sm" title="Put it in a free slot" onclick="slotPicker(${c.id})">${ico("clock")}Slot</button>` : "",
     c.status === "scheduled" ? `<button class="btn ghost sm" title="Take it off its slot (it waits here)" onclick="act(this, () => api('POST','/api/clips/${c.id}/unassign'), 'Taken off its slot')">${ico("x")}Unslot</button>` : "",
     ready ? `<button class="btn ghost sm warnbtn" title="Post now to the platforms you pick, past every limit (warns first)" onclick="forcePicker(${c.id})">${ico("alert")}Force</button>` : "",
@@ -860,6 +908,18 @@ function postNow(id) {  // pick where; it takes the next free slot of its kind t
     <div class="row end" style="margin-top:14px"><button class="btn plain" onclick="closeModal()">Cancel</button><button class="btn" id="postGo">${ico("up")}Post now</button></div>`);
   $("#postGo").onclick = async e => { const platforms = $$("[data-pp]").filter(x => x.checked).map(x => x.dataset.pp); if (!platforms.length) return toast("Tick at least one platform", true);
     if (await act(e.target, () => api("POST", `/api/clips/${id}/post`, {platforms}), r => `Posting to ${platforms.map(p => PLAT[p]).join(", ")} (the ${t12(r.slot.time)} slot)`)) closeModal(); };
+}
+function retryPicker(id) {  // pick which platforms to try again: the failed ones are ticked, the posted ones can't be picked
+  const c = S.clips.find(x => x.id === id), ups = J(c.uploads, {}), def = S.post_to[c.kind] || [];
+  openModal(`<h2>${ico("refresh")} Retry "${esc(c.title)}"</h2>
+    <p class="small dim">Tick where to try the upload again. The failed ones are ticked; it's already up on the ones marked posted. Today's limit still applies (use Force to go past it).</p>
+    <div class="stack">${Object.entries(PLAT).map(([p, n]) => { const u = ups[p] || {};
+      return `<label class="check" style="align-items:flex-start"><input type="checkbox" data-rp="${p}" ${u.id ? "disabled" : u.error ? "checked" : ""}>
+        <div>${n}${u.id ? ` <span class="chip ok">posted</span>` : u.error ? ` <span class="chip bad">failed</span>` : !def.includes(p) ? ` <span class="dim small">(not where ${c.kind}s post)</span>` : ""}${S.platforms[p] ? "" : ` <span class="dim small">(not connected)</span>`}
+        ${u.error ? `<div class="small dim">${esc(u.error).slice(0, 160)}</div>` : ""}</div></label>`; }).join("")}</div>
+    <div class="row end" style="margin-top:14px"><button class="btn plain" onclick="closeModal()">Cancel</button><button class="btn" id="retryGo">${ico("refresh")}Retry</button></div>`);
+  $("#retryGo").onclick = async e => { const platforms = $$("[data-rp]").filter(x => x.checked).map(x => x.dataset.rp); if (!platforms.length) return toast("Tick at least one platform", true);
+    if (await act(e.target, () => api("POST", `/api/clips/${id}/retry`, {platforms}), `Retrying on ${platforms.map(p => PLAT[p]).join(", ")}`)) closeModal(); };
 }
 async function slotPicker(id) {
   const c = S.clips.find(x => x.id === id);

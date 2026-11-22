@@ -208,13 +208,40 @@ def _rupload(url, token, path):
                           headers={"Authorization": f"OAuth {token}", "offset": "0", "file_size": str(len(data))}))
 
 
+def _fb_chunked(path, title, caption):
+    """A Page video in Facebook's chunked upload (start -> transfer the pieces Facebook asks for -> finish).
+    One POST with the whole file gets HTTP 413 for big 4K clips (a 160s long is ~360 MB)."""
+    from pathlib import Path
+    path = Path(path)
+    url, size = f"https://graph-video.facebook.com/{GRAPH_VERSION}/{FB_PAGE_ID}/videos", path.stat().st_size
+    s = _ok(httpx.post(url, timeout=TIMEOUT, data={"upload_phase": "start", "file_size": str(size),
+                                                   "access_token": FB_PAGE_TOKEN}))
+    sid, vid, start, end = s["upload_session_id"], s["video_id"], int(s["start_offset"]), int(s["end_offset"])
+    with open(path, "rb") as f:
+        while start < end:
+            f.seek(start)
+            chunk, tries = f.read(end - start), 0
+            while True:
+                try:
+                    r = _ok(httpx.post(url, timeout=TIMEOUT, data={"upload_phase": "transfer", "upload_session_id": sid,
+                                                                   "start_offset": str(start), "access_token": FB_PAGE_TOKEN},
+                                       files={"video_file_chunk": (path.name, chunk, "application/octet-stream")}))
+                    break
+                except Exception:
+                    tries += 1
+                    if tries >= 3:  # a dropped piece is retried, the whole upload isn't restarted
+                        raise
+                    time.sleep(5 * tries)
+            start, end = int(r["start_offset"]), int(r["end_offset"])
+    _ok(httpx.post(url, timeout=TIMEOUT, data={"upload_phase": "finish", "upload_session_id": sid, "title": title[:255],
+                                               "description": caption, "access_token": FB_PAGE_TOKEN}))
+    return vid
+
+
 def facebook(path, title, caption, seconds):
-    if seconds > FB_REEL_MAX:  # Reels are 3-90s
-        with open(path, "rb") as f:
-            r = _ok(httpx.post(f"https://graph-video.facebook.com/{GRAPH_VERSION}/{FB_PAGE_ID}/videos", timeout=TIMEOUT,
-                               data={"title": title[:255], "description": caption, "access_token": FB_PAGE_TOKEN},
-                               files={"source": (path.name, f, "video/mp4")}))
-        return {"id": r["id"], "url": f"https://www.facebook.com/watch/?v={r['id']}"}
+    if seconds > FB_REEL_MAX:  # Reels are 3-90s: a longer clip goes up as a normal Page video
+        vid = _fb_chunked(path, title, caption)
+        return {"id": vid, "url": f"https://www.facebook.com/watch/?v={vid}"}
     reels = f"{GRAPH}/{FB_PAGE_ID}/video_reels"
     vid = _ok(httpx.post(reels, data={"upload_phase": "start", "access_token": FB_PAGE_TOKEN}, timeout=TIMEOUT))["video_id"]
     _rupload(f"{RUPLOAD}/video-upload/{GRAPH_VERSION}/{vid}", FB_PAGE_TOKEN, path)
