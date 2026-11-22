@@ -714,7 +714,7 @@ def _busy():
 
 
 def _keep_clip(c, jobs):
-    """Move a kept clip's files into data/jobs/0 (job ids start again from 1 after a reset) and keep the bits of its
+    """Keep only the clip itself: it comes off its slot (a scheduled one waits in Clips again). Move its files into data/jobs/0 (job ids start again from 1 after a reset) and keep the bits of its
     job that a header edit needs (framing, subtitles, the source's name) in its `why`."""
     keep = DATA / "jobs" / "0"
     (keep / "clips").mkdir(parents=True, exist_ok=True)
@@ -735,7 +735,8 @@ def _keep_clip(c, jobs):
     for f in (prev / f"{c['id']}.mp4", prev / f"{c['id']}.jpg"):
         if f.exists():
             f.replace(keep / "previews" / f.name)
-    db.update("clips", c["id"], job_id=0, path=path, why=json.dumps(why))
+    off_slot = {"status": "rendered", "post_at": None} if c["status"] == "scheduled" else {"post_at": None}
+    db.update("clips", c["id"], job_id=0, path=path, why=json.dumps(why), **off_slot)  # only the clip stays: no slot
 
 
 @app.post("/api/reset")

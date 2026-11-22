@@ -1382,9 +1382,7 @@ async function resetAll() {
     <p class="small">This erases <b>${r.jobs} job(s)</b> and their downloaded videos, Auto's runs, reports, numbers, logs and AI prompts (${fsize(r.bytes)} on disk). It can't be undone.</p>
     <p class="small dim">Always kept: ${r.fillers} background video(s), your logins (.env, YouTube / TikTok, cookies), and today's upload count (the daily limit still holds). Clips already posted stay online.</p>
     <div class="stack" style="margin-top:10px">
-      <div class="f"><b class="small">Remove the clips too? (${r.clips} clip(s), ${fsize(r.clip_bytes)})</b>
-        <label class="check"><input type="radio" name="rsClips" id="rsKeep" checked> No, keep them: their videos, titles, slots and numbers stay</label>
-        <label class="check"><input type="radio" name="rsClips"> Yes, remove them too</label></div>
+      <label class="check"><input type="checkbox" id="rsKeep" checked> Keep the clips (${r.clips}, ${fsize(r.clip_bytes)}): only the clips stay, their slots are cleared</label>
       <label class="f">Type RESET to confirm<input id="rsConfirm" autocomplete="off" placeholder="RESET"></label></div>
     <div class="row end" style="margin-top:14px"><button class="btn plain" onclick="closeModal()">Cancel</button><button class="btn danger" id="rsGo" ${r.busy ? "disabled" : ""}>${ico("trash")}Reset</button></div>`;
   $("#rsGo").onclick = async e => {
