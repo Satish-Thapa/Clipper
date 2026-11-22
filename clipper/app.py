@@ -301,12 +301,12 @@ def state():
 
 # ---------- clips ----------
 
-def _clip_preview(cid, poster=False):
+def _clip_preview(cid, poster=False, hd=False):
     c = db.get("clips", cid)
     if not c or not c.get("path") or not (DATA / c["path"]).exists():
         _bad(404, "no video for this clip")
     try:
-        return render.preview(DATA / c["path"], DATA / "jobs" / str(c["job_id"]) / "previews", str(cid), poster)
+        return render.preview(DATA / c["path"], DATA / "jobs" / str(c["job_id"]) / "previews", str(cid), poster, hd)
     except Exception as e:
         _bad(500, f"couldn't make the preview: {e!r}"[:300])
 
@@ -315,9 +315,15 @@ CACHE = {"Cache-Control": "private, max-age=86400"}  # the page asks with ?v=<cl
 
 
 @app.get("/api/clips/{cid}/preview")
-def clip_preview(cid: int):
-    """Light copy of the clip for the app's players (fast over a tunnel). Download / Open use the full file."""
-    return FileResponse(_clip_preview(cid), media_type="video/mp4", headers=CACHE)
+def clip_preview(cid: int, q: Literal["fast", "hd", "4k"] = "fast"):
+    """The clip for the app's players. q (the reels' quality choice): fast = light 540p copy (default, quick over a
+    tunnel), hd = a 1080p copy (made the first time it's asked for), 4k = the full clip file itself."""
+    if q == "4k":
+        c = db.get("clips", cid)
+        if not c or not c.get("path") or not (DATA / c["path"]).exists():
+            _bad(404, "no video for this clip")
+        return FileResponse(DATA / c["path"], media_type="video/mp4", headers=CACHE)
+    return FileResponse(_clip_preview(cid, hd=q == "hd"), media_type="video/mp4", headers=CACHE)
 
 
 @app.get("/api/clips/{cid}/poster")
@@ -467,7 +473,7 @@ def _drop_clip(c):
             f.unlink(missing_ok=True)
     db.delete("clips", c["id"])
     prev = DATA / "jobs" / str(c["job_id"]) / "previews"
-    for f in (prev / f"{c['id']}.mp4", prev / f"{c['id']}.jpg"):
+    for f in (prev / f"{c['id']}.mp4", prev / f"{c['id']}_hd.mp4", prev / f"{c['id']}.jpg"):
         f.unlink(missing_ok=True)
 
 
@@ -732,7 +738,7 @@ def _keep_clip(c, jobs):
                 f.replace(keep / "clips" / f.name)
         path = f"jobs/0/clips/{mp4.name}"
     prev = DATA / "jobs" / str(c["job_id"]) / "previews"
-    for f in (prev / f"{c['id']}.mp4", prev / f"{c['id']}.jpg"):
+    for f in (prev / f"{c['id']}.mp4", prev / f"{c['id']}_hd.mp4", prev / f"{c['id']}.jpg"):
         if f.exists():
             f.replace(keep / "previews" / f.name)
     off_slot = {"status": "rendered", "post_at": None} if c["status"] == "scheduled" else {"post_at": None}

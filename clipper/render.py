@@ -236,11 +236,12 @@ PREVIEW_W, PREVIEW_RATE = 540, "1200k"  # light copy for watching in the app (ov
 _preview_locks, _preview_slots = {}, __import__("threading").Semaphore(2)  # at most 2 preview encodes at once
 
 
-def preview(clip, out_dir, name, poster=False):
+def preview(clip, out_dir, name, poster=False, hd=False):
     """For the app's players: a light copy of a clip (540 wide, ~1.2 Mbps, starts playing at once; made when it's
-    first played) or, with poster=True, one small still (1s in, so the title shows). Made once, remade only when the
-    clip changes (e.g. a new headline). Downloads / uploads always use the full-quality clip. -> the file."""
-    clip, out = Path(clip), Path(out_dir) / f"{name}.{'jpg' if poster else 'mp4'}"
+    first played), with hd=True a 1080-wide copy (~5 Mbps, the reels' HD choice), or with poster=True one small still
+    (1s in, so the title shows). Made once, remade only when the clip changes (e.g. a new headline). Downloads /
+    uploads always use the full-quality clip. -> the file."""
+    clip, out = Path(clip), Path(out_dir) / f"{name}{'_hd' if hd and not poster else ''}.{'jpg' if poster else 'mp4'}"
     with _preview_locks.setdefault(str(out), __import__("threading").Lock()):
         if out.exists() and out.stat().st_mtime >= clip.stat().st_mtime:
             return out
@@ -250,9 +251,10 @@ def preview(clip, out_dir, name, poster=False):
             cmd = ["-ss", f"{min(1.0, _duration(clip) / 2):.2f}", "-i", str(clip), "-frames:v", "1",
                    "-vf", f"scale={PREVIEW_W}:-2", "-q:v", "5"]
         else:
-            cmd = ["-i", str(clip), "-vf", f"scale={PREVIEW_W}:-2", *encoder()[:2], "-b:v", PREVIEW_RATE,
-                   "-maxrate", "1800k", "-bufsize", "3600k", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "96k",
-                   "-movflags", "+faststart"]
+            w, rate, peak = (1080, "5M", "7M") if hd else (PREVIEW_W, PREVIEW_RATE, "1800k")
+            cmd = ["-i", str(clip), "-vf", f"scale={w}:-2", *encoder()[:2], "-b:v", rate,
+                   "-maxrate", peak, "-bufsize", "14M" if hd else "3600k", "-pix_fmt", "yuv420p", "-c:a", "aac",
+                   "-b:a", "128k" if hd else "96k", "-movflags", "+faststart"]
         with _preview_slots:
             subprocess.run([FFMPEG, "-y", "-loglevel", "error", *cmd, str(tmp)], check=True, capture_output=True)
         tmp.replace(out)
