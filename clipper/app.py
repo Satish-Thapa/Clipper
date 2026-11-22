@@ -689,7 +689,7 @@ def youtube_connect():
 
 # ---------- reset (Settings → Reset) ----------
 
-# Settings-DB keys that are your setup (kept unless "reset settings" is ticked) / logins (always kept).
+# Settings-DB keys that are your setup / logins: a reset always keeps both.
 SETUP_KEYS = ("app", "auto", "ai_model", "ai_order", "pc_model")
 LOGIN_KEYS = ("yt_cookie_set", "yt_bot_check", "yt_channel")
 DATA_TABLES = ("jobs", "topics", "auto_rounds", "stats_daily", "reports", "news", "news_runs")
@@ -697,7 +697,6 @@ DATA_TABLES = ("jobs", "topics", "auto_rounds", "stats_daily", "reports", "news"
 
 class ResetIn(BaseModel):
     keep_clips: bool = True  # the clips stay unless you choose to remove them
-    reset_settings: bool = False
     confirm: str = ""  # must be "RESET"
 
 
@@ -760,7 +759,7 @@ def reset(b: ResetIn):
     with db.conn() as con:
         for t in DATA_TABLES + (() if b.keep_clips else ("clips",)):
             con.execute(f"DELETE FROM {t}")
-        keep = LOGIN_KEYS + ("posted_carry",) + (() if b.reset_settings else SETUP_KEYS)
+        keep = LOGIN_KEYS + SETUP_KEYS + ("posted_carry",)  # your Settings always stay
         con.execute(f"DELETE FROM settings WHERE key NOT IN ({','.join('?' * len(keep))})", keep)
     for d in (DATA / "jobs").glob("*"):
         if not (b.keep_clips and d.name == "0"):
@@ -778,7 +777,7 @@ def reset(b: ResetIn):
         con.execute("VACUUM")
     db.set_setting("reset_at", str(time.time()))
     db.syslog(f"RESET by you: everything erased{', clips kept' if b.keep_clips else ', clips too'}"
-              f"{', settings back to defaults' if b.reset_settings else ''} (background videos and logins kept)")
+              " (settings, background videos and logins kept)")
     return {"ok": True, "clips_kept": len(clips) if b.keep_clips else 0}
 
 

@@ -1385,11 +1385,10 @@ async function resetAll() {
       <div class="f"><b class="small">Remove the clips too? (${r.clips} clip(s), ${fsize(r.clip_bytes)})</b>
         <label class="check"><input type="radio" name="rsClips" id="rsKeep" checked> No, keep them: their videos, titles, slots and numbers stay</label>
         <label class="check"><input type="radio" name="rsClips"> Yes, remove them too</label></div>
-      <label class="check"><input type="checkbox" id="rsSet"> Also put Settings back to the defaults (slot times, platforms, AI, Auto topics)</label>
       <label class="f">Type RESET to confirm<input id="rsConfirm" autocomplete="off" placeholder="RESET"></label></div>
     <div class="row end" style="margin-top:14px"><button class="btn plain" onclick="closeModal()">Cancel</button><button class="btn danger" id="rsGo" ${r.busy ? "disabled" : ""}>${ico("trash")}Reset</button></div>`;
   $("#rsGo").onclick = async e => {
-    const body = {keep_clips: $("#rsKeep").checked, reset_settings: $("#rsSet").checked, confirm: $("#rsConfirm").value.trim()};
+    const body = {keep_clips: $("#rsKeep").checked, confirm: $("#rsConfirm").value.trim()};
     if (body.confirm !== "RESET") return toast("Type RESET to confirm", true);
     const res = await act(e.target, () => api("POST", "/api/reset", body), x => x.clips_kept ? `Reset done: ${x.clips_kept} clip(s) kept` : "Reset done: everything erased");
     if (res) { closeModal(); SET = null; await refresh(); loadSettings(); }

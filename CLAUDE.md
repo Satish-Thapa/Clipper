@@ -137,7 +137,7 @@ scream_hook, opening, closing, piece), `status`, `path`, `uploads` (JSON per pla
 - Cheat page (`mode=repost`, `POST /api/reposts`): `worker._repost` downloads a FB / IG / YouTube reel (best up to
   4K), `_to_4k` fits it into 2160x3840 / 3840x2160 as it is (no cut, no text), one clip (virality 90, AI title, credit line), `_fill`.
 - Reset (`POST /api/reset`, Settings): erases jobs, files, Auto runs, reports, stats, logs (+ clips unless kept: kept
-  ones move to `data/jobs/0`, their layout/subtitles copied into `why`). Keeps fillers, logins, `limit_hits`, and
+  ones move to `data/jobs/0`, their layout/subtitles copied into `why`). Keeps Settings, fillers, logins, `limit_hits`, and
   today's upload count (`quota.carry_posted` -> setting `posted_carry`, added in `quota.posted`: the limit holds).
 - Upload progress: `social.track/_prog/untrack` (thread-local, per clip + platform) -> `/api/state.progress`.
 - `upload_clip(cid, platforms=None, force=False, bypass=False)`: default platforms = `settings.platforms_for(kind)`;
