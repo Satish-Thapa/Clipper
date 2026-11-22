@@ -349,7 +349,7 @@ in short:
 | **Slots and daily limits** | Shorts per day + a time for each; longs per day + a time for each; weekend days and the extra slots' times; *Shorts post to* and *Longs post to* (also on the Slots page). |
 | **How new clips look** | Framing (Full screen / Streamer on top / Split), facecam position (Auto or a corner), the split's background video, topic header, subtitles, logo top right. The Create page starts from these; Auto uses them. |
 | **Tell the AI** | Your instructions for every mode (a video can add its own; the more specific one wins). |
-| **Clip length** | Short min / max (180s at most: YouTube Shorts' limit), long min / max (**your call**, up to an hour; a long over 180s posts to YouTube as a normal video, still vertical), the stretch allowed for setup or payoff, lead-in, room after, how far an edge may move to reach a sentence. |
+| **Clip length** | Short min / max (180s at most: YouTube Shorts' limit), long min / max (**your call**, up to an hour; a long over 180s posts to YouTube as a normal video, still vertical), the **stretch** (how far a clip may run past its max when the content is better for it, e.g. the moment keeps building or a second payoff lands; while Facebook is ticked for shorts, a short stops at 90s so it stays a Facebook Reel), lead-in, room after, how far an edge may move to reach a sentence. |
 | **Sources** | Clip in pieces from (min), live piece length, keep source videos, Instagram max length. |
 | **Researcher (Auto)** | Min / max video length (60 min at most: longer videos are never picked), max age, search country, skip talking heads. |
 | **Background videos** | For the split layout: upload a file or download one from YouTube. One in use can't be deleted. |

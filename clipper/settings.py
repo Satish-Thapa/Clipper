@@ -77,8 +77,10 @@ class Settings(BaseModel):
     short_max: int = Field(_env("SHORT_MAX", 90, int), ge=10, le=SHORT_HARD_MAX, description="Longest short the AI aims for (s).")
     long_min: int = Field(_env("LONG_MIN", 90, int), ge=20, le=LONG_LIMIT, description="Shortest long (s).")
     long_max: int = Field(_env("LONG_MAX", 180, int), ge=30, le=LONG_LIMIT, description="Longest long (s), your call (up to an hour). Over 180s it posts to YouTube as a normal video (still vertical) instead of a Short.")
-    stretch: int = Field(_env("STRETCH_SHORT", 10, int), ge=0, le=60, description="Seconds a clip may run over its "
-                         "max when cutting there would lose the setup or the payoff (a short never past 180s).")
+    stretch: int = Field(_env("STRETCH_SHORT", 20, int), ge=0, le=60, description="Seconds a clip may run over its "
+                         "max when the content is better for it (the moment keeps building, a bigger reaction or a "
+                         "second payoff lands) or cutting there would lose the setup / payoff. A short never goes past "
+                         "180s, and never past 90s while Facebook is ticked for shorts (Facebook Reels are 90s at most).")
     pad_before: float = Field(0.0, ge=0, le=5, description="Lead-in before the first word (s). 0 = the clip starts right "
                               "on the moment.")
     start_fix: bool = Field(False, description="internal: the 0.8s lead-in of older versions was removed once")

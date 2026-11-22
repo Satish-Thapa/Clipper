@@ -51,6 +51,9 @@ gotchas, current state, and what's next.
   steady (no pop/wiggle), the said word yellow; logo small top right; NO text hook in the first 3 seconds; clips start
   right on the moment (no lead-in: `snap` walks back at most 1.5s, `pad_before` 0); everything 4K; when several clips
   compete for slots, the higher virality always wins.
+- **Facebook is the owner's main platform.** Facebook Reels are 90s at most: `pick.hard_max` stops a stretched short at
+  90s while Facebook is ticked for shorts (unless the owner's own short max is longer). The AI may stretch a short 10-20s
+  (Settings `stretch`) when the content is better for it, not only to save a setup / payoff.
 
 ## 3. Environment
 

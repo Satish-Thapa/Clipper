@@ -24,12 +24,18 @@ def limits():
     return {"short": (s.short_min, s.short_max), "long": (s.long_min, s.long_max)}
 
 
+FB_REEL_MAX = 90  # Facebook Reels are 90s at most (longer = a normal Page video): the owner's main platform
+
+
 def hard_max():
-    """How far over the max the AI may go when a moment needs a bit more context (setup / payoff); a short never past
-    180s (YouTube Shorts' limit), a long never past your max + the stretch."""
+    """How far over the max the AI may go (the stretch, Settings): a short never past 180s (YouTube Shorts' limit) and,
+    while Facebook is ticked for shorts, never past 90s (so it still goes up as a Facebook Reel, unless your own short
+    max is already longer); a long never past your max + the stretch."""
     s = settings.get()
-    return {k: min(hi + s.stretch, settings.SHORT_HARD_MAX) if k == "short" else hi + s.stretch
-            for k, (_, hi) in limits().items()}
+    cap = settings.SHORT_HARD_MAX
+    if "facebook" in s.platforms:
+        cap = min(cap, max(FB_REEL_MAX, s.short_max))
+    return {k: min(hi + s.stretch, cap) if k == "short" else hi + s.stretch for k, (_, hi) in limits().items()}
 
 
 # What each kind is for, told to DeepSeek.
@@ -199,8 +205,10 @@ def pick_text(counts):
     return "Pick:\n" + "\n".join(lines) + """
 The max is a ceiling, not a goal: make each clip only as long as the moment needs (a 1-2 min LONG or a
 30s SHORT is great if that tells it fully). Don't pad with filler to reach the max.
-All clips are vertical 9:16. Go over the target max (never past the hard max) ONLY if cutting there would lose
-the setup or the payoff; then start "reason" with "STRETCHED:" and say why.
+All clips are vertical 9:16. You MAY go over the target max (never past the hard max) when the content is better
+for it: the moment keeps building, a bigger reaction or a second payoff lands, or the funniest line comes right after
+the max; or when cutting there would lose the setup or the payoff. A great moment 10-20s longer beats one cut short;
+but never pad a weak moment. Then start "reason" with "STRETCHED:" and say what the extra seconds add.
 Clips of the same kind must not overlap. A SHORT and a LONG MAY reuse the same moment (e.g. a tight short of the
 best moment AND a long with the bigger story around it), but only for the very best moments."""
 
