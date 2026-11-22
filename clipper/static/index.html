@@ -248,6 +248,16 @@ pre.log { background: #141414; border: 1px solid var(--line); border-radius: 6px
 .reel .ra small { font-size: 9px; }
 .reel .info, .reel .ra { transition: opacity .4s; }
 .reel.quiet .info, .reel.quiet .ra { opacity: 0; pointer-events: none; }
+/* upload progress (clip cards, reels) */
+.upprog:empty { display: none; }
+.upprog { display: grid; gap: 6px; margin: 6px 0; }
+.up1 { font-size: 11px; } .up1 .row { justify-content: space-between; gap: 8px; flex-wrap: nowrap; } .up1 .row span { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.upbar { height: 5px; border-radius: 3px; background: rgba(255,255,255,.1); overflow: hidden; margin-top: 3px; }
+.upbar i { display: block; height: 100%; background: var(--blue); transition: width .8s var(--ease); }
+.upbar.busy i { width: 100% !important; background: linear-gradient(90deg, transparent, var(--blue), transparent); background-size: 50% 100%; background-repeat: no-repeat; animation: upbusy 1.4s linear infinite; }
+@keyframes upbusy { from { background-position: -50% 0; } to { background-position: 150% 0; } }
+@media (prefers-reduced-motion: reduce) { .upbar.busy i { animation: none; background: var(--blue); opacity: .5; } }
+.reel .upprog .row span { color: #ddd; }
 /* reels: seek bar (drag to skip parts), always on; it only dims while playing */
 .reel .info, .reel .ra { bottom: 58px; }
 .reel .seek { position: absolute; left: 12px; right: 12px; bottom: 14px; display: flex; align-items: center; gap: 10px; font-size: 12px;
@@ -320,6 +330,7 @@ pre.log { background: #141414; border: 1px solid var(--line); border-radius: 6px
     <a href="#jobs"><svg class="i"><use href="#i-act"/></svg>Jobs<span class="n" id="n-jobs"></span></a>
     <a href="#clips"><svg class="i"><use href="#i-film"/></svg>Clips<span class="n" id="n-clips"></span></a>
     <a href="#slots"><svg class="i"><use href="#i-cal"/></svg>Slots<span class="n" id="n-slots"></span></a>
+    <a href="#cheat"><svg class="i"><use href="#i-link"/></svg>Cheat<span class="n" id="n-cheat"></span></a>
     <a href="#reports"><svg class="i"><use href="#i-chart"/></svg>Reports</a>
     <a href="#socials"><svg class="i"><use href="#i-share"/></svg>Socials</a>
     <a href="#settings"><svg class="i"><use href="#i-set"/></svg>Settings</a>
@@ -443,6 +454,18 @@ pre.log { background: #141414; border: 1px solid var(--line); border-radius: 6px
 </section>
 
 <!-- SLOTS -->
+<section class="page" id="p-cheat">
+  <div class="head"><div><h1>Cheat</h1><p class="sub">Paste reel links from Facebook, Instagram or YouTube. Each one is downloaded at the best quality there is (up to 4K), made into a 4K copy as it is (no cutting, no text added), and put in a free slot. The daily limit still applies.</p></div></div>
+  <div class="card">
+    <label class="f">Links, one per line<textarea id="cheatLinks" rows="6" placeholder="https://www.instagram.com/reel/...&#10;https://www.facebook.com/reel/...&#10;https://youtube.com/shorts/..."></textarea></label>
+    <div class="row" style="margin-top:10px">
+      <label class="f" style="min-width:220px">Slots<select id="cheatFill"><option value="1">Fill free slots today</option><option value="7">Fill free slots this week</option><option value="30">Fill free slots this month</option><option value="0">Don't fill: wait in Clips</option></select></label>
+      <span class="sp"></span><button class="btn" id="cheatGo"><svg class="i"><use href="#i-plus"/></svg>Add to slots</button></div>
+    <p class="small dim" style="margin-top:8px">Up to 3 min = a short (short slots), longer = a long (up to 15 min). The title is the reel's own, with a credit line for its creator: edit it in Clips. Instagram may need you to be logged in (cookies); if a link fails, its reason shows below. Reposting other people's videos can get copyright claims on your accounts.</p>
+  </div>
+  <div class="card"><h2><svg class="i"><use href="#i-act"/></svg>Added links</h2><div id="cheatList"></div></div>
+</section>
+
 <section class="page" id="p-slots">
   <div class="head"><div><h1>Slots</h1><p class="sub">The posting plan for the next 7 days. One slot = one clip. Drag a clip onto another slot to move it (onto a taken one: they swap); shorts go in short slots, longs in long slots. Weekend days get +1 of each.</p></div>
     <a class="btn ghost" href="#settings"><svg class="i"><use href="#i-set"/></svg>Change slots</a></div>
@@ -563,6 +586,7 @@ function render() {
   if (!S) return;
   const running = S.jobs.filter(j => !FINISHED.includes(j.status));
   $("#n-jobs").textContent = running.length || "";
+  $("#n-cheat").textContent = running.filter(j => j.mode === "repost").length || "";
   $("#n-clips").textContent = S.clips.filter(c => c.status === "rendered").length || "";
   $("#n-auto").textContent = S.auto.running ? "run" : "";
   const t = S.today;
@@ -576,9 +600,27 @@ function render() {
   if (page === "jobs") renderJobs();
   if (page === "clips") renderClips();
   if (page === "socials") renderSocials();
+  if (page === "cheat") renderCheat();
   if (page === "auto") loadAuto();
   if (page === "slots" && !dragCid && Date.now() - slotsAt > 15000) loadSlots();
   reelSync();
+  paintProgress();
+}
+// upload progress: patched in place every poll (the clip grid / reels never re-render for it)
+const PHASE = {starting: "starting", preparing: "making its copy", uploading: "uploading", processing: "processing on the platform"};
+function upProg(cid) {
+  const ps = (S.progress || {})[cid]; if (!ps) return "";
+  return Object.entries(ps).map(([p, u]) => {
+    const pct = u.total ? Math.min(100, u.sent / u.total * 100) : 0, t = (u.at || S.now) - (u.up_since || u.at || S.now);
+    const speed = u.phase === "uploading" && t > 2 && u.sent ? u.sent / t : 0, left = speed ? (u.total - u.sent) / speed : 0;
+    const bits = u.phase === "uploading" && u.total ? [`${Math.floor(pct)}%`, `${fsize(u.sent)} / ${fsize(u.total)}`, speed ? `${fsize(speed)}/s` : "", left > 1 ? `~${mmss(left)} left` : ""]
+      : [PHASE[u.phase] || u.phase, `${mmss(Math.max(0, S.now - u.since))}`];
+    return `<div class="up1" title="${esc(PLAT[p] || p)}: ${esc(PHASE[u.phase] || u.phase)}"><div class="row"><b>${esc(PLAT[p] || p)}</b><span>${bits.filter(Boolean).join(" · ")}</span></div>
+      <div class="upbar ${u.phase === "uploading" && u.total ? "" : "busy"}"><i style="width:${u.phase === "processing" ? 100 : pct.toFixed(1)}%"></i></div></div>`;
+  }).join("");
+}
+function paintProgress() {
+  $$("[data-up]").forEach(el => { const h = upProg(+el.dataset.up); if (el._h !== h) { el._h = h; el.innerHTML = h; } });
 }
 function dismissed() { try { return JSON.parse(localStorage.getItem("dismissed") || "[]"); } catch (e) { return []; } }
 function dismiss(m) { try { localStorage.setItem("dismissed", JSON.stringify(dismissed().concat([m]).slice(-50))); } catch (e) {} renderAlerts(); }
@@ -834,8 +876,8 @@ $("#clipTabs").innerHTML = Object.entries(CF).map(([k, [n]]) => `<button data-f=
 $("#clipTabs").onclick = e => { const b = e.target.closest("button"); if (!b) return; cf = b.dataset.f; clipShown = 24; $$("#clipTabs button").forEach(x => x.classList.toggle("on", x === b)); $("#clipGrid").dataset.k = ""; renderClips(); };
 $("#kindF").onchange = $("#sortF").onchange = () => { clipShown = 24; $("#clipGrid").dataset.k = ""; renderClips(); };
 $("#clipSearch").oninput = e => { clearTimeout(window._cs); window._cs = setTimeout(() => { reelQ = e.target.value.trim().toLowerCase(); $("#reelSearch").value = e.target.value; clipShown = 24; $("#clipGrid").dataset.k = ""; renderClips(); }, 250); };
-const fsize = b => b >= 1e9 ? `${(b / 1e9).toFixed(2)} GB` : b >= 1e6 ? `${Math.round(b / 1e6)} MB` : `${Math.max(1, Math.round(b / 1e3))} KB`;
-const ver = c =>encodeURIComponent(`${c.path}|${c.headline || ""}`);
+const fsize = b => !(b > 0) ? "0 MB" : b >= 1e9 ? `${(b / 1e9).toFixed(2)} GB` : b >= 1e6 ? `${Math.round(b / 1e6)} MB` : `${Math.max(1, Math.round(b / 1e3))} KB`;
+const ver = c => encodeURIComponent(`${c.path}|${c.headline || ""}|${(S && S.reset_at) || ""}`);  // reset_at: ids start again after a reset, old cached previews never match
 const clipVideo = (c, attrs) => `<video src="/api/clips/${c.id}/preview?v=${ver(c)}" poster="/api/clips/${c.id}/poster?v=${ver(c)}" preload="none" ${attrs}></video>`;
 const STATUS = {rendered: ["Ready", "g"], scheduled: ["In a slot", "b"], uploading: ["Posting", "b"], rendering: ["Rendering", ""], uploaded: ["Posted", "ok"], "render failed": ["Render failed", "bad"], "upload failed": ["Upload failed", "bad"]};
 const statusChip = c => { const [n, k] = STATUS[c.status] || [c.status, /uploaded/.test(c.status) ? "warn" : ""]; return `<span class="chip ${k}">${esc(n)}</span>`; };
@@ -876,6 +918,7 @@ function clipCard(c, i) {
   return `<div class="clip ${clipSel.has(c.id) ? "picked" : ""}" style="animation-delay:${Math.min(i, 8) * 120}ms"><div class="media">${c.path ? clipVideo(c, "controls playsinline") : `<div class="skel" style="height:100%"></div>`}
       <label class="selbox" title="Select"><input type="checkbox" data-sel="${c.id}" ${clipSel.has(c.id) ? "checked" : ""} onchange="selClip(${c.id}, this.checked)"></label><span class="chip kind ${c.kind === "long" ? "b" : "g"}">${c.kind}</span></div>
     <div class="body"><div class="row">${statusChip(c)}${c.status === "scheduled" && c.post_at ? `<span class="small dim">${when(c.post_at)}</span>` : ""}<span class="small dim">${mmss(c.end - c.start)}${c.size ? ` · <span title="The 4K file's size">${fsize(c.size)}</span>` : ""}</span></div>
+      <div class="upprog" data-up="${c.id}"></div>
       <div class="title">${esc(c.title)}</div>${c.headline ? `<div class="small" style="color:var(--yellow)">${esc(c.headline)}</div>` : ""}
       ${clipFacts(c)}
       ${ups.length ? `<div class="row small">${ups.map(([p, u]) => `<a href="${esc(u.url)}" target="_blank" rel="noopener">${PLAT[p] || p}${views[p] != null ? ` · ${num(views[p])} views` : ""}</a>`).join("")}</div>` : ""}
@@ -990,6 +1033,7 @@ const reelFind = c => !reelQ || [c.title, c.headline, c.reason, c.description, J
 function reelInfo(c) {
   const ups = Object.entries(J(c.uploads, {})).filter(([, u]) => u.id), views = J(c.views, {});
   return `<div class="row">${statusChip(c)}<span class="chip">${c.kind} · ${mmss(c.end - c.start)}${c.size ? ` · ${fsize(c.size)}` : ""}</span></div>
+    <div class="upprog" data-up="${c.id}"></div>
     <div class="rt">${esc(c.title)}</div>${c.headline ? `<div class="rh">${esc(c.headline)}</div>` : ""}
     ${clipFacts(c)}
     ${c.status === "scheduled" && c.post_at ? `<div class="small">Posts ${when(c.post_at)}</div>` : ""}
@@ -1079,6 +1123,11 @@ document.addEventListener("keydown", e => {
 // Only clips already in the schedule are dragged: from one slot onto another of the same kind (it moves; onto a
 // taken one: they swap). A passed slot never takes a clip. On a phone: the Move button.
 let slotsAt = 0, slotDays = [], dragCid = null, dragKind = null;
+function clearDay(day, name) {
+  const now = Date.now() / 1000, n = (slotDays.find(d => d.day === day)?.slots || []).filter(x => x.state === "scheduled" && x.at > now + 60).length;
+  confirmDo(`Clear ${name}'s slots? ${n} clip(s) go back to Clips (the ones already posted stay). Auto or a finishing job may fill the free slots again.`,
+    () => api("POST", "/api/slots/clear", {day}), r => (loadSlots(), `${r.cleared.length} clip(s) back in Clips`));
+}
 async function loadSlots() {
   slotsAt = Date.now();
   slotDays = await api("GET", "/api/slots?days=7").catch(e => (toast(e.message, true), []));
@@ -1088,7 +1137,8 @@ async function loadSlots() {
   $("#slotPlats").innerHTML = plats("Shorts", "platforms") + plats("Longs", "long_platforms");
   $("#slotDays").innerHTML = slotDays.map((d, i) => `<div class="day">
     <div class="day-h"><b>${i === 0 ? "Today" : i === 1 ? "Tomorrow" : esc(d.weekday)}</b><span class="dim small">${new Date(d.day + "T12:00").toLocaleDateString("en-US", {weekday: "short", day: "numeric", month: "short"})}</span>${d.weekend ? `<span class="chip b">weekend +1</span>` : ""}<span class="sp"></span>
-      <span class="chip">${d.used.short}/${d.limit.short} shorts</span><span class="chip">${d.used.long}/${d.limit.long} longs</span></div>
+      <span class="chip">${d.used.short}/${d.limit.short} shorts</span><span class="chip">${d.used.long}/${d.limit.long} longs</span>
+      ${d.slots.some(x => x.state === "scheduled" && x.at > now + 60) ? `<button class="btn plain sm" title="Take every clip off this day's slots still ahead (they go back to Clips; posted ones stay)" onclick="clearDay('${d.day}', '${i === 0 ? "today" : i === 1 ? "tomorrow" : esc(d.weekday)}')">${ico("x")}Clear</button>` : ""}</div>
     ${d.slots.length ? d.slots.map(x => { const open = x.at > now + 60 && ["free", "scheduled"].includes(x.state), c = x.clip;
       return `<div class="slot ${open ? "drop" : ""}" data-at="${x.at}" data-kind="${x.kind}" ${open && c && x.state === "scheduled" ? `draggable="true" data-cid="${c.id}"` : ""}>
       <span class="t">${esc(t12(x.time))}</span><span class="chip ${x.kind === "long" ? "b" : "g"}">${x.kind}${x.extra ? " +1" : ""}</span>
@@ -1228,6 +1278,37 @@ function lineChart(pts, col) {
 }
 async function refreshReports(btn) { await act(btn, () => api("POST", "/api/reports/refresh"), "Fetching every number (a minute or two)"); setTimeout(loadReports, 20000); }
 
+// ---------- cheat (repost reels as they are) ----------
+$("#cheatGo").onclick = async e => {
+  const links = $("#cheatLinks").value.split(/\s+/).map(x => x.trim()).filter(Boolean);
+  if (!links.length) return toast("Paste at least one link", true);
+  const r = await act(e.target, () => api("POST", "/api/reposts", {links, fill: +$("#cheatFill").value}),
+    x => `${x.started.length} link(s) added${x.skipped.length ? `, ${x.skipped.length} skipped` : ""}`);
+  if (r) { $("#cheatLinks").value = r.skipped.map(s => s.link).join("\n");
+    r.skipped.forEach(s => toast(`${s.link.slice(0, 50)}: ${s.why}`, true)); }
+};
+const CHEAT_ST = {queued: "waiting", "fetching info": "reading the link", downloading: "downloading", rendering: "making the 4K copy",
+                  done: "done", failed: "failed", stopped: "stopped", interrupted: "interrupted"};
+function renderCheat() {
+  const jobs = S.jobs.filter(j => j.mode === "repost");
+  const key = JSON.stringify(jobs.map(j => [j.id, j.status, j.title]).concat(S.clips.filter(c => J(c.why, {}).by === "repost").map(c => [c.id, c.status, c.post_at, c.uploads, c.title])));
+  if ($("#cheatList").dataset.k === key) return; $("#cheatList").dataset.k = key;
+  if (!jobs.length) { $("#cheatList").innerHTML = `<p class="dim small">Nothing yet: paste links above.</p>`; return; }
+  $("#cheatList").innerHTML = jobs.slice(0, 60).map(j => {
+    const c = S.clips.find(x => x.job_id === j.id), run = !FINISHED.includes(j.status);
+    const err = j.status === "failed" ? ((j.log || "").split("\n").reverse().find(l => /ERROR:/.test(l)) || "").replace(/^.*?ERROR:\s*/, "") : "";
+    return `<div class="slot" style="align-items:center">
+      ${c && c.path ? `<img loading="lazy" src="/api/clips/${c.id}/poster?v=${ver(c)}" alt="" style="width:40px;height:70px;object-fit:cover;border-radius:4px">` : `<span class="t">${ico(run ? "refresh" : j.status === "failed" ? "alert" : "link")}</span>`}
+      <div class="what" style="display:block;min-width:0"><div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(j.title || j.url)}</div>
+        <div class="small dim" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><a href="${esc(j.url)}" target="_blank" rel="noopener">${esc(j.url)}</a></div>
+        ${err ? `<div class="small" style="color:var(--bad)">${esc(err.slice(0, 220))}</div>` : ""}</div>
+      ${c ? `${statusChip(c)}${c.status === "scheduled" && c.post_at ? `<span class="small dim">${when(c.post_at)}</span>` : ""}${c.path ? `<button class="btn plain sm" title="Watch" onclick="openReels(${c.id})">${ico("play")}</button>` : ""}`
+          : `<span class="chip ${j.status === "failed" ? "bad" : run ? "b" : ""}">${esc(CHEAT_ST[j.status] || j.status)}</span>`}
+      ${j.status === "failed" && !/retried as job #/.test(j.log || "") ? `<button class="btn ghost sm" onclick="act(this, () => api('POST','/api/jobs/${j.id}/retry'), r => 'Retrying as job #' + r.id)">${ico("refresh")}Retry</button>` : ""}
+    </div>`;
+  }).join("");
+}
+
 // ---------- socials ----------
 function renderSocials() {
   if ($("#p-socials").contains(document.activeElement) && document.activeElement.matches("input")) return;
@@ -1286,9 +1367,33 @@ async function loadSettings(quiet) {
     `<div class="card" id="saveBar" style="position:sticky;bottom:12px;z-index:50"><div class="err" id="setErr"></div><div class="row"><span class="small dim" id="dirtyTxt">No changes.</span><span class="sp"></span><button class="btn plain" onclick="loadSettings()">Undo</button><button class="btn" onclick="saveSettings(this)">${ico("check")}Save settings</button></div></div>` +
     `<div class="card"><h2>${ico("film")} Background videos (split layout)${tip("Play muted under the clip in the split layout. Upload a file or download one from YouTube.")}</h2><div id="fillers"></div><div class="row" style="margin-top:10px"><label class="btn ghost sm">${ico("up")}Upload a video<input type="file" accept="video/*" hidden onchange="addFiller(this)"></label><input id="fillUrl" placeholder="or a YouTube link" style="flex:1;min-width:200px"><button class="btn ghost sm" onclick="fillerYT(this)">Download</button></div></div>` +
     `<div class="card" id="aiCard"><h2>${ico("bot")} AI models</h2><div class="skel" style="height:100px"></div></div>` +
-    `<div class="card"><h2>${ico("info")} News & facts</h2><p class="dim small">Switched off for now (the code is kept for later).</p></div>`;
+    `<div class="card"><h2>${ico("info")} News & facts</h2><p class="dim small">Switched off for now (the code is kept for later).</p></div>` +
+    `<div class="card" style="border-color:rgba(255,90,95,.45)"><h2>${ico("trash")} Reset${tip("Erases everything Clipper made: jobs and their downloaded videos, Auto's runs, reports, numbers, logs, and the clips unless you keep them. Kept: the background videos, logins (.env, YouTube / TikTok, cookies) and today's upload count, so the daily limit still holds.")}</h2>
+      <p class="small dim" style="margin-top:-6px">Start fresh. Background videos and logins always stay. Posted copies stay online on the platforms.</p>
+      <div class="row"><button class="btn danger sm" onclick="resetAll()">${ico("trash")}Reset everything…</button></div></div>`;
   loadFillers(); loadAi();
   return SET;
+}
+async function resetAll() {
+  openModal(`<h2>${ico("trash")} Reset everything</h2><div class="skel" style="height:120px"></div>`);
+  const r = await api("GET", "/api/reset").catch(e => (toast(e.message, true), null)); if (!r) return closeModal();
+  $("#modalBox").innerHTML = `<h2>${ico("trash")} Reset everything</h2>
+    ${r.busy ? `<div class="errbox"><div>${esc(r.busy)}</div></div>` : ""}
+    <p class="small">This erases <b>${r.jobs} job(s)</b> and their downloaded videos, Auto's runs, reports, numbers, logs and AI prompts (${fsize(r.bytes)} on disk). It can't be undone.</p>
+    <p class="small dim">Always kept: ${r.fillers} background video(s), your logins (.env, YouTube / TikTok, cookies), and today's upload count (the daily limit still holds). Clips already posted stay online.</p>
+    <div class="stack" style="margin-top:10px">
+      <div class="f"><b class="small">Remove the clips too? (${r.clips} clip(s), ${fsize(r.clip_bytes)})</b>
+        <label class="check"><input type="radio" name="rsClips" id="rsKeep" checked> No, keep them: their videos, titles, slots and numbers stay</label>
+        <label class="check"><input type="radio" name="rsClips"> Yes, remove them too</label></div>
+      <label class="check"><input type="checkbox" id="rsSet"> Also put Settings back to the defaults (slot times, platforms, AI, Auto topics)</label>
+      <label class="f">Type RESET to confirm<input id="rsConfirm" autocomplete="off" placeholder="RESET"></label></div>
+    <div class="row end" style="margin-top:14px"><button class="btn plain" onclick="closeModal()">Cancel</button><button class="btn danger" id="rsGo" ${r.busy ? "disabled" : ""}>${ico("trash")}Reset</button></div>`;
+  $("#rsGo").onclick = async e => {
+    const body = {keep_clips: $("#rsKeep").checked, reset_settings: $("#rsSet").checked, confirm: $("#rsConfirm").value.trim()};
+    if (body.confirm !== "RESET") return toast("Type RESET to confirm", true);
+    const res = await act(e.target, () => api("POST", "/api/reset", body), x => x.clips_kept ? `Reset done: ${x.clips_kept} clip(s) kept` : "Reset done: everything erased");
+    if (res) { closeModal(); SET = null; await refresh(); loadSettings(); }
+  };
 }
 function dirty(el) { const k = el.dataset.k; let v = el.type === "checkbox" ? el.checked : el.type === "number" ? +el.value : el.value; if (k === "search_region") v = v.toUpperCase(); setDirty[k] = v; showDirty(); }
 function showDirty() { const n = Object.keys(setDirty).length; $("#dirtyTxt").textContent = n ? `${n} unsaved change(s): ${Object.keys(setDirty).map(k => LABEL[k] || k).join(", ")}` : "No changes."; }

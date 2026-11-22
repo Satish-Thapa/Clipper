@@ -2,8 +2,10 @@
 plain message (HTTP 400 / 404 / 409) the page shows as it is."""
 import json
 import re
+import shutil
 import threading
 import time
+from datetime import date
 from pathlib import Path
 from typing import Literal
 
@@ -108,6 +110,44 @@ def create_job(j: NewJob):
                     max_chunks=j.max_chunks if j.mode == "live" else 0, created=time.time())
     worker.start(jid)
     return {"id": jid}
+
+
+# ---------- Cheat page: repost reels as they are ----------
+
+REEL_LINK = re.compile(r"^https?://([\w-]+\.)*(facebook\.com|fb\.watch|instagram\.com|youtube\.com|youtu\.be)/\S+$", re.I)
+
+
+class RepostIn(BaseModel):
+    links: list[str] = Field(min_length=1, max_length=50)
+    fill: int = 1  # 0 = wait in Clips, 1 = today's free slots, 7 = this week, 30 = this month
+
+
+@app.post("/api/reposts")
+def create_reposts(b: RepostIn):
+    """One job per link (Facebook / Instagram / YouTube): downloaded at the best quality up to 4K, a 4K copy made as it
+    is, then it takes a free slot (the daily limit still applies). Bad or duplicate links are skipped and named."""
+    if b.fill not in (0, 1, 7, 30):
+        _bad(400, "fill is 0 (off), 1 (today), 7 (this week) or 30 (this month)")
+    started, skipped, seen = [], [], set()
+    for raw in b.links:
+        url = raw.strip()
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        if not REEL_LINK.match(url):
+            skipped.append({"link": url[:200], "why": "not a Facebook / Instagram / YouTube link"})
+            continue
+        busy = [x for x in db.all("jobs", "url=? AND mode='repost'", (url,)) if x["status"] not in worker.FINISHED]
+        if busy:
+            skipped.append({"link": url[:200], "why": f"already being fetched (job #{busy[0]['id']})"})
+            continue
+        jid = db.insert("jobs", url=url, mode="repost", shorts=1, longs=0, layout="", header=0, subtitles=0, notes="",
+                        fill=b.fill, auto_upload=0, created=time.time())
+        worker.start(jid)
+        started.append(jid)
+    if not started and not skipped:
+        _bad(400, "paste at least one link")
+    return {"started": started, "skipped": skipped}
 
 
 @app.post("/api/jobs/file")
@@ -251,11 +291,12 @@ def state():
     today = quota.calendar(1)[0]
     return {"jobs": db.all("jobs"), "clips": [{**c, "size": _size(c)} for c in db.all("clips")],
             "platforms": social.connected(), "ai": ai.balance(),
-            "uploads": social.upload_status(), "limit_timers": social.limit_timers(),
+            "uploads": social.upload_status(), "progress": social.progress(), "limit_timers": social.limit_timers(),
             "youtube_cookies": download.cookies_state(), "youtube_scopes": upload.granted() if upload.connected() else {},
             "today": today, "auto": {"enabled": s.auto_enabled, "running": autopilot.LOCK.locked(),
                                      "stage": autopilot.STAGE[0]},
-            "post_to": {"short": s.platforms, "long": s.long_platforms}, "ig_max_seconds": s.ig_max_seconds, "now": time.time()}
+            "post_to": {"short": s.platforms, "long": s.long_platforms}, "ig_max_seconds": s.ig_max_seconds, "now": time.time(),
+            "reset_at": db.get_setting("reset_at") or ""}
 
 
 # ---------- clips ----------
@@ -464,6 +505,20 @@ def clear_errors(cid: int):
 
 # ---------- slots ----------
 
+class DayIn(BaseModel):
+    day: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+
+@app.post("/api/slots/clear")
+def clear_slots(b: DayIn):
+    """Every clip in that day's slots still ahead goes back to Clips (posted ones stay)."""
+    try:
+        day = date.fromisoformat(b.day)
+    except ValueError:
+        _bad(400, "not a date")
+    return {"cleared": quota.clear_day(day)}
+
+
 @app.get("/api/slots")
 def slots(days: int = Query(7, ge=1, le=31)):
     """Every slot from today on, with its clip and state (free / scheduled / posted / missed, kept for Auto)."""
@@ -630,6 +685,112 @@ def youtube_connect():
     except Exception as e:
         _bad(400, str(e))
     return {"ok": True, "scopes": upload.granted()}
+
+
+# ---------- reset (Settings → Reset) ----------
+
+# Settings-DB keys that are your setup (kept unless "reset settings" is ticked) / logins (always kept).
+SETUP_KEYS = ("app", "auto", "ai_model", "ai_order", "pc_model")
+LOGIN_KEYS = ("yt_cookie_set", "yt_bot_check", "yt_channel")
+DATA_TABLES = ("jobs", "topics", "auto_rounds", "stats_daily", "reports", "news", "news_runs")
+
+
+class ResetIn(BaseModel):
+    keep_clips: bool = True  # the clips stay unless you choose to remove them
+    reset_settings: bool = False
+    confirm: str = ""  # must be "RESET"
+
+
+def _busy():
+    """Why a reset can't run right now ('' when it can)."""
+    run = [j["id"] for j in db.all("jobs") if j["status"] not in worker.FINISHED]
+    if run:
+        return f"job #{run[0]} is still running: stop it first (Jobs → Stop all)"
+    up = [c["id"] for c in db.all("clips") if c["status"] in ("rendering", "uploading")]
+    if up:
+        return f"clip #{up[0]} is {db.get('clips', up[0])['status']}: wait for it to finish"
+    if autopilot.LOCK.locked():
+        return "Auto is researching right now: wait for it to finish"
+    return ""
+
+
+def _keep_clip(c, jobs):
+    """Move a kept clip's files into data/jobs/0 (job ids start again from 1 after a reset) and keep the bits of its
+    job that a header edit needs (framing, subtitles, the source's name) in its `why`."""
+    keep = DATA / "jobs" / "0"
+    (keep / "clips").mkdir(parents=True, exist_ok=True)
+    (keep / "previews").mkdir(parents=True, exist_ok=True)
+    j, why = jobs.get(c["job_id"]) or {}, json.loads(c.get("why") or "{}")
+    why.setdefault("layout", j.get("layout") or "")
+    why.setdefault("subtitles", j.get("subtitles", 1))
+    if j.get("title"):
+        why.setdefault("source", j["title"])
+    path = c.get("path") or ""
+    if path and (DATA / path).exists():
+        mp4 = DATA / path
+        for f in (mp4, mp4.with_suffix(".ass"), mp4.with_name(f"{mp4.stem}_master.mp4"), mp4.with_name(f"{mp4.stem}_words.json")):
+            if f.exists():
+                f.replace(keep / "clips" / f.name)
+        path = f"jobs/0/clips/{mp4.name}"
+    prev = DATA / "jobs" / str(c["job_id"]) / "previews"
+    for f in (prev / f"{c['id']}.mp4", prev / f"{c['id']}.jpg"):
+        if f.exists():
+            f.replace(keep / "previews" / f.name)
+    db.update("clips", c["id"], job_id=0, path=path, why=json.dumps(why))
+
+
+@app.post("/api/reset")
+def reset(b: ResetIn):
+    """Erase everything Clipper made: jobs, their videos, Auto's runs, reports, numbers, logs (and the clips, unless
+    keep_clips). Always kept: the background videos (data/fillers), logins (.env, YouTube / TikTok tokens, cookies),
+    the platforms' own limit timers, and today's upload count (so the daily limit still holds after the reset)."""
+    if b.confirm != "RESET":
+        _bad(400, "type RESET to confirm")
+    why = _busy()
+    if why:
+        _bad(409, why)
+    today = date.today()
+    if not b.keep_clips:  # the clips posted today go away: remember how many, the daily limit still counts them
+        quota.carry_posted(today)
+    clips = db.all("clips")
+    if b.keep_clips:
+        jobs = {j["id"]: j for j in db.all("jobs")}
+        for c in clips:
+            _keep_clip(c, jobs)
+    with db.conn() as con:
+        for t in DATA_TABLES + (() if b.keep_clips else ("clips",)):
+            con.execute(f"DELETE FROM {t}")
+        keep = LOGIN_KEYS + ("posted_carry",) + (() if b.reset_settings else SETUP_KEYS)
+        con.execute(f"DELETE FROM settings WHERE key NOT IN ({','.join('?' * len(keep))})", keep)
+    for d in (DATA / "jobs").glob("*"):
+        if not (b.keep_clips and d.name == "0"):
+            shutil.rmtree(d, ignore_errors=True) if d.is_dir() else d.unlink(missing_ok=True)
+    logs = DATA / "logs"
+    shutil.rmtree(logs / "prompts", ignore_errors=True)
+    for f in logs.glob("*"):
+        if f.is_file():
+            try:
+                f.write_text("")  # the open log file can't be deleted on Windows: emptied instead
+            except OSError:
+                pass
+    settings.reset_cache()
+    with db.conn() as con:
+        con.execute("VACUUM")
+    db.set_setting("reset_at", str(time.time()))
+    db.syslog(f"RESET by you: everything erased{', clips kept' if b.keep_clips else ', clips too'}"
+              f"{', settings back to defaults' if b.reset_settings else ''} (background videos and logins kept)")
+    return {"ok": True, "clips_kept": len(clips) if b.keep_clips else 0}
+
+
+@app.get("/api/reset")
+def reset_info():
+    """What a reset would erase, for the confirm box."""
+    jobs = DATA / "jobs"
+    size = sum(f.stat().st_size for f in jobs.rglob("*") if f.is_file()) if jobs.exists() else 0
+    clip_size = sum(_size(c) for c in db.all("clips"))
+    fillers = [f.name for f in FILLERS.glob("*") if f.is_file()] if FILLERS.exists() else []
+    return {"jobs": len(db.all("jobs")), "clips": len(db.all("clips")), "bytes": size, "clip_bytes": clip_size,
+            "fillers": len(fillers), "busy": _busy()}
 
 
 # ---------- logs ----------

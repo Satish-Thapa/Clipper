@@ -74,13 +74,38 @@ def posted_ok(c):
 
 
 def posted(day, kind, platform, clips=None):
-    """How many clips of `kind` went up to `platform` on `day` (by the time of the successful upload)."""
+    """How many clips of `kind` went up to `platform` on `day` (by the time of the successful upload), plus the ones
+    a reset deleted that day (carry_posted): erasing clips never frees today's limit."""
     n = 0
     for c in clips if clips is not None else db.all("clips"):
         u = _ups(c).get(platform) or {}
         if kind_of(c) == kind and u.get("id") and u.get("at") and day_of(u["at"]) == day:
             n += 1
-    return n
+    return n + _carried(day).get(platform, {}).get(kind, 0)
+
+
+def _carried(day):
+    raw = db.get_setting("posted_carry")
+    st = json.loads(raw) if raw else {}
+    return st.get("n", {}) if st.get("day") == day.isoformat() else {}
+
+
+def carry_posted(day):
+    """Before a reset deletes the clips: remember how many went up today per platform and kind."""
+    n = {p: {k: posted(day, k, p) for k in ("short", "long")} for p in ("youtube", "facebook", "instagram", "tiktok")}
+    db.set_setting("posted_carry", json.dumps({"day": day.isoformat(), "n": n}))
+
+
+def clear_day(day, now=None):
+    """Take every clip off its slot on `day` (slots still ahead only; the ones already posted stay). -> clip ids."""
+    now = now or time.time()
+    out = []
+    with _LOCK:
+        for c in db.all("clips", "status='scheduled'"):
+            if c.get("post_at") and c["post_at"] > now and day_of(c["post_at"]) == day:
+                unassign(c["id"], "taken off its slot (day cleared)")
+                out.append(c["id"])
+    return out
 
 
 def holder(slot, clips):

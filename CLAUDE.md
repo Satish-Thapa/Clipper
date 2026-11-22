@@ -109,7 +109,7 @@ data/ (gitignored)  clipper.db, jobs/<id>/ (source, live_*.ts, clips/<cid>.mp4 +
 `step`, `syslog`, `here`, `log_to`. On startup: unfinished jobs -> interrupted, `uploading` clips -> rendered,
 `rendering` clips -> rendered (has file) or render failed.
 
-**Job columns that matter:** `mode` (normal / live / auto), `url` (YouTube or `file:<name>`), `shorts`, `longs`,
+**Job columns that matter:** `mode` (normal / live / auto / repost), `url` (YouTube or `file:<name>`), `shorts`, `longs`,
 `layout` ("" | `cam:top:<auto|tl|tr|bl|br>` | `split:<file>`), `header`, `subtitles`, `fill` (days of free slots to fill:
 0 off, 1 today, 7 this week, 30 this month),
 `notes`, `category`, `auto_row`, `topic_id`, `chunk_minutes`, `max_chunks`. (`hq`, `style`, `aspect`, `follow`,
@@ -134,6 +134,12 @@ scream_hook, opening, closing, piece), `status`, `path`, `uploads` (JSON per pla
   → returns clip ids. `_render_one`: `render.cut` → `keep_master` → previews (mp4 + jpg) → `rendered`.
 - After a job / piece: `_fill` (only when `jobs.fill`): `quota.fill(days=jobs.fill)` gives its best clips (by virality)
   the earliest free slots of the next N days.
+- Cheat page (`mode=repost`, `POST /api/reposts`): `worker._repost` downloads a FB / IG / YouTube reel (best up to
+  4K), `_to_4k` fits it into 2160x3840 / 3840x2160 as it is (no cut, no text), one clip (virality 90, AI title, credit line), `_fill`.
+- Reset (`POST /api/reset`, Settings): erases jobs, files, Auto runs, reports, stats, logs (+ clips unless kept: kept
+  ones move to `data/jobs/0`, their layout/subtitles copied into `why`). Keeps fillers, logins, `limit_hits`, and
+  today's upload count (`quota.carry_posted` -> setting `posted_carry`, added in `quota.posted`: the limit holds).
+- Upload progress: `social.track/_prog/untrack` (thread-local, per clip + platform) -> `/api/state.progress`.
 - `upload_clip(cid, platforms=None, force=False, bypass=False)`: default platforms = `settings.platforms_for(kind)`;
   every platform passes `quota.can_post` unless `bypass` (Force upload); platform limit timers skipped unless force;
   Instagram over `ig_max_seconds` skipped unless force; nothing up anywhere → `post_at` cleared.

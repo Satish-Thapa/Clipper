@@ -2,6 +2,7 @@
 Credentials live in .env (see README "Facebook / Instagram / TikTok setup"); YouTube uses its own OAuth (upload.py)."""
 import json
 import re
+import threading
 import time
 
 import httpx
@@ -132,6 +133,67 @@ def connected():
             "tiktok": bool(TIKTOK_CLIENT_KEY and TIKTOK_CLIENT_SECRET and (TIKTOK_TOKEN.exists() or TIKTOK_REFRESH_TOKEN))}
 
 
+# ---------- upload progress (the Clips page / reels show it while a clip is uploading) ----------
+# worker.upload_clip runs each platform's upload in its own thread: track(cid, platform) marks the thread, and the
+# upload code reports bytes sent / the step it's on with _prog(). PROGRESS[cid][platform] = {phase, sent, total, ...}.
+PROGRESS, _cur, _plock = {}, threading.local(), threading.Lock()
+
+
+def track(cid, platform):
+    _cur.key = (cid, platform)
+    with _plock:
+        PROGRESS.setdefault(cid, {})[platform] = {"phase": "starting", "sent": 0, "total": 0, "since": time.time(),
+                                                  "at": time.time()}
+
+
+def untrack(cid, platform):
+    _cur.key = None
+    with _plock:
+        PROGRESS.get(cid, {}).pop(platform, None)
+        if not PROGRESS.get(cid):
+            PROGRESS.pop(cid, None)
+
+
+def _prog(phase=None, sent=None, total=None):
+    """phase: 'preparing' (making the copy that platform needs), 'uploading', 'processing' (the platform's side)."""
+    key = getattr(_cur, "key", None)
+    if not key:
+        return
+    with _plock:
+        p = PROGRESS.get(key[0], {}).get(key[1])
+        if p is None:
+            return
+        if phase and phase != p["phase"]:
+            p.update(phase=phase, since=time.time())
+            if phase == "uploading":
+                p["up_since"] = time.time()
+        if total is not None:
+            p["total"] = total
+        if sent is not None:
+            p["sent"] = sent
+        p["at"] = time.time()
+
+
+def progress():
+    """A copy for /api/state: {cid: {platform: {phase, sent, total, since, up_since, at}}}."""
+    with _plock:
+        return {cid: {p: dict(v) for p, v in ps.items()} for cid, ps in PROGRESS.items()}
+
+
+def _stream(f, start, length, base=0, total=None, piece=1 << 20):
+    """The bytes [start, start+length) of an open file, 1 MB at a time, reporting progress (sent counts from base)."""
+    total = total or length
+    f.seek(start)
+    done = 0
+    while done < length:
+        b = f.read(min(piece, length - done))
+        if not b:
+            break
+        done += len(b)
+        _prog("uploading", base + done, total)
+        yield b
+
+
 def upload(platform, path, title, description, tags, seconds, caption=None):
     """caption: the exact caption to post (campaign clips: built to the brand's rules), as is, no hashtags added."""
     if not connected().get(platform):
@@ -202,10 +264,15 @@ def _ok(r):
 
 
 def _rupload(url, token, path):
-    """Meta's resumable upload host: whole file in one POST."""
-    data = path.read_bytes()
-    return _ok(httpx.post(url, content=data, timeout=TIMEOUT,
-                          headers={"Authorization": f"OAuth {token}", "offset": "0", "file_size": str(len(data))}))
+    """Meta's resumable upload host: whole file in one POST (streamed, so the progress shows)."""
+    size = path.stat().st_size
+    _prog("uploading", 0, size)
+    with open(path, "rb") as f:
+        r = _ok(httpx.post(url, content=_stream(f, 0, size), timeout=TIMEOUT,
+                           headers={"Authorization": f"OAuth {token}", "offset": "0", "file_size": str(size),
+                                    "Content-Length": str(size)}))
+    _prog("processing")
+    return r
 
 
 def _fb_chunked(path, title, caption):
@@ -217,8 +284,10 @@ def _fb_chunked(path, title, caption):
     s = _ok(httpx.post(url, timeout=TIMEOUT, data={"upload_phase": "start", "file_size": str(size),
                                                    "access_token": FB_PAGE_TOKEN}))
     sid, vid, start, end = s["upload_session_id"], s["video_id"], int(s["start_offset"]), int(s["end_offset"])
+    _prog("uploading", 0, size)
     with open(path, "rb") as f:
         while start < end:
+            _prog("uploading", start, size)
             f.seek(start)
             chunk, tries = f.read(end - start), 0
             while True:
@@ -233,6 +302,7 @@ def _fb_chunked(path, title, caption):
                         raise
                     time.sleep(5 * tries)
             start, end = int(r["start_offset"]), int(r["end_offset"])
+    _prog("processing", size, size)
     _ok(httpx.post(url, timeout=TIMEOUT, data={"upload_phase": "finish", "upload_session_id": sid, "title": title[:255],
                                                "description": caption, "access_token": FB_PAGE_TOKEN}))
     return vid
@@ -267,6 +337,7 @@ def _instagram(path, title, caption, seconds):
     from .config import IG_BITRATE, IG_MAX_MBPS
     # Instagram rejects Reels over 25 Mbps or wider than 1920px: the 4K clip goes as a 1080x1920 copy
     if render.bitrate_mbps(path) > IG_MAX_MBPS or render.width_of(path) > 1080:
+        _prog("preparing")
         path = render.reencode(path, Path(path).with_name(Path(path).stem + "_ig.mp4"), IG_BITRATE, 1080)
     c = _ok(httpx.post(f"{GRAPH}/{IG_USER_ID}/media", timeout=TIMEOUT,
                        data={"media_type": "REELS", "upload_type": "resumable", "caption": caption[:2200],
@@ -322,14 +393,16 @@ def tiktok(path, title, caption, seconds):
     d = _tiktok_api("/post/publish/video/init/", token, {
         "post_info": {"title": caption[:2200], "privacy_level": privacy},
         "source_info": {"source": "FILE_UPLOAD", "video_size": size, "chunk_size": chunk, "total_chunk_count": count}})
+    _prog("uploading", 0, size)
     with open(path, "rb") as f:
         for i in range(count):
             a = i * chunk
             b = size - 1 if i == count - 1 else a + chunk - 1
-            f.seek(a)
-            r = httpx.put(d["upload_url"], content=f.read(b - a + 1), timeout=TIMEOUT,
-                          headers={"Content-Type": "video/mp4", "Content-Range": f"bytes {a}-{b}/{size}"})
+            r = httpx.put(d["upload_url"], content=_stream(f, a, b - a + 1, base=a, total=size), timeout=TIMEOUT,
+                          headers={"Content-Type": "video/mp4", "Content-Range": f"bytes {a}-{b}/{size}",
+                                   "Content-Length": str(b - a + 1)})
             if r.is_error:
                 raise RuntimeError(f"tiktok upload chunk {i}: HTTP {r.status_code} {r.text[:200]}")
+    _prog("processing", size, size)
     # TikTok has no post URL until it finishes processing; the publish_id is what its API tracks.
     return {"id": d["publish_id"], "url": "https://www.tiktok.com/tiktokstudio/content"}

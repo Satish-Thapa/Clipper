@@ -329,6 +329,40 @@ def learned_note():
             "decides):\n" + t + "\n") if t else ""
 
 
+REPOST_SYSTEM = """You write the title for a short vertical video (a Reel / Short / TikTok) that a US channel posts
+again. You get the original post's title / caption, its creator and its length. Write a NEW title for YouTube Shorts,
+Facebook Reels and Instagram, in English, for a US audience:
+- 40-70 characters, a hook that makes people stop scrolling, about what actually happens (only what the caption
+  says or clearly implies: never invent events, names or results).
+- Put the searchable keyword (game, show, sport or topic name, e.g. "GTA 6") in it naturally.
+- Name the creator ONLY when it's a big individual creator people search for (e.g. IShowSpeed, Kai Cenat, MrBeast):
+  never a small channel, a clip page, a podcast or show name.
+- No hashtags and no emoji in the title, no ALL CAPS sentences (one CAPS word for emphasis is fine), no clickbait lies.
+Also: up to 5 hashtags (no #, no spaces, specific: game / topic / creator) and a one-line description (a sentence
+that adds to the title, no hashtags).
+Answer JSON only: {"title": "...", "description": "...", "hashtags": ["..."]}"""
+
+
+def repost_title(title, caption, creator, seconds):
+    """Cheat page: the AI's title / description / hashtags for a reposted reel, from its original title and caption.
+    -> dict (empty when every AI fails: the caller keeps the original title)."""
+    from . import ai
+    task = (f"Original title: {(title or '').strip()[:300] or '(none)'}\n"
+            f"Original caption: {(caption or '').strip()[:1200] or '(none)'}\n"
+            f"Creator: {creator or '(unknown)'}\nLength: {seconds:.0f} seconds")
+    try:
+        a = ai.ask(task, REPOST_SYSTEM, "repost", full=True)
+    except Exception:
+        return {}
+    t = re.sub(r"[\U0001F000-\U0001FAFF☀-➿️‍]", "", str(a.get("title") or ""))  # no emoji
+    t = " ".join(t.replace("#", "").split())[:100]
+    if len(t) < 8:
+        return {}
+    tags = [re.sub(r"\W", "", str(h)) for h in a.get("hashtags") or []]
+    return {"title": t, "description": " ".join(str(a.get("description") or "").split())[:500],
+            "hashtags": [h for h in tags if h][:5]}
+
+
 def headline_for(headline, title):
     """The yellow headline: the AI's (3-6 words asked, hard cap 6), or, when it gave none, the title's first words."""
     words = str(headline or "").split() or re.sub(r"[^\w\s'!?&-]", " ", str(title or "")).split()

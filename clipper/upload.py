@@ -43,8 +43,10 @@ def upload(path, title, description, tags, short, privacy="public"):
         description = f"{description}\n\n#Shorts".strip()
     if tags:
         description += "\n" + " ".join(f"#{t}" for t in tags[:5])
+    from . import social  # here, not at the top: social imports this module
     yt = build("youtube", "v3", credentials=_creds(), cache_discovery=False)
     try:  # a 1440p copy: YouTube gives it the better encode (sharper for viewers); the 1080p clip if that fails
+        social._prog("preparing")
         send = render.youtube_copy(path)
     except Exception as e:
         db.syslog(f"YouTube 1440p copy failed ({e!r}), uploading the 1080p clip")
@@ -56,10 +58,16 @@ def upload(path, title, description, tags, short, privacy="public"):
                               "defaultLanguage": "en", "defaultAudioLanguage": "en",  # English, for a US audience
                               "categoryId": "20"},  # 20 = Gaming
                   "status": {"privacyStatus": privacy, "selfDeclaredMadeForKids": False}},
-            media_body=MediaFileUpload(str(send), chunksize=-1, resumable=True))
+            # 8 MB pieces (not one request): the page shows the progress, and a dropped piece is resent alone
+            media_body=MediaFileUpload(str(send), chunksize=8 << 20, resumable=True))
+        size = Path(send).stat().st_size
+        social._prog("uploading", 0, size)
         resp = None
         while resp is None:
-            _, resp = req.next_chunk()
+            st, resp = req.next_chunk(num_retries=3)
+            if st:
+                social._prog("uploading", st.resumable_progress, size)
+        social._prog("processing", size, size)
         return resp["id"]
     finally:
         if str(send) != str(path):

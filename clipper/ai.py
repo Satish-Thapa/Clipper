@@ -235,7 +235,8 @@ def test(p, kind="ping", model=""):
 PROMPT_KEEP_DAYS = 7  # saved prompts (data/logs/prompts/<day>/) older than this are deleted
 PURPOSE = {"clips": "picking the clips", "queries": "writing search queries", "videos": "judging which videos clip well",
            "topics": "finding today's trends", "lines": "writing the voice-over", "reply": "a test",
-           "decide": "today's decisions from the report", "post": "writing a news post", "picks": "picking news stories"}
+           "decide": "today's decisions from the report", "post": "writing a news post", "picks": "picking news stories",
+           "repost": "writing a reposted reel's title"}
 
 
 def _save_prompt(system, task, key):

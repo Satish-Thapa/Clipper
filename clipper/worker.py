@@ -13,6 +13,7 @@ Nothing here posts by itself: a job with "fill today's free slots" (jobs.fill) h
 they're made; Auto topics are filled by autopilot.py; everything else waits in Clips. Every upload goes through
 upload_clip, which never lets a platform go over the day's quota (quota.can_post)."""
 import json
+import re
 import subprocess
 import threading
 import time
@@ -96,6 +97,11 @@ def retry(job_id):
 
 
 def describe_job(job):
+    if job.get("mode") == "repost":
+        fill = int(job.get("fill") or 0)
+        return ("repost (Cheat page): as it is, best quality up to 4K, a 4K copy | "
+                + ({1: "fills a free slot today", 7: "fills a free slot this week", 30: "fills a free slot this month"}
+                   .get(fill, "waits in Clips")))
     lay = job.get("layout") or ""
     frame = ("streamer on top" if lay.startswith("cam:") else f"split with {lay[6:]}" if lay.startswith("split:")
              else "full screen")
@@ -119,6 +125,11 @@ def _run(job_id):
             src = next(d.glob("source.*"))
             db.log(job_id, f"local file: {job['title']}")
             _fill(job, _process(job, src, job["title"] or src.name, d))
+            db.update("jobs", job_id, status="done")
+            db.log(job_id, f"job finished in {(time.time() - t0) / 60:.1f} min")
+            return
+        if job.get("mode") == "repost":  # the Cheat page: a reel posted again as it is (no AI, no cutting)
+            _repost(job, d)
             db.update("jobs", job_id, status="done")
             db.log(job_id, f"job finished in {(time.time() - t0) / 60:.1f} min")
             return
@@ -153,6 +164,84 @@ def _run(job_id):
             _fail(job_id, e)
     finally:
         drop_sources(job_id)
+
+
+REPOST_MAX_MIN = 15  # a reel / short, not a whole stream
+REPOST_SCORE = 90  # every Cheat-page video gets virality 90 (your pick: they win slots over most AI clips)
+
+
+def _repost(job, d):
+    """Cheat page: download a Facebook / Instagram / YouTube reel at the best quality (up to 4K), make a 4K copy of it
+    as it is (vertical -> 2160x3840, wide -> 3840x2160, scaled to fit, never cropped), and add it as a ready clip with
+    its own title (+ a credit line); then it fills free slots like any job. -> [clip id]."""
+    jid = job["id"]
+    db.update("jobs", jid, status="fetching info")
+    with db.step(jid, "fetching the reel's info"):
+        i = download.info(job["url"])
+    if i.get("is_live"):
+        raise ValueError("this is a live stream: use Live mode")
+    dur = float(i.get("duration") or 0)
+    if dur > REPOST_MAX_MIN * 60:
+        raise ValueError(f"it's {dur / 60:.0f} min long: the Cheat page is for reels and shorts (up to {REPOST_MAX_MIN} min)")
+    raw = (job.get("title") or i.get("title") or i.get("description") or "").strip()
+    title = raw.splitlines()[0][:100] if raw else "Reel"
+    who = i.get("uploader") or i.get("channel") or ""
+    db.update("jobs", jid, title=title, channel=who)
+    db.log(jid, f"reel: {title} | by {who or '?'} | {dur:.0f}s | {i.get('width') or '?'}x{i.get('height') or '?'} source")
+    db.update("jobs", jid, status="downloading")
+    with db.step(jid, "downloading (best quality, up to 4K)"):
+        download.download_vod(job["url"], d / "source.%(ext)s", 2160, STOPS.get(jid))
+    src = next(x for x in d.glob("source.*") if x.suffix not in (".part", ".ytdl"))
+    dur = render._duration(src) or dur
+    tags = [re.sub(r"\W", "", t) for t in (i.get("tags") or []) if re.sub(r"\W", "", t)][:5] or \
+        re.findall(r"#(\w+)", f"{i.get('title') or ''} {i.get('description') or ''}")[:5]
+    kind = "short" if dur <= 180 else "long"
+    # the AI writes the title from the original title + caption (the original stays if every AI fails)
+    with db.step(jid, "AI writing the title"):
+        a = pick.repost_title(i.get("title"), i.get("description"), who, dur)
+    if a:
+        db.log(jid, f"AI title: \"{a['title']}\" (original: \"{title}\")")
+        tags = a["hashtags"] or tags
+    else:
+        db.log(jid, "the AI couldn't write a title: keeping the original")
+    credit = f"Credit: {who}" if who else ""
+    desc = "\n\n".join(x for x in ((a or {}).get("description"), credit) if x)
+    cid = db.insert("clips", job_id=jid, kind=kind, start=0, end=dur, score=REPOST_SCORE, title=(a or {}).get("title") or title,
+                    headline="", description=desc, tags=json.dumps(tags), status="rendering",
+                    reason="Reposted from the Cheat page", path="",
+                    why=json.dumps({"by": "repost", "link": job["url"], "source": i.get("title") or title, "uploader": who,
+                                    "original_title": title}))
+    out = d / "clips" / f"{cid}.mp4"
+    db.update("jobs", jid, status="rendering")
+    try:
+        with db.step(jid, "making the 4K copy"):
+            _to_4k(src, out)
+        db.update("clips", cid, path=str(out.relative_to(DATA)).replace("\\", "/"), status="rendered")
+    except Exception:
+        db.update("clips", cid, status="render failed")
+        raise
+    db.log(jid, f"#{cid} ready: {kind}, {dur:.0f}s, 4K, {out.stat().st_size / 1e6:.0f} MB")
+    _fill(job, [cid])
+    return [cid]
+
+
+def _to_4k(src, out):
+    """The video as it is, at 4K: fitted into 2160x3840 (vertical) or 3840x2160 (wide), black bars only if its shape
+    differs, lanczos upscale, the upload encoder (NVENC cq 16 / x264), AAC audio."""
+    w, h = (int(x) for x in subprocess.run(
+        [render.FFPROBE, "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=p=0",
+         str(src)], capture_output=True, text=True).stdout.strip().split(",")[:2])
+    W, H = (2160, 3840) if h >= w else (3840, 2160)
+    vf = (f"scale={W}:{H}:force_original_aspect_ratio=decrease:flags=lanczos,"
+          f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,format=yuv420p")
+    tmp = out.with_name(out.stem + "_tmp.mp4")
+    r = subprocess.run([render.FFMPEG, "-y", "-loglevel", "error", "-i", str(src), "-map", "0:v:0", "-map", "0:a:0?",
+                        "-vf", vf, *render.encoder(), "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+                        "-movflags", "+faststart", str(tmp)], capture_output=True, text=True)
+    if r.returncode:
+        tmp.unlink(missing_ok=True)
+        raise RuntimeError(f"4K copy failed: {r.stderr.strip()[-300:]}")
+    tmp.replace(out)
 
 
 def _fill(job, cids):
@@ -628,7 +717,8 @@ def _rerender_source(c, job):
 
 def _rerender(cid, before):
     c = db.get("clips", cid)
-    job = db.get("jobs", c["job_id"]) or {}
+    w = json.loads(c.get("why") or "{}")  # a clip kept through a reset has no job: its framing is in `why`
+    job = db.get("jobs", c["job_id"]) or {"layout": w.get("layout", ""), "subtitles": w.get("subtitles", 1)}
     jid, out = c["job_id"], DATA / c["path"]
     src, s, e, words = _rerender_source(c, job)
     tmp = out.with_name(f"{out.stem}_edit.mp4")
@@ -718,6 +808,7 @@ def upload_clip(cid, platforms=None, force=False, bypass=False):
             continue
         t = time.time()
         db.log(c["job_id"], f"uploading #{cid} to {p}...")
+        social.track(cid, p)  # the page shows the bytes sent / the step while it uploads
         try:
             done[p] = {**social.upload(p, DATA / c["path"], c["title"], c["description"],
                                        json.loads(c["tags"] or "[]"), c["end"] - c["start"]), "at": time.time()}
@@ -727,6 +818,8 @@ def upload_clip(cid, platforms=None, force=False, bypass=False):
             db.log(c["job_id"], f"upload #{cid} to {p} failed after {time.time() - t:.0f}s: {done[p]['error']}", exc=True)
             if social.note_limit(p, str(e)):
                 db.log(c["job_id"], f"{p} says the upload limit is exceeded: 24h timer started")
+        finally:
+            social.untrack(cid, p)
         db.update("clips", cid, uploads=json.dumps(done))
     ok = [p for p in done if done[p].get("id")]
     status = ("uploaded" if ok and len(ok) == len(done) else f"uploaded {len(ok)}/{len(done)}" if ok else
