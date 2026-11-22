@@ -150,9 +150,10 @@ def free_slots(day, kind, now=None, clips=None):
     return [x for x in plan(day) if x["kind"] == kind and x["at"] > now + LEAD and not holder(x, clips)]
 
 
-def fill(cids, row=None, say=None, only=None):
-    """Put the best of these clips (by score) into today's free future slots: an Auto topic (row) up to its share,
-    anyone else only into slots no unfinished Auto topic is keeping; only = just these slot times (the weekend's
+def fill(cids, row=None, say=None, only=None, days=1):
+    """Put the best of these clips (by score) into free future slots, the best clip in the earliest slot. An Auto topic
+    (row): today only, up to its share. Anyone else: the free slots of the next `days` days (1 = today, 7 = this week,
+    30 = this month), never one an unfinished Auto topic keeps today; only = just these slot times (the weekend's
     extra slots). -> {clip id: slot time} given. The rest wait."""
     say = say or (lambda m: None)
     given = {}
@@ -161,26 +162,30 @@ def fill(cids, row=None, say=None, only=None):
         today, s = date.today(), settings.get()
         mine = sorted([c for c in clips if c["id"] in set(cids) and c.get("path") and c["status"] == "rendered"
                        and not posted_ok(c)], key=lambda c: -(c.get("score") or 0))
+        span = 1 if row is not None else max(1, int(days or 1))
         for kind in KINDS:
             want = [c for c in mine if kind_of(c) == kind]
             if not want:
                 continue
-            free = [f for f in free_slots(today, kind, clips=clips) if only is None or any(abs(f["at"] - o) < 1 for o in only)]
             keep = reserved(today, kind, clips, jobs, s)
-            if row is None:  # anyone else: never into a slot a topic keeps (the earliest free ones, as the Slots page shows)
-                free = free[sum(keep.values()):]
-                budget = len(free)
-            else:  # a topic: never past its share
-                budget = min(share_left(today, kind, row, clips, jobs, s), len(free))
+            free = []
+            for k in range(span):
+                day = today + timedelta(days=k)
+                fs = [f for f in free_slots(day, kind, clips=clips) if only is None or any(abs(f["at"] - o) < 1 for o in only)]
+                if k == 0 and row is None:  # never into a slot a topic keeps (the earliest free ones, as the Slots page shows)
+                    fs = fs[sum(keep.values()):]
+                free += fs
+            budget = len(free) if row is None else min(share_left(today, kind, row, clips, jobs, s), len(free))
             for c, slot in zip(want[:budget], free):
                 db.update("clips", c["id"], status="scheduled", post_at=slot["at"])
                 c.update(status="scheduled", post_at=slot["at"])
                 given[c["id"]] = slot["at"]
-                say(f"clip #{c['id']} (score {c.get('score') or 0:.0f}) gets today's {t12(slot['time'])} {kind} slot")
+                say(f"clip #{c['id']} (score {c.get('score') or 0:.0f}) gets the {t12(slot['time'])} {kind} slot of "
+                    f"{day_of(slot['at']):%a %d %b}")
             if len(want) > budget:
+                where = {1: "today", 7: "this week"}.get(span, f"in the next {span} days")
                 say(f"{len(want) - budget} {kind}(s) wait in Clips: "
-                    + ("no free slot left today" if not free else f"today's free {kind} slots are kept for Auto topics"
-                       if row is None and keep else "this topic's slots are full today"))
+                    + (f"no free {kind} slot left {where}" if row is None else "this topic's slots are full today"))
     return given
 
 
@@ -366,6 +371,10 @@ if __name__ == "__main__":
     for cid in (c3, x, y):
         db.update("clips", cid, status="rendered", post_at=None)
     assert t12("18:30") == "6:30 PM" and t12("09:05") == "9:05 AM"
+    # fill this week: the best clip takes the earliest free slot, the next ones the following days
+    w1, w2 = C(score=99), C(score=10)
+    got = fill([w1, w2], days=7)
+    assert len(got) == 2 and got[w1] < got[w2], got
     # tick: due today -> uploaded; an earlier day's slot -> back to Clips
     sent = []
     fake = lambda cid: (sent.append(cid), db.update("clips", cid, status="uploaded", uploads=up("youtube", at(mon, "12:00"))))

@@ -46,8 +46,11 @@ gotchas, current state, and what's next.
 - Main content: GTA (5 / 6) gaming streams and streamers (IShowSpeed-style), podcasts, sports talk; English, for a US
   audience.
 - **Explicit look choices (don't change without asking):** header in the middle when the streamer is on top, otherwise
-  at the top; subtitles at the bottom, steady (no pop/wiggle), the said word yellow; logo small top right; NO text hook
-  in the first 3 seconds (built once, removed on request); everything 4K.
+  at the top, black text on a white box, completely still (no pop-in, no pulse), max 84px; the header/title names the
+  creator only for a big individual creator ("SPEED ..."), never a small channel or a show; subtitles at the bottom,
+  steady (no pop/wiggle), the said word yellow; logo small top right; NO text hook in the first 3 seconds; clips start
+  right on the moment (no lead-in: `snap` walks back at most 1.5s, `pad_before` 0); everything 4K; when several clips
+  compete for slots, the higher virality always wins.
 
 ## 3. Environment
 
@@ -104,7 +107,8 @@ data/ (gitignored)  clipper.db, jobs/<id>/ (source, live_*.ts, clips/<cid>.mp4 +
 `rendering` clips -> rendered (has file) or render failed.
 
 **Job columns that matter:** `mode` (normal / live / auto), `url` (YouTube or `file:<name>`), `shorts`, `longs`,
-`layout` ("" | `cam:top:<auto|tl|tr|bl|br>` | `split:<file>`), `header`, `subtitles`, `fill` (fill today's free slots),
+`layout` ("" | `cam:top:<auto|tl|tr|bl|br>` | `split:<file>`), `header`, `subtitles`, `fill` (days of free slots to fill:
+0 off, 1 today, 7 this week, 30 this month),
 `notes`, `category`, `auto_row`, `topic_id`, `chunk_minutes`, `max_chunks`. (`hq`, `style`, `aspect`, `follow`,
 `voiceover`, `upload_best*`, `post_every`, `post_from`, `whole`, `as_is`, `campaign_id` are leftovers from removed
 features: ignored.)
@@ -125,13 +129,17 @@ scream_hook, opening, closing, piece), `status`, `path`, `uploads` (JSON per pla
   whole piece (English) → reactions → AI `choose_full` (transcript + signal table + notes) → `confirm` bonuses → live
   pieces keep their best + extras ≥ `LIVE_MIN` (60) → snap to sentences + pads → `_why` → `_render_clips` (2 at a time)
   → returns clip ids. `_render_one`: `render.cut` → `keep_master` → previews (mp4 + jpg) → `rendered`.
-- After a job / piece: `_fill` (only when `jobs.fill`): `quota.fill` gives its best clips today's free slots.
+- After a job / piece: `_fill` (only when `jobs.fill`): `quota.fill(days=jobs.fill)` gives its best clips (by virality)
+  the earliest free slots of the next N days.
 - `upload_clip(cid, platforms=None, force=False, bypass=False)`: default platforms = `settings.platforms_for(kind)`;
   every platform passes `quota.can_post` unless `bypass` (Force upload); platform limit timers skipped unless force;
   Instagram over `ig_max_seconds` skipped unless force; nothing up anywhere → `post_at` cleared.
 - Auto (`autopilot.run_day`): daily report → per row: topic (or `scout.trending_topics` in its category) →
-  `scout.find_videos` → jobs (`mode=auto`, `auto_row`) run one at a time → `quota.fill(cids, row)` up to the row's
+  `scout.find_videos` → jobs (`mode=auto`, `auto_row`; clips per video = the row's `shorts_per_video` /
+  `longs_per_video`, else slots / videos + 1) run one at a time → `quota.fill(cids, row)` up to the row's
   share (kept free for it until `set_row_state(row, "done")`) → weekend extra slots get leftovers (`fill(only=...)`).
+  Every step and decision goes through `alog()`: saved line by line into the run's `auto_rounds` row (`log`), shown
+  live on the Auto page. Podcasts: `scout.PODCAST_MIN_VIEWS` 300K, `PODCAST_MIN_FOLLOWERS` 100K (else skipped).
 
 ## 6. Rendering (render.py) and why
 
@@ -145,7 +153,8 @@ scream_hook, opening, closing, piece), `status`, `path`, `uploads` (JSON per pla
   gameplay fills the strip below. split = clip on top (`SPLIT_CLIP_H` 1180) + background video from
   `data/fillers` below. `find_cam` (YuNet) for `auto`.
 - **Text:** `ass()` = header `big_title` (max 84px on the 1080 grid, the owner wanted it a bit smaller) centred on `mid_y` (cam: the seam `CAM_H`; else `TOP_Y` 330) + karaoke
-  subtitles at the bottom (`JIGGLE` is just the yellow colour now: steady). Logo: `assets/logo.png` (the owner's "THE
+  subtitles at the bottom (`JIGGLE` is just the yellow colour now: steady). Header style `Top` = BorderStyle 3 (opaque
+  white box, black text), no animation tags. Logo: `assets/logo.png` (the owner's "THE
   CLIP DROP"), 120px wide (×K) at top right, `settings.logo`.
 - **Sync:** live chunks are recorded with `-copyts` and re-timed by `download._align` (verified within 0.02s); every cut
   is "exact" (decode from `pre` s early, output `-ss pre`, ASS shifted by `pre`). Don't "fix" sync anywhere else.
@@ -171,8 +180,8 @@ scream_hook, opening, closing, piece), `status`, `path`, `uploads` (JSON per pla
 - Self-tests: `CLIPPER_DATA=<tmp> python -m clipper.<pick|scout|quota|settings|render|signals|stats|insights|categories|autopilot>`.
 - Lint: `uvx pyflakes clipper/*.py` (expected noise: pick.py test overrides, vision.py yt_dlp import).
 - Page JS: extract every `<script>` into a file and `node --check` it.
-- Looking at the UI without the server: seed a temp DB via `TestClient`, save `/api/*` answers as JSON fixtures, serve
-  them with a tiny static `http.server`, and screenshot with headless Chrome (`--force-prefers-reduced-motion`; for
+- Looking at the UI without the server: `tests/uimock.py` seeds a temp DB via `TestClient`, saves `/api/*` answers as
+  JSON fixtures and serves them statically on :8765; screenshot with headless Chrome (`--force-prefers-reduced-motion`; for
   phone width load the page in a 390px iframe: headless Chrome's minimum window is ~500px).
 - Sync check (when touching recording/cutting): white flash + 1 kHz beep at a known time, find both in the output
   (within 0.04s; sample audio at 8 kHz).
@@ -187,12 +196,16 @@ scream_hook, opening, closing, piece), `status`, `path`, `uploads` (JSON per pla
 - Jobs: cards are built once and patched part by part (`setPart` with a key) → no flicker; logs only update when open.
 - Clips: `clipKey`-style keyed re-render (`#clipGrid.dataset.k`), never re-render while a video plays; one video plays
   at a time (document `play` listener); route change pauses all.
-- Reels: windowed `src` (current ±1 loaded, others emptied), search, actions inside; modal z-index 400 > reels 300.
+- Reels: windowed `src` (current ±1 loaded, others emptied), search (shared with Clips: `reelQ`), details fade after
+  2s of playing (`reelQuiet`), actions inside; modal z-index 400 > reels 300.
+- Clips: search + sort (`SORTS`); ticking a clip only toggles that card + the selection bar (`selClip`), the grid key
+  doesn't include the selection. Post opens a platform picker (`PostIn.platforms`).
+- Phone drawer: `.shell` must not get a z-index (it would trap the drawer under `body.menu::after`).
 - Slots: HTML5 drag and drop of SCHEDULED clips only, slot to slot (`dragCid`; the owner doesn't want a tray of all
   clips), `.drop-ok` only on same-kind future slots; Move for touch; Choose clip fills a free slot.
 - Alerts can be hidden (remembered in localStorage per browser). Times are 12-hour (`hhmm`, `t12`).
 
-## 10. Current state (2026-11-21)
+## 10. Current state (2026-11-22)
 
 - **Done this session** (all tested, see §8): the split into scout / pick / ai / categories; slots + hard daily limit
   (`quota.py`); Settings in the DB; Normal / Live / Auto modes; campaigns, topics page, channel clipping, streamer
@@ -200,7 +213,10 @@ scream_hook, opening, closing, piece), `status`, `path`, `uploads` (JSON per pla
   API + daily decisions; AI test center; the new UI; then: 4K everywhere, logo, steady subtitles, whole-gameplay cam
   layout, English only, owner priorities in the prompt, drag-and-drop slots, per-kind platforms, Force upload, bulk
   delete, upload-error reasons, Jobs curves, reels windowing/search, Post now never into a passed slot, long length
-  set freely (over 180s = normal YouTube video), research videos ≤ 60 min.
+  set freely (over 180s = normal YouTube video), research videos ≤ 60 min; then (11-22): white-box still header,
+  creator names only for big individual creators, no lead-in, podcast 300K/100K rule, Auto live log + clips per
+  video, fill today/week/month, Post platform picker, Clips search + sort, no-flicker selection, reels details fade,
+  zoomed gameplay (GAME_H 860), title 84px, slot drag only for scheduled clips, phone drawer fix.
 - **Needs the owner:** restart the server; Reconnect YouTube once (analytics scope); enable "YouTube Analytics API" in
   Google Cloud; TikTok numbers need the `video.list` scope.
 - **Ideas not done / next:**

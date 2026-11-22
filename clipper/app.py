@@ -81,7 +81,7 @@ class NewJob(Look):
     shorts: int = Field(3, ge=0, le=20)  # clips to make (live: per piece)
     longs: int = Field(0, ge=0, le=10)
     notes: str = Field("", max_length=1000)  # Tell the AI (this video)
-    fill: bool = False  # put the best clips into today's free slots (the rest wait in Clips)
+    fill: Literal[0, 1, 7, 30] = 0  # put the best clips in free slots: 0 off, 1 today, 7 this week, 30 this month
     chunk_minutes: int | None = Field(None, ge=1, le=120)  # live: minutes per piece (default: Settings)
     max_chunks: int = Field(0, ge=0, le=500)  # live: pieces to clip, 0 = until the stream ends
 
@@ -115,12 +115,14 @@ async def create_file_job(request: Request, filename: str = Query(max_length=300
                           longs: int = Query(0, ge=0, le=10), layout: Literal["full", "cam", "split"] | None = None,
                           cam_corner: Literal["auto", "tl", "tr", "bl", "br"] | None = None, filler: str | None = None,
                           subtitles: bool | None = None, header: bool | None = None, notes: str = Query("", max_length=1000),
-                          fill: bool = False):
+                          fill: int = Query(0, ge=0, le=30)):
     """Normal mode, a video file from your computer: raw bytes in the body (no multipart needed)."""
     ext = Path(filename).suffix.lower()
     if ext not in VIDEO_EXT:
         _bad(400, f"unsupported file type {ext or '(none)'}: use {', '.join(VIDEO_EXT)}")
     _check_counts(shorts, longs)
+    if fill not in (0, 1, 7, 30):
+        _bad(400, "fill is 0 (off), 1 (today), 7 (this week) or 30 (this month)")
     lay, head, subs = _look(Look(layout=layout, cam_corner=cam_corner, filler=filler, subtitles=subtitles, header=header))
     jid = db.insert("jobs", url=f"file:{Path(filename).name}", title=Path(filename).stem, mode="normal", shorts=shorts,
                     longs=longs, layout=lay, header=head, subtitles=subs, notes=notes.strip(), fill=int(fill),
@@ -307,17 +309,23 @@ def unassign_clip(cid: int):
     return quota.unassign(cid)
 
 
+class PostIn(BaseModel):
+    platforms: list[Platform] = Field([], max_length=4)  # [] = where its kind posts (Slots page)
+
+
 @app.post("/api/clips/{cid}/post")
-def post_now(cid: int):
-    """Post now: it takes one of today's free slots of its kind (refused when they're all used), then uploads."""
+def post_now(cid: int, b: PostIn | None = None):
+    """Post now, to the platforms you pick (default: where its kind posts): it takes the next upcoming free slot of
+    its kind today (refused when none is left), then uploads; the daily limit is still checked per platform."""
     c0 = db.get("clips", cid) or _bad(404, "clip not found")
-    if not settings.platforms_for(c0["kind"]):
+    plats = (b.platforms if b else []) or settings.platforms_for(c0["kind"])
+    if not plats:
         _bad(400, f"no platform to post {c0['kind']}s to: pick them on the Slots page")
     try:
         slot = quota.claim_now(cid)
     except ValueError as e:
         _bad(409, str(e))
-    threading.Thread(target=worker.upload_clip, args=(cid,), daemon=True).start()
+    threading.Thread(target=worker.upload_clip, args=(cid, plats), daemon=True).start()
     return {"slot": slot, "clip": db.get("clips", cid)}
 
 

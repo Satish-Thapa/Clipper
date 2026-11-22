@@ -124,6 +124,21 @@ ok(c.post(f"/api/clips/{f}/force", json={"platforms": ["youtube"]}))
 assert sent.count("youtube") == 3 and db.get("clips", f)["status"] == "uploaded", sent
 assert "FORCE UPLOAD to youtube, past the daily quota" in db.get("jobs", j["id"])["log"]
 
+# fill days: off / today / week / month only; Post to the platforms you pick
+r = c.post("/api/jobs", json={"url": "https://youtu.be/zzzzzzzzzzz", "fill": 3})
+assert r.status_code == 422, r.text
+ok(c.post("/api/jobs", json={"url": "https://youtu.be/yyyyyyyyyyy", "fill": 30}))
+err(c.post("/api/jobs/file?filename=a.mp4&fill=3", content=b"x" * 20000), 400, "fill is 0")
+ok(c.post("/api/settings", json={"shorts_per_day": 3, "short_times": later + ["23:59"]}))
+g = clip(45)
+sent.clear()
+ok(c.post(f"/api/clips/{g}/post", json={"platforms": ["facebook"]}))
+assert sent == ["facebook"], sent  # only where you picked
+# Auto topic: your own clips per video
+ok(c.post("/api/settings", json={"auto_rows": [{"category": "gaming", "videos": 2, "short_slots": 1, "shorts_per_video": 4}]}))
+assert ok(c.get("/api/auto"))["rows"][0]["per_video"] == {"short": 4, "long": 0}
+ok(c.post("/api/settings", json={"auto_rows": [{"category": "gaming", "videos": 1, "short_slots": 1}]}))
+
 # AI tests: stubbed model answers
 ai._missing = lambda p: ""
 
@@ -147,8 +162,13 @@ bad = ok(c.post("/api/ai/test", json={"provider": "deepseek", "kind": "clip"}))
 assert not bad["ok"] and [x["name"] for x in bad["checks"] if not x["ok"]][:1] == ["all 5 scores"], bad
 
 s = ok(c.get("/api/state"))
-assert s["today"]["limit"]["short"] == 2 and "jobs" in s
-assert ok(c.get("/api/reports"))["performance"]["posted"] == 3  # a, b + the forced one
+assert s["today"]["limit"]["short"] == 3 and "jobs" in s  # raised to 3 a day above
+assert ok(c.get("/api/reports"))["performance"]["posted"] == 4  # a, b, the forced one, the one posted to facebook
 err(c.post("/api/news/find", json={"topic": "gta"}), 403, "switched off")
 assert ok(c.get("/api/auto"))["rows"][0]["per_video"] == {"short": 2, "long": 0}
+# an older saved settings blob (with the 0.8s lead-in) is migrated once to no lead-in
+from clipper import settings as S_
+db.set_setting("app", json.dumps({**S_.get().model_dump(), "pad_before": 0.8, "start_fix": False}))
+S_.reset_cache()
+assert S_.get().pad_before == 0.0 and S_.get().start_fix
 print("apitest OK")

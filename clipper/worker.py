@@ -156,9 +156,10 @@ def _run(job_id):
 
 
 def _fill(job, cids):
-    """Normal / live jobs with "fill today's free slots": their best new clips take today's free slots."""
+    """Normal / live jobs with "put the best clips in free slots": their best new clips take the free slots of the next
+    jobs.fill days (1 = today, 7 = this week, 30 = this month)."""
     if job.get("fill") and job.get("mode") != "auto" and cids:
-        quota.fill(cids, None, lambda m: db.log(job["id"], m))
+        quota.fill(cids, None, lambda m: db.log(job["id"], m), days=int(job["fill"]))
 
 
 def drop_sources(job_id):

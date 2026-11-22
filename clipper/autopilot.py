@@ -40,6 +40,7 @@ def _step(text):
     if ABORT.is_set():
         raise Stopped()
     STAGE[0] = text
+    alog(text)
 
 
 def layout_of(s):
@@ -47,9 +48,27 @@ def layout_of(s):
     return {"full": "", "cam": f"cam:top:{s.cam_corner}", "split": f"split:{s.filler}"}[s.layout]
 
 
-def per_video(slots, videos):
-    """Clips to cut from each video so a topic can fill `slots` with its best: an even share + 1 to choose from."""
+def per_video(slots, videos, override=0):
+    """Clips to cut from each video: yours (override), else enough for the topic to fill `slots` with its best: an even
+    share + 1 to choose from (no slots of that kind = none)."""
+    if override:
+        return override
     return math.ceil(slots / videos) + 1 if slots else 0
+
+
+RUN = {"id": None, "rec": None}  # the research run being written now (its log is saved line by line)
+
+
+def alog(msg):
+    """One line of today's Auto log: what it's doing, what it decided and why. Saved as it happens (the Auto page
+    shows it live) and into the system log."""
+    line = f"[{time.strftime('%I:%M:%S %p')}] {msg}"
+    db.syslog("Auto: " + msg)
+    rec = RUN["rec"]
+    if rec is not None:
+        rec.setdefault("log", []).append(line)
+        if RUN["id"]:
+            db.update("auto_rounds", RUN["id"], data=json.dumps(rec))
 
 
 def _today_runs():
@@ -90,10 +109,21 @@ def run_day(reason="daily"):
         return {"error": "the research is already running"}
     ABORT.clear()
     s, t0 = settings.get(), time.time()
-    rec = {"at": t0, "day": date.today().isoformat(), "reason": reason, "rows": [], "decisions": None}
+    rec = {"at": t0, "day": date.today().isoformat(), "reason": reason, "rows": [], "decisions": None, "log": []}
+    RUN.update(rec=rec, id=db.insert("auto_rounds", at=t0, data=json.dumps(rec)))
     try:
+        alog(f"research started ({reason}): {len(s.auto_rows)} topic(s); shorts post to "
+             f"{', '.join(s.platforms) or 'nowhere'}, longs to {', '.join(s.long_platforms) or 'nowhere'}")
+        today = quota.plan(date.today(), s)
+        alog(f"today's plan: {len([x for x in today if x['kind'] == 'short'])} short + "
+             f"{len([x for x in today if x['kind'] == 'long'])} long slot(s)"
+             + (" (weekend +1 each)" if any(x["extra"] for x in today) else "") + "; slots already passed can't be filled")
         _step("refreshing the reports")
         rec["decisions"] = daily_report()
+        d = rec["decisions"] or {}
+        alog("today's decisions: " + (d.get("summary") or "none yet")
+             + (f" | for the researcher: {d['scout']}" if d.get("scout") else "")
+             + (f" | for the clip picker: {d['cutter']}" if d.get("cutter") else ""))
         history = "\n".join(x for x in (insights.history_text(), (rec["decisions"] or {}).get("scout", "")) if x)
         auto_cids = []
         for i, row in enumerate(s.auto_rows):
@@ -105,19 +135,24 @@ def run_day(reason="daily"):
         extra = [x for x in quota.plan(date.today(), s) if x["extra"]]
         if extra and auto_cids:  # weekend: the extra slots get the best Auto clips left over
             _step("filling the weekend's extra slots")
-            rec["weekend"] = len(quota.fill(auto_cids, None, db.syslog, only=[x["at"] for x in extra]))
+            rec["weekend"] = len(quota.fill(auto_cids, None, alog, only=[x["at"] for x in extra]))
+        alog(f"research done: {sum(r.get('clips', 0) for r in rec['rows'])} clip(s) made, "
+             f"{sum(len(r.get('slots') or {}) for r in rec['rows']) + rec.get('weekend', 0)} put in today's slots "
+             f"(best virality first); the rest wait in Clips")
     except Stopped:
         rec["error"] = "stopped by you"
-        db.syslog("Auto: research stopped by you")
+        alog("stopped by you")
     except Exception as e:
         rec["error"] = str(e)[:300]
         db.syslog(f"Auto: research failed: {e!r}", exc=True)
+        alog(f"FAILED: {e!r}"[:300])
     finally:
         rec["seconds"] = round(time.time() - t0)
         STAGE[0] = ""
         ABORT.clear()
         LOCK.release()
-    db.insert("auto_rounds", at=rec["at"], data=json.dumps(rec))
+        db.update("auto_rounds", RUN["id"], data=json.dumps(rec))
+        RUN.update(rec=None, id=None)
     return rec
 
 
@@ -130,12 +165,24 @@ def _row(i, row, s, history, auto_cids):
         found = scout.trending_topics(NICHE[row.category], 1, research, history, s.notes, _step)
         topic = found[0]["topic"]
         out.update(trend=found[0], research=research)
-    shorts, longs = per_video(row.short_slots, row.videos), per_video(row.long_slots, row.videos)
+        alog(f"topic {i + 1}: the AI picked '{topic}' (score {found[0].get('score', '?')}/10): {found[0].get('why', '')}"
+             f" | it read {research.get('seen', 0)} videos; dropped: "
+             + (", ".join(f"{x['topic']} ({x['score']:.0f})" for x in research.get("dropped") or []) or "none"))
+    else:
+        alog(f"topic {i + 1}: your topic '{topic}' ({row.category})")
+    shorts = per_video(row.short_slots, row.videos, row.shorts_per_video)
+    longs = per_video(row.long_slots, row.videos, row.longs_per_video)
+    alog(f"topic {i + 1}: {row.videos} video(s), cutting {shorts} short(s) + {longs} long(s) from each "
+         + ("(your numbers)" if row.shorts_per_video or row.longs_per_video else
+            f"(its {row.short_slots} short + {row.long_slots} long slot(s) / {row.videos} video(s) + 1 spare each)")
+         + f": the best by virality fill its {row.short_slots} short + {row.long_slots} long slot(s) today")
     tid = db.insert("topics", topic=topic, videos=row.videos, shorts=shorts, longs=longs, mode="auto",
                     category=row.category, auto_row=i, source="auto", face_check=int(s.face_check), notes=s.notes,
                     status="searching", created=time.time())
     out.update(topic=topic, topic_id=tid)
-    say = lambda m, exc=False: db.log(tid, m, "topics", exc=exc)
+    def say(m, exc=False):  # the topic's research log, and the Auto log
+        db.log(tid, m, "topics", exc=exc)
+        alog(f"   topic {i + 1}: {m}")
     say(f"Auto topic {i + 1} ({row.category}): '{topic}'" + (" (trending today)" if not row.topic.strip() else "")
         + f" | {row.videos} video(s), {shorts} short(s) + {longs} long(s) from each, for {row.short_slots} short + "
           f"{row.long_slots} long slot(s) today")
@@ -151,7 +198,7 @@ def _row(i, row, s, history, auto_cids):
                         auto_row=i, topic_id=tid, category=row.category, shorts=shorts, longs=longs,
                         layout=layout_of(s), header=int(s.header), subtitles=int(s.subtitles),
                         notes="", fill=0, auto_upload=0, created=time.time())
-        say(f"video {k}/{len(videos)} -> job #{jid}: {v.get('title')} (scout {v['scout_score']}/100)")
+        say(f"video {k}/{len(videos)} -> job #{jid}: {v.get('title')} (scout {v['scout_score']}/100: {v['verdict']['why']})")
         CURRENT["job"] = jid
         t0 = time.time()
         try:
@@ -159,6 +206,12 @@ def _row(i, row, s, history, auto_cids):
         finally:
             CURRENT.pop("job", None)
         jobs.append(jid)
+        made = db.all("clips", "job_id=?", (jid,))
+        j = db.get("jobs", jid) or {}
+        alog(f"topic {i + 1}: job #{jid} {j.get('status')} in {(time.time() - t0) / 60:.1f} min: {len(made)} clip(s)"
+             + (": " + ", ".join(f"#{c['id']} {c['kind']} {c['score']:.0f} \"{c['title']}\"" for c in
+                                sorted(made, key=lambda c: -(c['score'] or 0))) if made else
+                f" (why: {(str(j.get('log') or '').strip().splitlines() or [''])[-1][:200]})"))
         out["videos"].append({"id": v["id"], "title": v.get("title"), "job": jid, "score": v["scout_score"],
                               "why": v["verdict"]["why"]})
         hit = download.cookies_state()["bot_check_at"]
@@ -201,8 +254,9 @@ def status():
     runs = _today_runs()
     return {"enabled": s.auto_enabled, "running": LOCK.locked(), "stage": STAGE[0] if LOCK.locked() else "",
             "next_at": quota.at(date.today(), s.research_time) if not runs else None, "today": runs[:1],
-            "rows": [{**r.model_dump(), "per_video": {"short": per_video(r.short_slots, r.videos),
-                                                      "long": per_video(r.long_slots, r.videos)}} for r in s.auto_rows],
+            "rows": [{**r.model_dump(), "per_video": {"short": per_video(r.short_slots, r.videos, r.shorts_per_video),
+                                                      "long": per_video(r.long_slots, r.videos, r.longs_per_video)}}
+                     for r in s.auto_rows],
             "categories": categories.NAMES, "decisions": insights.decisions(),
             "topics": db.all("topics", "source='auto'")[:9]}
 

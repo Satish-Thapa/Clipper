@@ -23,6 +23,8 @@ from . import ai, categories, db, download, settings, vision
 MIN_CLIPPABLE = 6  # AI score 0-10; below this a video needs its full context, so it isn't clipped
 LAUNCH_DAYS = 7  # a game launch / reveal week: only this week's uploads
 DEAD_VIEWS, DEAD_HOURS = 5000, 48  # fewer views than this after this many hours = dead on arrival
+# Podcasts (the owner's rule): only big, recent episodes from a real channel; when none is found, the topic is skipped
+PODCAST_MIN_VIEWS, PODCAST_MIN_FOLLOWERS = 300_000, 100_000
 WEIGHTS = {"velocity": .40, "outlier": .25, "engagement": .15, "freshness": .10, "clippability": .10}
 TIER_FROM = (0, 7, 31)  # days: where each download.RECENT search filter (this week / this month / any time) starts
 
@@ -143,6 +145,11 @@ def hard_filter(v, now, used=(), category="", days=None):
         return f"{d / 60:.0f} min long (clipping {lo:g}-{s.topic_max_minutes:g} min videos)"
     if days and h and h > days * 24:
         return f"{h / 24:.0f} days old (max {days:g})"
+    if category == "podcast" and (v.get("view_count") or 0) < PODCAST_MIN_VIEWS:
+        return f"podcast with {v.get('view_count') or 0:,} views (podcasts need {PODCAST_MIN_VIEWS:,}+)"
+    if category == "podcast" and v.get("channel_follower_count") is not None \
+            and v["channel_follower_count"] < PODCAST_MIN_FOLLOWERS:  # known after the full stats are read
+        return f"podcast channel with {v['channel_follower_count']:,} subscribers (needs {PODCAST_MIN_FOLLOWERS:,}+)"
     if h and h > DEAD_HOURS and (v.get("view_count") or 0) < DEAD_VIEWS:
         return f"dead on arrival: {v.get('view_count') or 0:,} views after {h / 24:.0f} days"
     return ""
@@ -477,6 +484,9 @@ if __name__ == "__main__":
     assert hard_filter(V("a", 20, 9000, 5, title="GTA 6 ПРОХОЖДЕНИЕ стрим"), NOW) == "not English (title)"
     assert hard_filter(V("a", 20, 9000, 5, language="es"), NOW).startswith("not English")
     assert hard_filter(V("a", 20, 9000, 5, language="en-US", title="GTA 6 is insane 😭"), NOW) == ""
+    assert "podcasts need 300,000+" in hard_filter(V("a", 60, 250_000, 5), NOW, category="podcast")
+    assert hard_filter(V("a", 60, 400_000, 5), NOW, category="podcast") == ""
+    assert "subscribers" in hard_filter(V("a", 60, 400_000, 5, channel_follower_count=20_000), NOW, category="podcast")
     assert "min long" in hard_filter(V("a", 2, 9000, 5), NOW)                       # under the min length
     assert hard_filter(V("a", 4.5, 9000, 5), NOW, category="sports") == ""          # sports show segment: 4 min ok
     assert "days old" in hard_filter(V("a", 20, 9000, 20 * 24), NOW)                # older than 14 days

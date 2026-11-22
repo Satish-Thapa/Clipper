@@ -18,7 +18,9 @@ posts them in **slots**: the times you set, never more than your daily limit, on
   it (zoomed a little to fill more of the screen; a blurred copy of the game fills the strip below); or your clip on top with a background
   video below (split).
 - **On the video:** your logo small in the top-right corner, the topic header (in the middle when the streamer is on
-  top, otherwise at the top) and steady word-by-word subtitles at the bottom (the word being said in yellow).
+  top, otherwise at the top; black text on a white box, still) and steady word-by-word subtitles at the bottom (the
+  word being said in yellow). The header names the creator only for a big individual creator ("SPEED ..."); for a
+  smaller channel, a show or a network it just says what happens.
   Header, subtitles and logo can each be switched off.
 - **English only, for a US audience:** Auto only picks English videos (searched in the US), Whisper transcribes in
   English, and YouTube uploads are marked English.
@@ -101,11 +103,11 @@ it does.
 | Page | What it's for |
 |---|---|
 | **Overview** | Today: shorts / longs posted against the limit, today's slots, what's working, Auto's state, warnings. |
-| **Create** | **Normal** (a YouTube link or a file) or **Live** (a stream live now). Clips to make, framing, header, subtitles, 4K, *Fill today's free slots*, Tell the AI. |
+| **Create** | **Normal** (a YouTube link or a file) or **Live** (a stream live now). Clips to make, framing, header, subtitles, **Put the best clips in free slots: Off / Today / This week / This month**, Tell the AI. |
 | **Auto** | Switch Auto on, your up-to-three topics and their slots, the research time, Run now / Stop, today's research and decisions. |
 | **Jobs** | Every video being clipped: a step bar (download / recording → transcribe → AI pick → render → done), its clips (with virality), the reason when it failed, the log, the **hype curves** with the picked clips marked, Stop, Retry; a live job's piece length / pieces / clips per piece can change while it records. Select several to delete. |
-| **Clips** | Every clip with its virality score, moment type and the AI's five scores (hook, flow, emotion, share, trend), and **why an upload failed** (hide the message with ×). **Post** (the next free slot today), **Slot** (any free slot ahead), Unslot, **Retry** (the failed platforms), **Force** (post now to the platforms you pick, past every limit, warnings first), Edit, Why this clip?, Delete. Filters: Ready, In a slot, Posted, Failed. Select several to delete. Only one video plays at a time. |
-| **Reels** | (Clips → Watch as reels) Full-screen, swipe / arrow keys, **search** at the top, all the clip's info, and Post / Slot / Force / Info / Delete right there. Only the reels near the one you watch keep a video loaded, so scrolling stays smooth. |
+| **Clips** | Every clip with its virality score, moment type and the AI's five scores (hook, flow, emotion, share, trend), and **why an upload failed** (hide the message with ×). **Post** (pick where; the next free slot today), **Slot** (any free slot ahead), Unslot, **Retry** (the failed platforms), **Force** (post now to the platforms you pick, past every limit, warnings first), Edit, Why this clip?, Delete. Filters: Ready, In a slot, Posted, Failed; **search**; **sort** by virality, newest, latest posted, most views or length. Select several to delete. Only one video plays at a time. |
+| **Reels** | (Clips → Watch as reels) Full-screen, swipe / arrow keys, **search** at the top (the same as Clips'), the details fade after 2 seconds of playing and come back when you pause, all the clip's info, and Post / Slot / Force / Info / Delete right there. Only the reels near the one you watch keep a video loaded, so scrolling stays smooth. |
 | **Slots** | The next 7 days: every slot with its clip and state (free, kept for an Auto topic, scheduled, posted, passed). Where **shorts** post and where **longs** post (ticked here). **Drag** a scheduled clip onto another slot of its kind to move it (onto a taken one: they swap); on a phone use **Move**. **Choose clip** (with thumbnails) fills a free slot. A slot whose time has passed never takes a clip. |
 | **Reports** | Every number from the platforms, views per day, breakdowns (platform, category, moment type, length, posting hour, weekday, shorts vs longs, topic), YouTube channel analytics, best and weakest clips, the day's decisions. |
 | **Socials** | Connected platforms, uploads in the last 24h, limit timers and errors; Connect / Reconnect YouTube; YouTube cookies. |
@@ -132,8 +134,9 @@ it does.
   - **Force upload** (Clips / Reels): posts now to the platforms you tick, **past the daily limit, the slots and the
     platforms' own limits**. It shows every warning first, and the log marks it `FORCE UPLOAD`. A forced post still
     counts in today's numbers, so a later slot that day may then be held back on that platform.
-  - **Fill today's free slots** (Create): the job's best clips take today's free slots as they're made, never the
-    ones kept for Auto topics. The rest wait.
+  - **Put the best clips in free slots** (Create: Today / This week / This month): as the job's clips are made,
+    the highest virality takes the earliest free slot of that time, never one kept for an Auto topic today.
+    The rest wait.
   - **Auto:** each topic fills its own share (see below).
 - **Posting:** every minute the app posts each clip whose slot time has come. If the app was off at a slot's time,
   that clip goes back to Clips (it never posts a day late).
@@ -155,7 +158,11 @@ Every day at the **research time**:
      YouTube's most-viewed uploads of the week (ranked by views per hour, at most 3 per channel), leaning on the
      day's decisions and avoiding topics covered in the last 3 days.
    - **Finding the videos** (the researcher, below): the best `videos` for the topic.
-   - **Clipping** them one at a time. Clips per video = its slots ÷ videos + 1 spare to choose from.
+   - **Clipping** them one at a time. Clips per video: yours (*Shorts / video*, *Longs / video*), or automatic = its
+     slots ÷ videos + 1 spare to choose from (a topic with 2 short slots and 1 video cuts 3 shorts; with no long
+     slots it cuts no longs).
+   - Every step, decision and its reason goes into the **live log** on the Auto page (which topic and why, every
+     video kept or skipped and why, how many clips each job made with their virality, which clip got which slot).
    - **Filling its slots:** its best clips (by score) take its **short slots** and **long slots** of today. Until the
      topic is done, that share is kept free for it (the Slots page shows "kept for an Auto topic").
 3. **Weekend:** the extra +1 slots get the best Auto clips left over.
@@ -172,7 +179,8 @@ For each topic (`scout.find_videos`):
    angles, and whether it's a game's launch week.
 2. **Search:** YouTube (US) uploads from this week; this month only while too few pass.
 3. **Hard filters** (logged with the reason): clipped before, live, **not English** (YouTube's language, or a title
-   mostly in another script), shorter than *Min video length* (sports: 4 min)
+   mostly in another script), **podcasts under 300K views or from a channel under 100K subscribers** (none left = the
+   topic is skipped), shorter than *Min video length* (sports: 4 min)
    or **longer than an hour** (*Max video length*, 60 min at most), older than *Max age* (launch week: 7 days), or
    dead on arrival (under 5,000 views after 48h).
 4. **Full stats** for the shortlist: likes, comments, channel followers, heatmap, exact upload time.
@@ -209,7 +217,8 @@ For each topic (`scout.find_videos`):
    - It scores each clip on hook, flow, emotion, share and trend (0-10); the app turns that into the 0-100 virality,
      +5 when 2+ audience signals peak inside the clip. Same-kind clips overlapping a better one are dropped.
    - Live pieces always make their best clip; extra ones need virality 60+.
-6. **Snap** to whole sentences, with a little lead-in and room after.
+6. **Snap** to whole sentences: the end runs on to the end of its sentence; the start is right on the first word of
+   the moment (no lead-in footage).
 7. **Render** in 4K (2160x3840) with the framing, the colour grade (contrast + vibrance) and detail pass (denoise +
    sharpening), your logo, the header and the subtitles. A master copy is kept so the header can be edited later, and
    the light preview the app plays is made straight away.

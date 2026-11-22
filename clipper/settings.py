@@ -44,6 +44,10 @@ class AutoRow(BaseModel):
     videos: int = Field(1, ge=1, le=10, description="How many videos to clip for this topic each day.")
     short_slots: int = Field(1, ge=0, le=24, description="How many of the day's short slots this topic fills.")
     long_slots: int = Field(0, ge=0, le=12, description="How many of the day's long slots this topic fills.")
+    shorts_per_video: int = Field(0, ge=0, le=20, description="Shorts to cut from each video. 0 = automatic: its short "
+                                  "slots / videos + 1 spare, so the best ones win the slots.")
+    longs_per_video: int = Field(0, ge=0, le=10, description="Longs to cut from each video. 0 = automatic: its long "
+                                 "slots / videos + 1 spare.")
 
     @model_validator(mode="after")
     def _some(self):
@@ -75,7 +79,9 @@ class Settings(BaseModel):
     long_max: int = Field(_env("LONG_MAX", 180, int), ge=30, le=LONG_LIMIT, description="Longest long (s), your call (up to an hour). Over 180s it posts to YouTube as a normal video (still vertical) instead of a Short.")
     stretch: int = Field(_env("STRETCH_SHORT", 10, int), ge=0, le=60, description="Seconds a clip may run over its "
                          "max when cutting there would lose the setup or the payoff (a short never past 180s).")
-    pad_before: float = Field(_env("CLIP_PAD_BEFORE", 0.8), ge=0, le=5, description="Lead-in before the first word (s).")
+    pad_before: float = Field(0.0, ge=0, le=5, description="Lead-in before the first word (s). 0 = the clip starts right "
+                              "on the moment.")
+    start_fix: bool = Field(False, description="internal: the 0.8s lead-in of older versions was removed once")
     pad_after: float = Field(_env("CLIP_PAD_AFTER", 1.5), ge=0, le=5, description="Room after the last word for the reaction to land (s).")
     snap_reach: float = Field(_env("SNAP_REACH", 8.0), ge=0, le=30, description="How far (s) a clip's edge may move "
                               "to reach the start / end of a sentence.")
@@ -197,7 +203,11 @@ def get():
         if "s" not in _cache:
             raw = db.get_setting("app")
             try:
-                _cache["s"] = Settings(**(json.loads(raw) if raw else {}))
+                stored = json.loads(raw) if raw else {}
+                if stored and not stored.get("start_fix"):  # saved by an older version: no lead-in any more
+                    stored.update(pad_before=0.0, start_fix=True)
+                    db.set_setting("app", json.dumps(stored))
+                _cache["s"] = Settings(**stored)
             except (ValidationError, ValueError) as e:  # saved by an older version: start from the defaults
                 db.syslog(f"settings: saved settings didn't validate ({e}); using the defaults")
                 _cache["s"] = Settings()

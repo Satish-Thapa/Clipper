@@ -17,7 +17,7 @@ PlayResY: 1920
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, BorderStyle, Outline, Shadow, Alignment, MarginV
 Style: Cap,Arial Black,86,&H00FFFFFF,&H00000000,&H80000000,1,1,6,2,2,{margin}
-Style: Top,Arial Black,78,&H00FFFFFF,&H00000000,&H64000000,1,1,7,3,8,120
+Style: Top,Arial Black,78,&H00000000,&H00FFFFFF,&H00FFFFFF,1,3,14,0,8,120
 
 [Events]
 Format: Layer, Start, End, Style, Text
@@ -94,18 +94,17 @@ def _rows(words, n):
 
 
 def big_title(headline, y, length):
-    """The reel title as ASS: big white caps with a thick outline on 1-3 balanced lines (the fewest that keep it big;
-    a smaller font only when even 3 lines are too long), centred on y; it pops in, then gently pulses."""
+    """The reel title as ASS: black caps on a white box (the owner's look), 1-3 balanced lines (the fewest that keep it
+    big; a smaller font only when even 3 lines are too long), centred on y; steady (no animation)."""
     words = headline.upper().replace("{", "").replace("}", "").replace("\\", "/").split()
     for n in (1, 2, 3):
         rows = _rows(words, n)
         if max(map(_width, rows)) <= BIG_CHARS * 1.15 or n == 3:
             break
     size = max(50, min(BIG_TITLE, round(BIG_TITLE * BIG_CHARS / max(map(_width, rows)))))
-    pulse = "".join(rf"\t({ms},{ms + 500},\fscx{104 if j % 2 == 0 else 100}\fscy{104 if j % 2 == 0 else 100})"
-                    for j, ms in enumerate(range(900, min(int(length * 1000), 60000), 1800)))
-    tags = (rf"{{\an5\q2\pos(540,{y})\fs{size}\bord8\shad4\fscx40\fscy40\t(0,180,\fscx110\fscy110)"
-            rf"\t(180,320,\fscx100\fscy100){pulse}}}")
+    # BorderStyle 3 (the Top style): each line gets an opaque box in the outline colour (white), \bord = its padding.
+    # Still: no pop-in, no pulse (the owner wants the title steady, like the subtitles).
+    tags = rf"{{\an5\q2\pos(540,{y})\fs{size}\bord14\shad0\1c&H000000&\3c&HFFFFFF&\4c&HFFFFFF&}}"
     return tags + r"\N".join(_emoji(r) for r in rows)
 
 
@@ -611,6 +610,8 @@ if __name__ == "__main__":
     assert "Cap,{\\c&H00E5FF&" in a and "WAY BRO" in a and "PlayResY: 1920" in a and "Dialogue: 2," not in a, a  # karaoke, no header
     a = ass([], 10, 20, headline="Speed fails 😭", mid_y=700)
     assert "\\pos(540,700)" in a and "SPEED FAILS" in a and "Segoe UI Emoji" in a, a
+    assert "\\t(" not in a and "\\fscx" not in a, "the title is still: no pop-in, no pulse"
+    assert "&H00000000,&H00FFFFFF,&H00FFFFFF,1,3," in a, "black text on a white box"
     a = ass(W, 10, 20, shift=5)
     assert "Dialogue: 0,0:00:05.00," in a, a  # shifted for the exact cut
     assert ",2,250" in ass([], 0, 1) and ",2,1000" in ass([], 0, 1, cap_margin=1000)

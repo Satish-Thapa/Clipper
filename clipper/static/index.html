@@ -236,6 +236,8 @@ pre.log { background: #141414; border: 1px solid var(--line); border-radius: 6px
 .reel .ra button { border-color: rgba(255,212,0,.5); flex-direction: column; gap: 0; }
 .reel .ra button:hover { background: var(--yellow); color: #111; }
 .reel .ra small { font-size: 9px; }
+.reel .info, .reel .ra { transition: opacity .4s; }
+.reel.quiet .info, .reel.quiet .ra { opacity: 0; pointer-events: none; }
 @media (max-width: 900px) { .g2, .g2e { grid-template-columns: 1fr; } }
 @media (max-width: 768px) {
   .shell { grid-template-columns: 1fr; }
@@ -362,7 +364,8 @@ pre.log { background: #141414; border: 1px solid var(--line); border-radius: 6px
       </div>
       <div class="card">
         <h2>Posting</h2>
-        <label class="check"><span class="switch"><input type="checkbox" name="fill"><span></span></span>Fill today's free slots <i class="tip" tabindex="0" data-tip="The best clips take today's free slots (never ones kept for Auto topics). The rest wait in Clips for you to place.">i</i></label>
+        <div class="f"><span class="lbl">Put the best clips in free slots <i class="tip" tabindex="0" data-tip="The clips with the highest virality take the earliest free slots of the time you pick (never the slots kept for Auto topics today). The rest wait in Clips for you to place.">i</i></span>
+          <div class="tabs" id="fillTabs"><button type="button" data-d="0" class="on">Off</button><button type="button" data-d="1">Today</button><button type="button" data-d="7">This week</button><button type="button" data-d="30">This month</button></div></div>
         <p class="small dim" id="freeNow"></p>
       </div>
       <div class="card">
@@ -415,7 +418,9 @@ pre.log { background: #141414; border: 1px solid var(--line); border-radius: 6px
 <section class="page" id="p-clips">
   <div class="head"><div><h1>Clips</h1><p class="sub">Every clip made. Ready clips wait here until you put them in a slot or post them (Post now uses one of today's slots).</p></div>
     <button class="btn" onclick="openReels()"><svg class="i"><use href="#i-play"/></svg>Watch as reels</button></div>
-  <div class="row" style="margin-bottom:16px"><div class="tabs" id="clipTabs"></div><span class="sp"></span><div class="row" id="clipBulk"></div><select id="kindF" style="width:auto"><option value="">Shorts + longs</option><option value="short">Shorts</option><option value="long">Longs</option></select></div>
+  <div class="row" style="margin-bottom:16px"><div class="tabs" id="clipTabs"></div><input id="clipSearch" placeholder="Search clips..." autocomplete="off" style="width:min(240px,100%)"><span class="sp"></span><div class="row" id="clipBulk"></div>
+    <select id="sortF" style="width:auto" title="Sort"><option value="score">Highest virality</option><option value="new">Newest made</option><option value="posted">Latest posted</option><option value="views">Most views</option><option value="len">Longest</option><option value="short">Shortest</option></select>
+    <select id="kindF" style="width:auto"><option value="">Shorts + longs</option><option value="short">Shorts</option><option value="long">Longs</option></select></div>
   <div class="clips" id="clipGrid"></div>
   <p class="small dim" id="clipMore" style="text-align:center;margin-top:16px"></p>
 </section>
@@ -618,7 +623,15 @@ async function prepCreate() {
   f.filler.innerHTML = SET.fillers.length ? SET.fillers.map(n => `<option ${n === s.filler ? "selected" : ""}>${esc(n)}</option>`).join("") : `<option value="">none yet: add one in Settings</option>`;
   $("#frames").innerHTML = Object.entries(FRAMES).map(([k, [n, d, svg]]) => `<div class="frame ${layout === k ? "on" : ""}" tabindex="0" onclick="pickFrame('${k}')" onkeydown="event.key==='Enter'&&pickFrame('${k}')"><svg viewBox="0 0 54 96">${svg}</svg><b>${n}</b><span>${d}</span></div>`).join("");
   $("#cornerBox").hidden = layout !== "cam"; $("#fillerBox").hidden = layout !== "split";
-  if (S) { const free = S.today.slots.filter(x => x.state === "free" && !x.reserved && x.at > S.now + 60).length; $("#freeNow").textContent = `${free} free slot(s) left today${S.today.slots.some(x => x.reserved) ? " (not counting the ones kept for Auto)" : ""}.`; }
+  fillNote();
+}
+let fillDays = 0;
+$("#fillTabs").onclick = e => { const b = e.target.closest("button"); if (!b) return; fillDays = +b.dataset.d; $$("#fillTabs button").forEach(x => x.classList.toggle("on", x === b)); fillNote(); };
+function fillNote() {
+  if (!S) return;
+  const free = S.today.slots.filter(x => x.state === "free" && !x.reserved && x.at > S.now + 60).length;
+  $("#freeNow").textContent = !fillDays ? "Off: every clip waits in Clips; you place them." : fillDays === 1
+    ? `${free} free slot(s) left today. The highest virality takes the earliest.` : `The highest-virality clips take the earliest free slots of the next ${fillDays} days.`;
 }
 function pickFrame(k) { layout = k; prepCreate(); }
 $("#modeTabs").onclick = e => { const b = e.target.closest("button"); if (!b) return; mode = b.dataset.m; $$("#modeTabs button").forEach(x => x.classList.toggle("on", x === b)); if (mode === "live") setSrc("link"); syncCreate(); };
@@ -643,14 +656,14 @@ async function createJob(e) {
     if (src === "file" && mode === "normal") {
       const file = f.file.files[0];
       if (!file) throw new Error("Pick a video file.");
-      const q = new URLSearchParams({filename: file.name, shorts, longs, layout, cam_corner: look.cam_corner, header: look.header, subtitles: look.subtitles, notes: f.notes.value, fill: f.fill.checked});
+      const q = new URLSearchParams({filename: file.name, shorts, longs, layout, cam_corner: look.cam_corner, header: look.header, subtitles: look.subtitles, notes: f.notes.value, fill: fillDays});
       if (look.filler) q.set("filler", look.filler);
       $("#cfBtn span").textContent = `Uploading ${(file.size / 1e6).toFixed(0)} MB...`;
       r = await api("POST", "/api/jobs/file?" + q, file);
     } else {
       const url = f.url.value.trim();
       if (!/^https?:\/\/(www\.|m\.)?(youtube\.com\/(watch\?|live\/|shorts\/)|youtu\.be\/)/i.test(url)) throw new Error("Paste a YouTube link (youtube.com/watch?v=..., youtu.be/..., youtube.com/live/...).");
-      r = await api("POST", "/api/jobs", {url, mode, shorts, longs, notes: f.notes.value, fill: f.fill.checked, ...look,
+      r = await api("POST", "/api/jobs", {url, mode, shorts, longs, notes: f.notes.value, fill: fillDays, ...look,
                                           chunk_minutes: mode === "live" ? (+f.chunk_minutes.value || null) : null, max_chunks: mode === "live" ? (+f.max_chunks.value || 0) : 0});
     }
     toast(`Job #${r.id} started`); f.url.value = ""; f.file.value = ""; f.notes.value = ""; location.hash = "#jobs";
@@ -764,12 +777,20 @@ let cf = "all", clipShown = 24;
 const clipSel = new Set();
 $("#clipTabs").innerHTML = Object.entries(CF).map(([k, [n]]) => `<button data-f="${k}" class="${k === cf ? "on" : ""}">${n}</button>`).join("");
 $("#clipTabs").onclick = e => { const b = e.target.closest("button"); if (!b) return; cf = b.dataset.f; clipShown = 24; $$("#clipTabs button").forEach(x => x.classList.toggle("on", x === b)); $("#clipGrid").dataset.k = ""; renderClips(); };
-$("#kindF").onchange = () => { $("#clipGrid").dataset.k = ""; renderClips(); };
+$("#kindF").onchange = $("#sortF").onchange = () => { clipShown = 24; $("#clipGrid").dataset.k = ""; renderClips(); };
+$("#clipSearch").oninput = e => { clearTimeout(window._cs); window._cs = setTimeout(() => { reelQ = e.target.value.trim().toLowerCase(); $("#reelSearch").value = e.target.value; clipShown = 24; $("#clipGrid").dataset.k = ""; renderClips(); }, 250); };
 const ver = c => encodeURIComponent(`${c.path}|${c.headline || ""}`);
 const clipVideo = (c, attrs) => `<video src="/api/clips/${c.id}/preview?v=${ver(c)}" poster="/api/clips/${c.id}/poster?v=${ver(c)}" preload="none" ${attrs}></video>`;
 const STATUS = {rendered: ["Ready", "g"], scheduled: ["In a slot", "b"], uploading: ["Posting", "b"], rendering: ["Rendering", ""], uploaded: ["Posted", "ok"], "render failed": ["Render failed", "bad"], "upload failed": ["Upload failed", "bad"]};
 const statusChip = c => { const [n, k] = STATUS[c.status] || [c.status, /uploaded/.test(c.status) ? "warn" : ""]; return `<span class="chip ${k}">${esc(n)}</span>`; };
-function clipList() { const f = CF[cf][1], k = $("#kindF").value; return S.clips.filter(c => f(c) && (!k || c.kind === k)); }
+const lastPost = c => Math.max(0, ...Object.values(J(c.uploads, {})).filter(u => u.id).map(u => u.at || 0));
+const totalViews = c => Object.values(J(c.views, {})).reduce((a, b) => a + (+b || 0), 0);
+const SORTS = {score: (a, b) => (b.score || 0) - (a.score || 0), new: (a, b) => b.id - a.id, posted: (a, b) => lastPost(b) - lastPost(a),
+               views: (a, b) => totalViews(b) - totalViews(a), len: (a, b) => (b.end - b.start) - (a.end - a.start), short: (a, b) => (a.end - a.start) - (b.end - b.start)};
+function clipList() {
+  const f = CF[cf][1], k = $("#kindF").value;
+  return S.clips.filter(c => f(c) && (!k || c.kind === k) && reelFind(c)).sort(SORTS[$("#sortF").value] || SORTS.score);
+}
 const posted = c => Object.values(J(c.uploads, {})).some(u => u.id);
 const failedOn = c => Object.entries(J(c.uploads, {})).filter(([, u]) => u.error);
 function clipFacts(c) {  // virality + what kind of moment + the AI's five scores, compact
@@ -785,7 +806,7 @@ function clipErrors(c) {
 function clipActions(c, inReels) {
   const ready = c.path && !["rendering", "uploading"].includes(c.status), up = posted(c), fail = failedOn(c).length;
   return [!inReels && c.path ? `<button class="btn plain sm" title="Watch full screen from here" onclick="openReels(${c.id})">${ico("play")}</button>` : "",
-    ready && !up && !fail ? `<button class="btn ghost sm" title="Post now: uses the next free ${c.kind} slot today" onclick="postNow(${c.id}, this)">${ico("up")}Post</button>` : "",
+    ready && !up && !fail ? `<button class="btn ghost sm" title="Post now: uses the next free ${c.kind} slot today" onclick="postNow(${c.id})">${ico("up")}Post</button>` : "",
     ready && fail ? `<button class="btn ghost sm" title="Try the failed platform(s) again (today's limit still applies)" onclick="act(this, () => api('POST','/api/clips/${c.id}/retry'), 'Retrying the upload')">${ico("refresh")}Retry</button>` : "",
     ready && !up && c.status !== "scheduled" ? `<button class="btn ghost sm" title="Put it in a free slot" onclick="slotPicker(${c.id})">${ico("clock")}Slot</button>` : "",
     c.status === "scheduled" ? `<button class="btn ghost sm" title="Take it off its slot (it waits here)" onclick="act(this, () => api('POST','/api/clips/${c.id}/unassign'), 'Taken off its slot')">${ico("x")}Unslot</button>` : "",
@@ -797,7 +818,7 @@ function clipActions(c, inReels) {
 function clipCard(c, i) {
   const ups = Object.entries(J(c.uploads, {})).filter(([, u]) => u.id), views = J(c.views, {});
   return `<div class="clip ${clipSel.has(c.id) ? "picked" : ""}" style="animation-delay:${Math.min(i, 8) * 120}ms"><div class="media">${c.path ? clipVideo(c, "controls playsinline") : `<div class="skel" style="height:100%"></div>`}
-      <label class="selbox" title="Select"><input type="checkbox" ${clipSel.has(c.id) ? "checked" : ""} onchange="selClip(${c.id}, this.checked)"></label><span class="chip kind ${c.kind === "long" ? "b" : "g"}">${c.kind}</span></div>
+      <label class="selbox" title="Select"><input type="checkbox" data-sel="${c.id}" ${clipSel.has(c.id) ? "checked" : ""} onchange="selClip(${c.id}, this.checked)"></label><span class="chip kind ${c.kind === "long" ? "b" : "g"}">${c.kind}</span></div>
     <div class="body"><div class="row">${statusChip(c)}${c.status === "scheduled" && c.post_at ? `<span class="small dim">${when(c.post_at)}</span>` : ""}<span class="small dim">${mmss(c.end - c.start)}</span></div>
       <div class="title">${esc(c.title)}</div>${c.headline ? `<div class="small" style="color:var(--yellow)">${esc(c.headline)}</div>` : ""}
       ${clipFacts(c)}
@@ -807,16 +828,22 @@ function clipCard(c, i) {
 }
 function renderClips() {
   const list = clipList(), shown = list.slice(0, clipShown);
-  const key = JSON.stringify([cf, $("#kindF").value, [...clipSel], shown.map(c => [c.id, c.status, c.path, c.uploads, c.views, c.post_at, c.title, c.headline])]);
-  setPart($("#clipBulk"), JSON.stringify([...clipSel]), clipSel.size ? `<span class="chip b">${clipSel.size} selected</span><button class="btn danger sm" onclick="delClips([...clipSel])">${ico("trash")}Delete selected</button><button class="btn plain sm" onclick="clipSel.clear();renderClips()">Clear</button>`
-    : `<button class="btn plain sm" onclick="clipList().slice(0, clipShown).forEach(c => clipSel.add(c.id));renderClips()">Select all shown</button>`);
+  const key = JSON.stringify([cf, $("#kindF").value, $("#sortF").value, reelQ, shown.map(c => [c.id, c.status, c.path, c.uploads, c.views, c.post_at, c.title, c.headline])]);
+  setPart($("#clipBulk"), JSON.stringify([...clipSel]), clipSel.size ? `<span class="chip b">${clipSel.size} selected</span><button class="btn danger sm" onclick="delClips([...clipSel])">${ico("trash")}Delete selected</button><button class="btn plain sm" onclick="selAll(false)">Clear</button>`
+    : `<button class="btn plain sm" onclick="selAll(true)">Select all shown</button>`);
   if ($("#clipGrid").dataset.k === key) return;
   if ($$("#clipGrid video").some(v => !v.paused)) return;  // never restart a playing video
   $("#clipGrid").dataset.k = key;
   $("#clipGrid").innerHTML = shown.length ? shown.map(clipCard).join("") : `<div class="card empty" style="grid-column:1/-1">${ico("film")}<p>No clips here yet.</p><a class="btn" href="#create">Make some</a></div>`;
   $("#clipMore").textContent = list.length > shown.length ? `Showing ${shown.length} of ${list.length}: scroll for more` : "";
 }
-function selClip(id, on) { on ? clipSel.add(id) : clipSel.delete(id); $("#clipGrid").dataset.k = ""; renderClips(); }
+function selClip(id, on) {
+  on ? clipSel.add(id) : clipSel.delete(id);
+  const box = $(`#clipGrid input[data-sel="${id}"]`);
+  if (box) { box.checked = on; box.closest(".clip").classList.toggle("picked", on); }
+  renderClips();  // only the selection bar changes: the grid's key doesn't include the selection
+}
+function selAll(on) { (on ? clipList().slice(0, clipShown).map(c => c.id) : [...clipSel]).forEach(id => selClip(id, on)); }
 function delClips(ids) {
   confirmDo(`Delete ${ids.length} clip(s)? Copies already posted stay online.`, async () => {
     const r = await api("POST", "/api/clips/delete", {ids}); ids.forEach(i => clipSel.delete(i));
@@ -825,7 +852,15 @@ function delClips(ids) {
   }, r => `Deleted ${r.deleted.length}`);
 }
 new IntersectionObserver(es => { if (es.some(e => e.isIntersecting) && S && page === "clips" && clipShown < clipList().length) { clipShown += 24; $("#clipGrid").dataset.k = ""; renderClips(); } }, {rootMargin: "600px"}).observe($("#clipMore"));
-async function postNow(id, btn) { await act(btn, () => api("POST", `/api/clips/${id}/post`), r => `Posting now (the ${t12(r.slot.time)} slot)`); }
+function postNow(id) {  // pick where; it takes the next free slot of its kind today; the daily limit still applies
+  const c = S.clips.find(x => x.id === id), def = (S.post_to[c.kind] || []), t = S.today;
+  openModal(`<h2>${ico("up")} Post "${esc(c.title)}" now</h2>
+    <p class="small dim">It takes the next free ${c.kind} slot today (${t.used[c.kind]}/${t.limit[c.kind]} ${c.kind}s posted today). Tick where it goes; a platform already at today's limit is skipped. To go past the limits use Force.</p>
+    <div class="stack">${Object.entries(PLAT).map(([p, n]) => `<label class="check"><input type="checkbox" data-pp="${p}" ${def.includes(p) ? "checked" : ""}> ${n}${S.platforms[p] ? "" : ` <span class="dim small">(not connected)</span>`}</label>`).join("")}</div>
+    <div class="row end" style="margin-top:14px"><button class="btn plain" onclick="closeModal()">Cancel</button><button class="btn" id="postGo">${ico("up")}Post now</button></div>`);
+  $("#postGo").onclick = async e => { const platforms = $$("[data-pp]").filter(x => x.checked).map(x => x.dataset.pp); if (!platforms.length) return toast("Tick at least one platform", true);
+    if (await act(e.target, () => api("POST", `/api/clips/${id}/post`, {platforms}), r => `Posting to ${platforms.map(p => PLAT[p]).join(", ")} (the ${t12(r.slot.time)} slot)`)) closeModal(); };
+}
 async function slotPicker(id) {
   const c = S.clips.find(x => x.id === id);
   openModal(`<h2>${ico("clock")} Put it in a slot</h2><div class="skel" style="height:120px"></div>`);
@@ -882,7 +917,7 @@ function whyClip(id) { const c = S.clips.find(x => x.id === id); openModal(`<h2>
 // ---------- reels ----------
 // Only the reel on screen and its neighbours hold a video (the rest are emptied): the browser never runs out of
 // connections or memory, so scrolling past the 10th reel doesn't stall. Previews are made right after each render.
-let reelMuted = true, reelObs = null, reelIds = [], reelQ = "";
+let reelMuted = true, reelObs = null, reelIds = [], reelQ = "";  // reelQ: the search, shared by Clips and the reels
 const reelFind = c => !reelQ || [c.title, c.headline, c.reason, c.description, J(c.why, {}).moment, J(c.why, {}).source].join(" ").toLowerCase().includes(reelQ);
 function reelInfo(c) {
   const ups = Object.entries(J(c.uploads, {})).filter(([, u]) => u.id), views = J(c.views, {});
@@ -895,7 +930,7 @@ function reelInfo(c) {
 }
 function reelActs(c) {
   const ready = c.path && !["rendering", "uploading"].includes(c.status), up = posted(c);
-  return [ready && !up ? `<button title="Post now (next free slot today)" onclick="postNow(${c.id}, this)">${ico("up")}<small>post</small></button>` : "",
+  return [ready && !up ? `<button title="Post now (pick where)" onclick="postNow(${c.id})">${ico("up")}<small>post</small></button>` : "",
     ready && !up && c.status !== "scheduled" ? `<button title="Put in a slot" onclick="slotPicker(${c.id})">${ico("clock")}<small>slot</small></button>` : "",
     ready ? `<button title="Force upload" onclick="forcePicker(${c.id})">${ico("alert")}<small>force</small></button>` : "",
     `<button title="Why this clip?" onclick="whyClip(${c.id})">${ico("info")}<small>info</small></button>`,
@@ -903,12 +938,12 @@ function reelActs(c) {
     ready ? `<button title="Delete" onclick="delClips([${c.id}])">${ico("trash")}<small>delete</small></button>` : ""].join("");
 }
 function openReels(startId) {
-  let list = clipList().filter(c => c.path && reelFind(c));
-  if (startId && !list.some(c => c.id === startId)) { reelQ = ""; $("#reelSearch").value = ""; list = S.clips.filter(c => c.path); }
+  let list = clipList().filter(c => c.path);
+  if (startId && !list.some(c => c.id === startId)) { reelQ = ""; $("#reelSearch").value = $("#clipSearch").value = ""; list = S.clips.filter(c => c.path); }
   reelIds = list.map(c => c.id);
   $$("#clipGrid video").forEach(v => v.pause());
   $("#reels").hidden = false; document.body.style.overflow = "hidden";
-  $("#reelList").innerHTML = list.length ? list.map(c => `<section class="reel" data-id="${c.id}"><video data-src="/api/clips/${c.id}/preview?v=${ver(c)}" data-poster="/api/clips/${c.id}/poster?v=${ver(c)}" loop playsinline ${reelMuted ? "muted" : ""} preload="none" onclick="this.paused ? this.play() : this.pause()"></video><div class="info"></div><div class="ra"></div></section>`).join("")
+  $("#reelList").innerHTML = list.length ? list.map(c => `<section class="reel" data-id="${c.id}"><video data-src="/api/clips/${c.id}/preview?v=${ver(c)}" data-poster="/api/clips/${c.id}/poster?v=${ver(c)}" loop playsinline ${reelMuted ? "muted" : ""} preload="none" onclick="this.paused ? this.play() : this.pause()" onplay="reelQuiet(this, true)" onpause="reelQuiet(this, false)"></video><div class="info"></div><div class="ra"></div></section>`).join("")
     : `<section class="reel"><p>${reelQ ? "No clip matches your search." : "No clips here yet."}</p></section>`;
   reelSync(true);
   reelObs && reelObs.disconnect();
@@ -929,9 +964,13 @@ function reelFocus(cur) {
   const v = cur.querySelector("video");
   if (v) { v.muted = reelMuted; v.currentTime = 0; v.play().catch(() => {}); }
 }
+function reelQuiet(v, playing) {  // playing: the details fade out after 2s so the whole video shows; paused: back
+  const r = v.closest(".reel"); clearTimeout(r._q);
+  if (playing) r._q = setTimeout(() => r.classList.add("quiet"), 2000); else r.classList.remove("quiet");
+}
 function closeReels() { $("#reels").hidden = true; document.body.style.overflow = ""; reelObs && reelObs.disconnect(); $$("#reelList video").forEach(v => { v.pause(); v.removeAttribute("src"); v.load(); }); $("#reelList").innerHTML = ""; }
 function reelMute() { reelMuted = !reelMuted; $$("#reelList video").forEach(v => v.muted = reelMuted); $("#muteBtn").innerHTML = ico(reelMuted ? "mute" : "vol"); }
-$("#reelSearch").oninput = e => { clearTimeout(window._rs); window._rs = setTimeout(() => { reelQ = e.target.value.trim().toLowerCase(); openReels(); }, 300); };
+$("#reelSearch").oninput = e => { clearTimeout(window._rs); window._rs = setTimeout(() => { reelQ = e.target.value.trim().toLowerCase(); $("#clipSearch").value = e.target.value; $("#clipGrid").dataset.k = ""; openReels(); }, 300); };
 function reelSync(force) {
   if ($("#reels").hidden || !S) return;
   $$("#reelList .reel[data-id]").forEach(r => {
@@ -1007,12 +1046,14 @@ async function loadAuto(force) {
   $("#autoStage").textContent = AUTO.running ? AUTO.stage || "running" : "idle"; $("#autoStage").className = "chip " + (AUTO.running ? "b" : "");
   $("#autoNext").textContent = AUTO.next_at ? `Today's research starts ${hhmm(AUTO.next_at)}${AUTO.enabled ? "" : " (when Auto is on)"}.` : "Today's research is done; the next one is tomorrow.";
   const run = AUTO.today[0];
-  $("#autoToday").innerHTML = run ? `<p class="small dim">${esc(run.reason)} · ${when(run.at)} · ${run.seconds || 0}s${run.error ? ` · <span style="color:var(--bad)">${esc(run.error)}</span>` : ""}${run.weekend ? ` · ${run.weekend} weekend slot(s) filled` : ""}</p>` + (run.rows || []).map(r => `<div style="border-top:1px solid var(--line);padding:10px 0">
+  const logBox = $("#autoLog"), atBottom = !logBox || logBox.scrollHeight - logBox.scrollTop - logBox.clientHeight < 40;
+  $("#autoToday").innerHTML = run ? `<details open class="autolog"><summary>Live log: every step, decision and why (${(run.log || []).length} lines)</summary><pre class="log" id="autoLog" style="max-height:420px">${esc((run.log || []).join("\n")) || "starting..."}</pre></details><p class="small dim">${esc(run.reason)} · ${when(run.at)} · ${run.seconds || 0}s${run.error ? ` · <span style="color:var(--bad)">${esc(run.error)}</span>` : ""}${run.weekend ? ` · ${run.weekend} weekend slot(s) filled` : ""}</p>` + (run.rows || []).map(r => `<div style="border-top:1px solid var(--line);padding:10px 0">
       <div class="row"><span class="chip g">${esc(r.category)}</span><b>${esc(r.topic || r.asked)}</b>${r.trend ? `<span class="chip b">trending</span>` : ""}<span class="sp"></span><span class="small dim">${r.clips || 0} clip(s), ${Object.keys(r.slots || {}).length} in slots</span></div>
       ${(r.videos || []).map(v => `<div class="small">${ico("film")} ${esc(v.title)} <span class="dim">· scout ${v.score}/100 · job #${v.job}</span></div>`).join("")}
       ${r.topic_id ? `<button class="btn plain sm" onclick="topicLog(${r.topic_id})">research log</button>` : ""}</div>`).join("")
     : `<p class="dim">Nothing yet today.</p>` + (AUTO.topics.length ? `<p class="small">Earlier: ${AUTO.topics.slice(0, 5).map(t => `<a href="javascript:topicLog(${t.id})">${esc(t.topic)}</a>`).join(", ")}</p>` : "");
   decisionsCard($("#autoDecide"), AUTO.decisions);
+  const lb = $("#autoLog"); if (lb && atBottom) lb.scrollTop = lb.scrollHeight;
 }
 function decisionsCard(el, d) {
   el.innerHTML = `<h2>${ico("spark")} Today's decisions</h2>` + (d ? `<p>${esc(d.summary)}</p>
@@ -1024,18 +1065,21 @@ async function topicLog(id) { const t = await api("GET", `/api/topics/${id}`); o
 function drawRows() {
   const v = SET.values;
   $("#rows").innerHTML = autoRows.map((r, i) => `<div class="card" style="background:var(--surface);margin-bottom:10px;padding:14px">
-    <div class="row" style="margin-bottom:10px"><b>Topic ${i + 1}</b><span class="sp"></span><span class="small dim">clips ${r.short_slots ? Math.ceil(r.short_slots / r.videos) + 1 : 0} short + ${r.long_slots ? Math.ceil(r.long_slots / r.videos) + 1 : 0} long per video</span><button class="btn plain sm" title="Remove" onclick="autoRows.splice(${i},1);drawRows()">${ico("trash")}</button></div>
+    <div class="row" style="margin-bottom:10px"><b>Topic ${i + 1}</b><span class="sp"></span><span class="small dim">cuts ${r.shorts_per_video || (r.short_slots ? Math.ceil(r.short_slots / r.videos) + 1 : 0)} short + ${r.longs_per_video || (r.long_slots ? Math.ceil(r.long_slots / r.videos) + 1 : 0)} long per video${r.shorts_per_video || r.longs_per_video ? " (yours)" : " (auto)"}</span><button class="btn plain sm" title="Remove" onclick="autoRows.splice(${i},1);drawRows()">${ico("trash")}</button></div>
     <div class="fields">
       <label class="f"><span class="lbl">Category${tip("Gaming, podcast or sports: the rules the AI uses to find and cut videos.")}</span><select onchange="autoRows[${i}].category=this.value">${["gaming", "podcast", "sports"].map(c => `<option ${c === r.category ? "selected" : ""}>${c}</option>`).join("")}</select></label>
       <label class="f"><span class="lbl">Topic${tip("What to search, e.g. GTA 6. Empty = the AI picks what's trending in this category today.")}</span><input value="${esc(r.topic)}" maxlength="100" placeholder="trending today" oninput="autoRows[${i}].topic=this.value"></label>
       <label class="f"><span class="lbl">Videos / day${tip("How many videos to clip for this topic each day.")}</span><input type="number" min="1" max="10" value="${r.videos}" oninput="autoRows[${i}].videos=Math.max(1,+this.value||1);budget()"></label>
       <label class="f"><span class="lbl">Short slots${tip("How many of the day's short slots this topic fills with its best shorts.")}</span><input type="number" min="0" max="24" value="${r.short_slots}" oninput="autoRows[${i}].short_slots=+this.value||0;budget()"></label>
       <label class="f"><span class="lbl">Long slots${tip("How many of the day's long slots it fills.")}</span><input type="number" min="0" max="12" value="${r.long_slots}" oninput="autoRows[${i}].long_slots=+this.value||0;budget()"></label>
+      <label class="f"><span class="lbl">Shorts / video${tip("How many shorts to cut from each video. 0 = automatic: its short slots / videos + 1 spare, so the highest virality wins the slots.")}</span><input type="number" min="0" max="20" value="${r.shorts_per_video || 0}" oninput="autoRows[${i}].shorts_per_video=+this.value||0;drawRowsSoon()"></label>
+      <label class="f"><span class="lbl">Longs / video${tip("How many longs to cut from each video. 0 = automatic: its long slots / videos + 1 spare.")}</span><input type="number" min="0" max="10" value="${r.longs_per_video || 0}" oninput="autoRows[${i}].longs_per_video=+this.value||0;drawRowsSoon()"></label>
     </div></div>`).join("") || `<p class="dim">No topics yet.</p>`;
   $("#addRow").disabled = autoRows.length >= 3; $("#rowCount").textContent = `${autoRows.length}/3`;
   budget();
 }
-function addRow() { if (autoRows.length < 3) { autoRows.push({category: ["gaming", "podcast", "sports"].find(c => !autoRows.some(r => r.category === c)) || "gaming", topic: "", videos: 1, short_slots: 1, long_slots: 0}); drawRows(); } }
+function drawRowsSoon() { clearTimeout(window._dr); window._dr = setTimeout(() => { if (!$("#rows").contains(document.activeElement)) drawRows(); }, 800); }
+function addRow() { if (autoRows.length < 3) { autoRows.push({category: ["gaming", "podcast", "sports"].find(c => !autoRows.some(r => r.category === c)) || "gaming", topic: "", videos: 1, short_slots: 1, long_slots: 0, shorts_per_video: 0, longs_per_video: 0}); drawRows(); } }
 function budget() {
   const v = SET.values, s = autoRows.reduce((n, r) => n + r.short_slots, 0), l = autoRows.reduce((n, r) => n + r.long_slots, 0);
   const m = (u, lim, name) => `<div class="small" style="margin-bottom:6px"><div class="row"><span>${name}</span><span class="sp"></span><b style="color:${u > lim ? "var(--bad)" : "var(--text)"}">${u} / ${lim}</b></div><div class="meter ${u > lim ? "over" : ""}"><i style="width:${lim ? Math.min(100, u / lim * 100) : (u ? 100 : 0)}%"></i></div></div>`;

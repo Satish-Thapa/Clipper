@@ -291,13 +291,18 @@ def curve_table(parts, n, step=10):
 REEL_EMOJI = "😭💀🤣😂😳🔥😱🤯😤🥶"
 
 
-def reel_note(streamer=""):
-    """Clean / reel style: the header on the video names the streamer and what they're doing, funny, with an emoji."""
-    who = f' The streamer is "{streamer}" (use the name fans call them, e.g. "IShowSpeed" -> "SPEED").' if streamer else ""
-    return ("\n\nHEADLINE FOR THIS CHANNEL'S REELS (overrides the headline rule above): the streamer's name + what they are "
-            "doing or saying in this moment, a bit funny / teasing, 4-7 words, CAPS, ending with ONE emoji from "
-            f"{' '.join(REEL_EMOJI)}. Examples: \"SPEED THINKS ANIMALS ARE HUMAN 😭\", \"KAI GETS SCAMMED BY A KID 💀\", "
-            "\"XQC RAGES AT THE CHAT 🤣\". It still matches the title's moment." + who + "\n")
+def reel_note(channel=""):
+    """The header on the video: what happens, a bit funny, with an emoji; the creator's name only for a big individual
+    creator (the owner's rule: "SPEED DID THIS" yes, a small channel's or a show's name no)."""
+    who = (f' The video\'s channel is "{channel}".' if channel else " The channel isn't known: don't name anyone.")
+    return ("\n\nHEADLINE FOR THIS CHANNEL'S REELS (overrides the headline rule above): what is happening in this moment, a "
+            "bit funny / teasing, 4-7 words, CAPS, ending with ONE emoji from "
+            f"{' '.join(REEL_EMOJI)}.\nNAMES (header AND title): use the creator's name ONLY when the channel is a big, "
+            "well-known INDIVIDUAL creator or streamer fans know by name, in the short form fans use (IShowSpeed -> SPEED, "
+            "Kai Cenat -> KAI, xQc -> XQC, MrBeast -> MRBEAST): \"SPEED THINKS ANIMALS ARE HUMAN 😭\". When the channel is "
+            "a smaller creator, or not one person (a podcast / show / network / brand / clip channel), don't name the "
+            "channel or anyone in it: just say what happens: \"COPS CHASE A GARBAGE TRUCK 💀\", \"HE DID NOT EXPECT THAT "
+            "QUESTION 😳\". It still matches the title's moment." + who + "\n")
 
 
 def reel_headline(text, title="", n=7):
