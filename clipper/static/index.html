@@ -248,6 +248,13 @@ pre.log { background: #141414; border: 1px solid var(--line); border-radius: 6px
 .reel .ra small { font-size: 9px; }
 .reel .info, .reel .ra { transition: opacity .4s; }
 .reel.quiet .info, .reel.quiet .ra { opacity: 0; pointer-events: none; }
+/* reels: seek bar (drag to skip parts), always on; it only dims while playing */
+.reel .info, .reel .ra { bottom: 58px; }
+.reel .seek { position: absolute; left: 12px; right: 12px; bottom: 14px; display: flex; align-items: center; gap: 10px; font-size: 12px;
+  color: #fff; text-shadow: 0 1px 3px #000; transition: opacity .4s; z-index: 2; }
+.reel.quiet .seek { opacity: .55; } .reel .seek:hover, .reel .seek:active { opacity: 1; }
+.reel .seek span { min-width: 38px; font-variant-numeric: tabular-nums; } .reel .seek span:last-child { text-align: right; }
+.reel .seek input { flex: 1; width: auto; padding: 0; margin: 0; height: 28px; background: transparent; border: 0; accent-color: var(--yellow); cursor: pointer; touch-action: none; }
 @media (max-width: 900px) { .g2, .g2e { grid-template-columns: 1fr; } }
 @media (max-width: 768px) {
   .shell { grid-template-columns: 1fr; }
@@ -827,7 +834,8 @@ $("#clipTabs").innerHTML = Object.entries(CF).map(([k, [n]]) => `<button data-f=
 $("#clipTabs").onclick = e => { const b = e.target.closest("button"); if (!b) return; cf = b.dataset.f; clipShown = 24; $$("#clipTabs button").forEach(x => x.classList.toggle("on", x === b)); $("#clipGrid").dataset.k = ""; renderClips(); };
 $("#kindF").onchange = $("#sortF").onchange = () => { clipShown = 24; $("#clipGrid").dataset.k = ""; renderClips(); };
 $("#clipSearch").oninput = e => { clearTimeout(window._cs); window._cs = setTimeout(() => { reelQ = e.target.value.trim().toLowerCase(); $("#reelSearch").value = e.target.value; clipShown = 24; $("#clipGrid").dataset.k = ""; renderClips(); }, 250); };
-const ver = c => encodeURIComponent(`${c.path}|${c.headline || ""}`);
+const fsize = b => b >= 1e9 ? `${(b / 1e9).toFixed(2)} GB` : b >= 1e6 ? `${Math.round(b / 1e6)} MB` : `${Math.max(1, Math.round(b / 1e3))} KB`;
+const ver = c =>encodeURIComponent(`${c.path}|${c.headline || ""}`);
 const clipVideo = (c, attrs) => `<video src="/api/clips/${c.id}/preview?v=${ver(c)}" poster="/api/clips/${c.id}/poster?v=${ver(c)}" preload="none" ${attrs}></video>`;
 const STATUS = {rendered: ["Ready", "g"], scheduled: ["In a slot", "b"], uploading: ["Posting", "b"], rendering: ["Rendering", ""], uploaded: ["Posted", "ok"], "render failed": ["Render failed", "bad"], "upload failed": ["Upload failed", "bad"]};
 const statusChip = c => { const [n, k] = STATUS[c.status] || [c.status, /uploaded/.test(c.status) ? "warn" : ""]; return `<span class="chip ${k}">${esc(n)}</span>`; };
@@ -867,7 +875,7 @@ function clipCard(c, i) {
   const ups = Object.entries(J(c.uploads, {})).filter(([, u]) => u.id), views = J(c.views, {});
   return `<div class="clip ${clipSel.has(c.id) ? "picked" : ""}" style="animation-delay:${Math.min(i, 8) * 120}ms"><div class="media">${c.path ? clipVideo(c, "controls playsinline") : `<div class="skel" style="height:100%"></div>`}
       <label class="selbox" title="Select"><input type="checkbox" data-sel="${c.id}" ${clipSel.has(c.id) ? "checked" : ""} onchange="selClip(${c.id}, this.checked)"></label><span class="chip kind ${c.kind === "long" ? "b" : "g"}">${c.kind}</span></div>
-    <div class="body"><div class="row">${statusChip(c)}${c.status === "scheduled" && c.post_at ? `<span class="small dim">${when(c.post_at)}</span>` : ""}<span class="small dim">${mmss(c.end - c.start)}</span></div>
+    <div class="body"><div class="row">${statusChip(c)}${c.status === "scheduled" && c.post_at ? `<span class="small dim">${when(c.post_at)}</span>` : ""}<span class="small dim">${mmss(c.end - c.start)}${c.size ? ` · <span title="The 4K file's size">${fsize(c.size)}</span>` : ""}</span></div>
       <div class="title">${esc(c.title)}</div>${c.headline ? `<div class="small" style="color:var(--yellow)">${esc(c.headline)}</div>` : ""}
       ${clipFacts(c)}
       ${ups.length ? `<div class="row small">${ups.map(([p, u]) => `<a href="${esc(u.url)}" target="_blank" rel="noopener">${PLAT[p] || p}${views[p] != null ? ` · ${num(views[p])} views` : ""}</a>`).join("")}</div>` : ""}
@@ -966,7 +974,7 @@ function whyHtml(c) {
     <div class="row"><span class="vir">${Math.round(c.score || 0)}</span><span class="small dim">virality</span>${w.moment ? `<span class="chip">${esc(w.moment)}</span>` : ""}${(w.confirmed || []).length ? `<span class="chip b">+5: ${esc(w.confirmed.join(" + "))} agree</span>` : ""}${w.scream_hook ? `<span class="chip y">+3: opens on a scream</span>` : ""}${w.risk ? `<span class="chip ${w.risk === "high" ? "bad" : ""}">copyright ${esc(w.risk)}</span>` : ""}</div>
     ${Object.keys(sc).length ? `<h3 style="margin-top:14px">The AI's scores</h3><div class="bars">${Object.entries(sc).map(([k, v]) => `<div class="bar"><span class="lab">${esc(k)}</span><div class="meter"><i style="width:${v * 10}%"></i></div><span class="v">${v}/10</span></div>`).join("")}</div>` : ""}
     ${Object.keys(w.signals || {}).length ? `<h3 style="margin-top:14px">Audience signals in this stretch</h3>${Object.entries(w.signals).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<div class="small">${bar(v)} ${SIG[k] || esc(k)}</div>`).join("")}` : ""}
-    <p class="small" style="margin-top:12px">${c.kind} · ${mmss(c.end - c.start)} · ${mmss(c.start)}-${mmss(c.end)} of the source${w.source ? ` "${esc(w.source)}"` : ""}${w.framing ? ` · suggested framing: ${esc(w.framing)}` : ""}</p>
+    <p class="small" style="margin-top:12px">${c.kind} · ${mmss(c.end - c.start)}${c.size ? ` · ${fsize(c.size)} (4K file)` : ""} · ${mmss(c.start)}-${mmss(c.end)} of the source${w.source ? ` "${esc(w.source)}"` : ""}${w.framing ? ` · suggested framing: ${esc(w.framing)}` : ""}</p>
     ${w.opening ? `<p class="small"><b>Opens:</b> "${esc(w.opening)}"</p>` : ""}${w.closing ? `<p class="small"><b>Ends:</b> "${esc(w.closing)}"</p>` : ""}
     <p class="small">${esc(c.description || "")} ${J(c.tags, []).map(t => "#" + esc(t)).join(" ")}</p>
     ${clipErrors(c)}
@@ -981,7 +989,7 @@ let reelMuted = true, reelObs = null, reelIds = [], reelQ = "";  // reelQ: the s
 const reelFind = c => !reelQ || [c.title, c.headline, c.reason, c.description, J(c.why, {}).moment, J(c.why, {}).source].join(" ").toLowerCase().includes(reelQ);
 function reelInfo(c) {
   const ups = Object.entries(J(c.uploads, {})).filter(([, u]) => u.id), views = J(c.views, {});
-  return `<div class="row">${statusChip(c)}<span class="chip">${c.kind} · ${mmss(c.end - c.start)}</span></div>
+  return `<div class="row">${statusChip(c)}<span class="chip">${c.kind} · ${mmss(c.end - c.start)}${c.size ? ` · ${fsize(c.size)}` : ""}</span></div>
     <div class="rt">${esc(c.title)}</div>${c.headline ? `<div class="rh">${esc(c.headline)}</div>` : ""}
     ${clipFacts(c)}
     ${c.status === "scheduled" && c.post_at ? `<div class="small">Posts ${when(c.post_at)}</div>` : ""}
@@ -1003,7 +1011,8 @@ function openReels(startId) {
   reelIds = list.map(c => c.id);
   $$("#clipGrid video").forEach(v => v.pause());
   $("#reels").hidden = false; document.body.style.overflow = "hidden";
-  $("#reelList").innerHTML = list.length ? list.map(c => `<section class="reel" data-id="${c.id}"><video data-src="/api/clips/${c.id}/preview?v=${ver(c)}" data-poster="/api/clips/${c.id}/poster?v=${ver(c)}" loop playsinline ${reelMuted ? "muted" : ""} preload="none" onclick="this.paused ? this.play() : this.pause()" onplay="reelQuiet(this, true)" onpause="reelQuiet(this, false)"></video><div class="info"></div><div class="ra"></div></section>`).join("")
+  $("#reelList").innerHTML = list.length ? list.map(c => `<section class="reel" data-id="${c.id}"><video data-src="/api/clips/${c.id}/preview?v=${ver(c)}" data-poster="/api/clips/${c.id}/poster?v=${ver(c)}" loop playsinline ${reelMuted ? "muted" : ""} preload="none" onclick="this.paused ? this.play() : this.pause()" onplay="reelQuiet(this, true)" onpause="reelQuiet(this, false)" ontimeupdate="reelTime(this)" onloadedmetadata="reelTime(this)"></video><div class="info"></div><div class="ra"></div>
+      <div class="seek"><span class="st">0:00</span><input type="range" min="0" max="1000" step="1" value="0" title="Drag to skip (arrow keys: 5s)" oninput="reelSeek(this)" onpointerdown="this.closest('.reel')._drag = 1" onpointerup="this.closest('.reel')._drag = 0"><span class="sd">${mmss(c.end - c.start)}</span></div></section>`).join("")
     : `<section class="reel"><p>${reelQ ? "No clip matches your search." : "No clips here yet."}</p></section>`;
   reelSync(true);
   reelObs && reelObs.disconnect();
@@ -1023,6 +1032,20 @@ function reelFocus(cur) {
   });
   const v = cur.querySelector("video");
   if (v) { v.muted = reelMuted; v.currentTime = 0; v.play().catch(() => {}); }
+}
+function reelTime(v) {  // the seek bar follows the video (not while you drag it)
+  const r = v.closest(".reel"), d = v.duration; if (!r || !isFinite(d) || !d) return;
+  if (!r._drag) r.querySelector(".seek input").value = Math.round(v.currentTime / d * 1000);
+  r.querySelector(".st").textContent = mmss(v.currentTime); r.querySelector(".sd").textContent = mmss(d);
+}
+function reelSeek(inp) {
+  const r = inp.closest(".reel"), v = r.querySelector("video"), d = v.duration;
+  if (!isFinite(d) || !d) return;
+  v.currentTime = inp.value / 1000 * d; r.querySelector(".st").textContent = mmss(v.currentTime);
+}
+function reelSkip(cur, s) {
+  const v = cur?.querySelector("video"); if (!v || !isFinite(v.duration)) return;
+  v.currentTime = Math.min(Math.max(0, v.currentTime + s), v.duration - 0.1); reelTime(v);
 }
 function reelQuiet(v, playing) {  // playing: the details fade out after 2s so the whole video shows; paused: back
   const r = v.closest(".reel"); clearTimeout(r._q);
@@ -1046,6 +1069,10 @@ document.addEventListener("keydown", e => {
   if (["ArrowDown", "j"].includes(e.key)) { e.preventDefault(); cur?.nextElementSibling?.scrollIntoView({behavior: "smooth"}); }
   if (["ArrowUp", "k"].includes(e.key)) { e.preventDefault(); cur?.previousElementSibling?.scrollIntoView({behavior: "smooth"}); }
   if (e.key.toLowerCase() === "m") reelMute();
+  if (e.target.type !== "range") {  // the seek bar has its own arrow keys
+    if (["ArrowRight", "l"].includes(e.key)) { e.preventDefault(); reelSkip(cur, 5); }
+    if (["ArrowLeft", "h"].includes(e.key)) { e.preventDefault(); reelSkip(cur, -5); }
+  }
 });
 
 // ---------- slots ----------

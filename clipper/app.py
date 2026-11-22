@@ -236,12 +236,21 @@ def curves(jid: int):
 
 # ---------- state ----------
 
+def _size(c):
+    """The 4K file's size in bytes (0 when there's no file), for the Clips page and the reels."""
+    try:
+        return (DATA / c["path"]).stat().st_size if c.get("path") else 0
+    except OSError:
+        return 0
+
+
 @app.get("/api/state")
 def state():
     """Everything the page polls (every few seconds)."""
     s = settings.get()
     today = quota.calendar(1)[0]
-    return {"jobs": db.all("jobs"), "clips": db.all("clips"), "platforms": social.connected(), "ai": ai.balance(),
+    return {"jobs": db.all("jobs"), "clips": [{**c, "size": _size(c)} for c in db.all("clips")],
+            "platforms": social.connected(), "ai": ai.balance(),
             "uploads": social.upload_status(), "limit_timers": social.limit_timers(),
             "youtube_cookies": download.cookies_state(), "youtube_scopes": upload.granted() if upload.connected() else {},
             "today": today, "auto": {"enabled": s.auto_enabled, "running": autopilot.LOCK.locked(),
