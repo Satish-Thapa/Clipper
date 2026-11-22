@@ -43,8 +43,11 @@ def _step(text):
     alog(text)
 
 
-def layout_of(s):
-    """The default framing in Settings as render's layout string."""
+def layout_of(s, category=None):
+    """The framing for an Auto job, as render's layout string: gaming = always the streamer on top (the facecam found
+    by itself; a video with no facecam falls back to full screen while rendering), the rest = Settings' default."""
+    if category == "gaming":
+        return f"cam:top:{s.cam_corner}"
     return {"full": "", "cam": f"cam:top:{s.cam_corner}", "split": f"split:{s.filler}"}[s.layout]
 
 
@@ -172,6 +175,8 @@ def _row(i, row, s, history, auto_cids):
         alog(f"topic {i + 1}: your topic '{topic}' ({row.category})")
     shorts = per_video(row.short_slots, row.videos, row.shorts_per_video)
     longs = per_video(row.long_slots, row.videos, row.longs_per_video)
+    alog(f"topic {i + 1}: framing: " + ("streamer on top (gaming; full screen when a video has no facecam)"
+                                       if row.category == "gaming" else f"your default ({s.layout})"))
     alog(f"topic {i + 1}: {row.videos} video(s), cutting {shorts} short(s) + {longs} long(s) from each "
          + ("(your numbers)" if row.shorts_per_video or row.longs_per_video else
             f"(its {row.short_slots} short + {row.long_slots} long slot(s) / {row.videos} video(s) + 1 spare each)")
@@ -196,7 +201,7 @@ def _row(i, row, s, history, auto_cids):
         db.update("topics", tid, status=f"clipping {k}/{len(videos)}")
         jid = db.insert("jobs", url=f"https://www.youtube.com/watch?v={v['id']}", title=v.get("title"), mode="auto",
                         auto_row=i, topic_id=tid, category=row.category, shorts=shorts, longs=longs,
-                        layout=layout_of(s), header=int(s.header), subtitles=int(s.subtitles),
+                        layout=layout_of(s, row.category), header=int(s.header), subtitles=int(s.subtitles),
                         notes="", fill=0, auto_upload=0, created=time.time())
         say(f"video {k}/{len(videos)} -> job #{jid}: {v.get('title')} (scout {v['scout_score']}/100: {v['verdict']['why']})")
         CURRENT["job"] = jid

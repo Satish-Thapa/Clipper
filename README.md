@@ -161,6 +161,8 @@ Every day at the **research time**:
    - **Clipping** them one at a time. Clips per video: yours (*Shorts / video*, *Longs / video*), or automatic = its
      slots ÷ videos + 1 spare to choose from (a topic with 2 short slots and 1 video cuts 3 shorts; with no long
      slots it cuts no longs).
+   - **Framing:** gaming topics always use **streamer on top** (the facecam is found by itself; a video with no
+     facecam is rendered full screen); podcast and sports topics use your default framing from Settings.
    - Every step, decision and its reason goes into the **live log** on the Auto page (which topic and why, every
      video kept or skipped and why, how many clips each job made with their virality, which clip got which slot).
    - **Filling its slots:** its best clips (by score) take its **short slots** and **long slots** of today. Until the

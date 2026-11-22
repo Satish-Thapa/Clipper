@@ -79,4 +79,6 @@ assert rec.get("weekend") == 1 and by_row[None] == [("short", 99)], (rec.get("we
 cal = quota.calendar(1)[0]
 assert [x["state"] for x in cal["slots"]].count("scheduled") == 6 and cal["limit"] == {"short": 4, "long": 2}, cal
 assert autopilot.due() is None, "ran today already"
+lay = {j["auto_row"]: j["layout"] for j in jobs.values() if j.get("mode") == "auto"}
+assert lay[0].startswith("cam:top:") and lay[1] == "", lay  # gaming: streamer on top; sports: the default (full)
 print("autotest OK")

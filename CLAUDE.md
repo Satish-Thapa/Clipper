@@ -139,7 +139,8 @@ scream_hook, opening, closing, piece), `status`, `path`, `uploads` (JSON per pla
   Instagram over `ig_max_seconds` skipped unless force; nothing up anywhere → `post_at` cleared.
 - Auto (`autopilot.run_day`): daily report → per row: topic (or `scout.trending_topics` in its category) →
   `scout.find_videos` → jobs (`mode=auto`, `auto_row`; clips per video = the row's `shorts_per_video` /
-  `longs_per_video`, else slots / videos + 1) run one at a time → `quota.fill(cids, row)` up to the row's
+  `longs_per_video`, else slots / videos + 1) run one at a time (framing: gaming → `cam:top:<corner>` always, via
+  `autopilot.layout_of(s, category)`; the rest → Settings' default) → `quota.fill(cids, row)` up to the row's
   share (kept free for it until `set_row_state(row, "done")`) → weekend extra slots get leftovers (`fill(only=...)`).
   Every step and decision goes through `alog()`: saved line by line into the run's `auto_rounds` row (`log`), shown
   live on the Auto page. Podcasts: `scout.PODCAST_MIN_VIEWS` 300K, `PODCAST_MIN_FOLLOWERS` 100K (else skipped).
