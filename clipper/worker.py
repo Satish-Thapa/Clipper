@@ -173,10 +173,12 @@ REEL_LINK = re.compile(r"^https?://([\w-]+\.)*(facebook\.com|fb\.watch|instagram
 DL = {}  # job id -> {"pct", "done", "total", "speed", "eta"}: the Cheat page's download bar (repost jobs)
 
 
-def add_reposts(links, fill, via="", source="pasted"):
+def add_reposts(links, fill, via="", source="pasted", force=False):
     """Cheat page / reels sent in a DM: one repost job per new link. links: urls, or {"url", "title"} (a DM's video
     file has no title of its own: the message's caption is the hint). -> (started job ids, [{link, why}] skipped).
-    via: where the links came from, for the job's log; source: pasted / facebook / instagram (the Cheat page shows it)."""
+    via: where the links came from, for the job's log; source: pasted / facebook / instagram (the Cheat page shows it).
+    force: your DM said "force": once it's ready it's posted right away to EVERY connected platform, past the daily
+    limit and the slots (Force upload, by DM; logged FORCE UPLOAD)."""
     started, skipped, seen = [], [], set()
     for raw in links:
         hint = (raw.get("title") or "")[:300] if isinstance(raw, dict) else ""
@@ -192,7 +194,8 @@ def add_reposts(links, fill, via="", source="pasted"):
             skipped.append({"link": url[:200], "why": f"already being fetched (job #{busy[0]['id']})"})
             continue
         jid = db.insert("jobs", url=url, mode="repost", shorts=1, longs=0, layout="", header=0, subtitles=0,
-                        notes="", fill=int(fill), auto_upload=0, created=time.time(), via=source, title=hint or None)
+                        notes="", fill=int(fill), auto_upload=0, created=time.time(), via=source, title=hint or None,
+                        force=int(bool(force)))
         if via:
             db.log(jid, f"sent in {via}")
         start(jid)
@@ -248,13 +251,19 @@ def _repost(job, d):
     kind = "short" if dur <= 180 else "long"
     # the AI writes the title from the original title + caption (the original stays if every AI fails)
     db.update("jobs", jid, status="writing title")
-    with db.step(jid, "AI writing the title"):
-        a = pick.repost_title(title if title != "Reel" else "", "" if cdn else i.get("description"), who, dur)
+    try:  # the AI only polishes: whatever goes wrong, the reel carries on with the non-AI title / tags / credit
+        with db.step(jid, "AI writing the title"):
+            a = pick.repost_title(title if title != "Reel" else "", "" if cdn else i.get("description"), who, dur)
+        if not (isinstance(a, dict) and str(a.get("title") or "").strip()):
+            a = {}
+    except Exception as e:
+        db.log(jid, f"the AI title step failed ({e!r})")
+        a = {}
     if a:
         db.log(jid, f"AI title: \"{a['title']}\" (original: \"{title}\")")
-        tags = a["hashtags"] or tags
+        tags = a.get("hashtags") or tags
     else:
-        db.log(jid, "the AI couldn't write a title: keeping the original")
+        db.log(jid, f"no AI title: using the original, cleaned: \"{title}\"")
     credit = f"Credit: {who}" if who else ""
     desc = "\n\n".join(x for x in ((a or {}).get("description"), credit) if x)
     cid = db.insert("clips", job_id=jid, kind=kind, start=0, end=dur, score=REPOST_SCORE, title=(a or {}).get("title") or title,
@@ -272,8 +281,39 @@ def _repost(job, d):
         db.update("clips", cid, status="render failed")
         raise
     db.log(jid, f"#{cid} ready: {kind}, {dur:.0f}s, 4K, {out.stat().st_size / 1e6:.0f} MB")
+    if (db.get("jobs", jid) or {}).get("force"):  # read now: a "force" message can arrive while it downloads
+        _force_post(jid, cid)
+        return [cid]
     _fill(job, [cid])
     return [cid]
+
+
+def _force_post(jid, cid):
+    """'force' in your DM: post it now to every connected platform, past the daily limit and the slots."""
+    plats = [p for p, ok in social.connected().items() if ok]
+    db.log(jid, f"#{cid} FORCE UPLOAD (asked in your DM) to {', '.join(plats) or 'nowhere: nothing connected'}")
+    db.update("jobs", jid, status="posting")
+    try:
+        quota.unassign(cid, "force-uploaded now (your DM)")  # its slot (if it had one) is free again
+        if plats:
+            upload_clip(cid, plats, True, True)
+    finally:
+        db.update("jobs", jid, status="done")
+
+
+def force_reposts(jids, why="your DM said force"):
+    """A 'force' message for reels already added (Messenger sends the reel and its text as two messages): a reel
+    still being made posts the moment it's ready; one that's ready (or waiting in a slot) posts now."""
+    for jid in jids:
+        j = db.get("jobs", jid)
+        if not j or j.get("force"):
+            continue
+        db.update("jobs", jid, force=1)
+        db.log(jid, f"FORCE: {why}: it posts everywhere now")
+        if j["status"] in FINISHED:
+            c = next((c for c in db.all("clips", "job_id=?", (jid,)) if c.get("path")), None)
+            if c and c["status"] in ("rendered", "scheduled"):
+                threading.Thread(target=_force_post, args=(jid, c["id"]), daemon=True).start()
 
 
 def _to_4k(src, out):

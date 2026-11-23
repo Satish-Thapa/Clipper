@@ -74,7 +74,7 @@ def conn():
 def init():
     with conn() as c:
         c.executescript(SCHEMA)
-        for table, col in (("jobs", "via TEXT DEFAULT ''"), ("jobs", "mode TEXT DEFAULT 'hype'"), ("jobs", "subtitles INTEGER DEFAULT 1"),
+        for table, col in (("jobs", "force INTEGER DEFAULT 0"), ("jobs", "via TEXT DEFAULT ''"), ("jobs", "mode TEXT DEFAULT 'hype'"), ("jobs", "subtitles INTEGER DEFAULT 1"),
                            ("clips", "headline TEXT DEFAULT ''"), ("jobs", "voiceover INTEGER DEFAULT 0"),
                            ("jobs", "topic_id INTEGER"), ("jobs", """platforms TEXT DEFAULT '["youtube"]'"""),
                            ("clips", "uploads TEXT DEFAULT '{}'"), ("clips", "views TEXT DEFAULT '{}'"), ("topics", "face_check INTEGER DEFAULT 1"),

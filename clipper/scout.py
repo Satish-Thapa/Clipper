@@ -431,12 +431,17 @@ def trending_topics(niche, k, research=None, history="", notes="", step=lambda t
     research["top"] = [{**r, "id": e["id"]} for r, e in zip(rows, top)]
     step(f"{ai.ai_name()} reading {len(top)} top videos to spot trends")
     out, dropped = [], []
-    for t in ai.ask(f"Niche: {niche}\nMost-viewed videos (this week + today):\n{json.dumps(rows, indent=1)}\n"
-                    f"Return at most {k + 2} topics, best first."
-                    + (f"\nAlready covered in the last 3 days: {json.dumps(recent)}" if recent else "")
-                    + (f"\n\nHow this channel's past clips did. Lean toward topics like the ones that got views, away "
-                       f"from what flopped; one topic may still be something new that's clearly trending:\n{history}"
-                       if history else "") + ai.user_note(notes), TREND_SYSTEM, "topics"):
+    try:
+        picked = ai.ask(f"Niche: {niche}\nMost-viewed videos (this week + today):\n{json.dumps(rows, indent=1)}\n"
+                        f"Return at most {k + 2} topics, best first."
+                        + (f"\nAlready covered in the last 3 days: {json.dumps(recent)}" if recent else "")
+                        + (f"\n\nHow this channel's past clips did. Lean toward topics like the ones that got views, away "
+                           f"from what flopped; one topic may still be something new that's clearly trending:\n{history}"
+                           if history else "") + ai.user_note(notes), TREND_SYSTEM, "topics")
+    except Exception as e:  # no AI: the non-AI fallback below (the biggest video's subject, or the niche itself)
+        db.here(f"trend reading failed ({e!r}): using the top result instead")
+        picked = []
+    for t in picked if isinstance(picked, list) else []:
         if not (isinstance(t, dict) and str(t.get("topic", "")).strip()):
             continue
         try:

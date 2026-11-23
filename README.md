@@ -347,6 +347,12 @@ ones that arrive after you turn it on (or up to 5 minutes before), each once. A 
 one: where it came from (Messenger / Instagram DM / pasted), when, its step (Received → Reading → Downloading → AI title →
 4K copy → Ready) with a live download bar (MB, speed, time left), then its slot; a pop-up says when a reel arrives.
 
+**Post it right now: write "force"** with the reel: in the same message, or as a message right before / after it
+(within 90 seconds; Messenger sends a shared reel and the text you type with it as two messages). It skips the slots and
+the daily limit and posts it to **every connected platform** as soon as it's ready; if it's already waiting in a slot, it comes off the slot and posts now (like the Force button; logged
+FORCE UPLOAD; the Cheat page tags it FORCE). On Facebook it only works from the Messenger account Clipper first saw
+with your name (someone with the same name can't force); on Instagram from your username.
+
 **Messages to you in Messenger** (replaces WhatsApp): tick **the daily report** (views yesterday and all-time, clips
 posted, today's slots, the AI's summary and suggestions) and/or **every upload** (where it went up, with the links, and
 what failed). Your Page sends them to the Facebook sender. Messenger lets a Page write freely for 24 hours after your

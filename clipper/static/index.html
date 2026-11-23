@@ -1341,9 +1341,9 @@ $("#cheatGo").onclick = async e => {
     r.skipped.forEach(s => toast(`${s.link.slice(0, 50)}: ${s.why}`, true)); }
 };
 const CHEAT_ST = {queued: "received", "fetching info": "reading the link", downloading: "downloading", "writing title": "AI writing the title",
-                  rendering: "making the 4K copy", done: "ready", failed: "failed", stopped: "stopped", interrupted: "interrupted"};
+                  rendering: "making the 4K copy", posting: "posting now everywhere", done: "ready", failed: "failed", stopped: "stopped", interrupted: "interrupted"};
 // the steps a reel goes through (the job's status -> how far it is)
-const CHEAT_STEPS = [["queued", "Received"], ["fetching info", "Reading"], ["downloading", "Downloading"], ["writing title", "AI title"], ["rendering", "4K copy"], ["done", "Ready"]];
+const CHEAT_STEPS = [["queued", "Received"], ["fetching info", "Reading"], ["downloading", "Downloading"], ["writing title", "AI title"], ["rendering", "4K copy"], ["posting", "Posting"], ["done", "Ready"]];
 const VIA = {facebook: ["Messenger", "share"], instagram: ["Instagram DM", "share"], pasted: ["Pasted", "link"]};
 let ibLoaded = false;
 $("#ibSave").onclick = async e => {
@@ -1377,12 +1377,13 @@ function renderInbox() {
 function cheatRow(j) {
   const c = S.clips.find(x => x.job_id === j.id), run = !FINISHED.includes(j.status), [vn, vi] = VIA[j.via] || VIA.pasted;
   const err = j.status === "failed" ? ((j.log || "").split("\n").reverse().find(l => /ERROR:/.test(l)) || "").replace(/^.*?ERROR:\s*/, "") : "";
-  const at = CHEAT_STEPS.findIndex(([s]) => s === j.status), stepN = j.status === "done" ? CHEAT_STEPS.length : at;
-  const steps = `<div class="csteps">${CHEAT_STEPS.map(([s, n], i) => `<span class="${i < stepN || j.status === "done" ? "ok" : i === stepN && run ? "on" : ""}">${n}</span>`).join("")}</div>`;
+  const STEPS = j.force ? CHEAT_STEPS : CHEAT_STEPS.filter(([s]) => s !== "posting");  // only a forced reel posts here
+  const at = STEPS.findIndex(([s]) => s === j.status), stepN = j.status === "done" ? STEPS.length : at;
+  const steps = `<div class="csteps">${STEPS.map(([s, n], i) => `<span class="${i < stepN || j.status === "done" ? "ok" : i === stepN && run ? "on" : ""}">${n}</span>`).join("")}</div>`;
   return `<div class="crow ${run ? "running" : ""}" data-j="${j.id}">
     ${c && c.path ? `<img loading="lazy" src="/api/clips/${c.id}/poster?v=${ver(c)}" alt="" class="slotplay" onclick="openReels(${c.id})" title="Watch">` : `<span class="cico">${ico(run ? "refresh" : j.status === "failed" ? "alert" : vi)}</span>`}
     <div class="cbody">
-      <div class="row" style="gap:6px;flex-wrap:nowrap;min-width:0"><span class="chip ${j.via === "pasted" || !j.via ? "" : "y"}">${vn}</span><span class="small dim" title="${esc(new Date(j.created * 1000).toLocaleString())}">${when(j.created)}</span>
+      <div class="row" style="gap:6px;flex-wrap:nowrap;min-width:0"><span class="chip ${j.via === "pasted" || !j.via ? "" : "y"}">${vn}</span>${j.force ? `<span class="chip bad" title="Your DM said force: posted right away to every platform, past the daily limit">FORCE</span>` : ""}<span class="small dim" title="${esc(new Date(j.created * 1000).toLocaleString())}">${when(j.created)}</span>
         <b class="ctitle">${esc(j.title || j.url)}</b></div>
       ${run ? steps : ""}
       <div class="upprog" data-dl="${j.id}"></div>

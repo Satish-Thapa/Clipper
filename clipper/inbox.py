@@ -23,6 +23,8 @@ from .config import FB_PAGE_ID, FB_PAGE_TOKEN, GRAPH_VERSION
 GRAPH = f"https://graph.facebook.com/{GRAPH_VERSION}"
 URL = re.compile(r"https?://[^\s<>\"']+", re.I)
 KEEP_SEEN = 500
+FORCE = re.compile(r"\bforce\b", re.I)  # "force" in your message: post it now everywhere (worker.add_reposts force=)
+FORCE_PAIR = 90  # seconds: a "force" message and a reel this close belong together
 GRACE = 300  # seconds before turning it on that still count (you send the reel, then flip the switch)
 INBOXES = {"facebook": "inbox_state", "instagram": "inbox_state_ig"}
 NEEDS = {"facebook": "pages_messaging", "instagram": "instagram_manage_messages"}
@@ -136,6 +138,7 @@ def tick_one(platform, sender, now=None, fetch=None):
         return []
     want = sender.casefold() if platform == "facebook" else sender.lower()
     seen, started = set(st.get("seen") or []), []
+    force_at, recent = [], list(st.get("recent") or [])  # this check's "force" times; reels added lately
     for m in sorted(msgs, key=_at):
         mid = m.get("id")
         if not mid or mid in seen or _at(m) < st["since"]:
@@ -143,8 +146,13 @@ def tick_one(platform, sender, now=None, fetch=None):
         seen.add(mid)
         if _own(platform, m) or _who(platform, m) != want:
             continue
-        if platform == "facebook":  # your Messenger id for the Page + when you last wrote (notify.py's 24h window)
-            st.update(psid=(m.get("from") or {}).get("id") or st.get("psid"), psid_at=max(_at(m), st.get("psid_at") or 0))
+        fid, known = (m.get("from") or {}).get("id"), st.get("psid")
+        if platform == "facebook" and fid and (not known or fid == known):  # your Messenger id (the first one seen
+            st.update(psid=fid, psid_at=max(_at(m), st.get("psid_at") or 0))  # from your name; never replaced)
+        # force goes past the daily limit: on Facebook only from the Messenger account already seen as you (a name
+        # can be shared; the id can't); Instagram usernames are unique
+        if FORCE.search(m.get("message") or "") and (platform == "instagram" or (fid and fid == st.get("psid"))):
+            force_at.append(_at(m))
         links = links_of(m)
         if not links:
             continue
@@ -152,10 +160,19 @@ def tick_one(platform, sender, now=None, fetch=None):
         got, skipped = worker.add_reposts(links, s.inbox_fill, via=f"a {platform.title()} message from {name}",
                                           source=platform)
         started += got
+        if got:
+            recent.append({"at": _at(m), "jobs": got, "forced": False})
         db.syslog(f"reels from {platform} messages: {name} sent {len(links)} reel(s): {len(got)} added"
                   + (f", {len(skipped)} skipped ({'; '.join(x['why'] for x in skipped)})" if skipped else ""))
         st["last"] = {"at": _at(m), "links": [x["url"] for x in links], "jobs": got, "skipped": skipped}
-    st.update(checked_at=now, error=None, seen=list(seen)[-KEEP_SEEN:])
+    # "force" pairs with your reels within FORCE_PAIR seconds, in the same message or not: Messenger sends a shared
+    # reel and the text typed with it as two messages; a late "force" still finds a reel from a check before
+    for r in recent:
+        if not r["forced"] and any(abs(r["at"] - t) <= FORCE_PAIR for t in force_at):
+            r["forced"] = True
+            worker.force_reposts(r["jobs"], f"your {platform.title()} message said force")
+    st.update(checked_at=now, error=None, seen=list(seen)[-KEEP_SEEN:],
+              recent=[r for r in recent if r["at"] > now - 600][-20:])
     _save(platform, st)
     return started
 
@@ -181,7 +198,7 @@ def summary():
 if __name__ == "__main__":  # self-test: CLIPPER_DATA=<tmp> python -m clipper.inbox
     db.init()
     calls = []
-    worker.add_reposts = lambda links, fill, via="", source="": (calls.append((links, fill, source)), ([len(calls)], []))[1]
+    worker.add_reposts = lambda links, fill, via="", source="", force=False: (calls.append((links, fill, source)), ([len(calls)], []))[1]
     settings.save({"inbox_enabled": True, "inbox_sender": "  Main   Account ", "inbox_ig_sender": "@Main.Acct"})
     import clipper.inbox as me
     me.FB_PAGE_ID, me.FB_PAGE_TOKEN = "PAGE", "tok"
@@ -212,6 +229,30 @@ if __name__ == "__main__":  # self-test: CLIPPER_DATA=<tmp> python -m clipper.in
     assert me.tick_one("facebook", settings.get().inbox_sender, t0 + 120, lambda: fb) == []  # each message once
     assert me.tick_one("facebook", "Main Account", t0 + 180, lambda: (_ for _ in ()).throw(RuntimeError("boom"))) == []
     assert me.state("facebook")["error"] == "boom" and me.summary()["instagram"]["last"]["jobs"] == [4]
+    # "force": Instagram -> force; Facebook -> only from the Messenger id first seen as the sender
+    me.FB_PAGE_ID = "PAGE"
+    st = me.state("facebook"); st["psid"] = "U-REAL"; me._save("facebook", st)
+    R, S = {"name": "Main Account", "id": "U-REAL"}, lambda u: {"data": [{"link": u}]}
+    fb2 = [{"id": "f1", "created_time": iso(t0 + 300), "from": R, "message": "FORCE https://www.facebook.com/reel/5"},
+           {"id": "f2", "created_time": iso(t0 + 500), "from": {"name": "Main Account", "id": "U-FAKE"}, "message": "force https://www.facebook.com/reel/6"},
+           {"id": "f3", "created_time": iso(t0 + 700), "from": R, "message": "https://www.facebook.com/reel/7 forceful"},
+           # Messenger: a shared reel and the text typed with it come as TWO messages, a second apart
+           {"id": "f4", "created_time": iso(t0 + 900), "from": R, "shares": S("https://www.facebook.com/reel/8")},
+           {"id": "f5", "created_time": iso(t0 + 901), "from": R, "message": "force"},
+           {"id": "f6", "created_time": iso(t0 + 1200), "from": R, "shares": S("https://www.facebook.com/reel/9")}]
+    forced = []
+    worker.add_reposts = lambda links, fill, via="", source="", force=False: ([int(links[0]["url"].rstrip("/").split("/")[-1].replace("Q", "10"))], [])
+    worker.force_reposts = lambda jids, why="": forced.extend(jids)
+    me.tick_one("facebook", settings.get().inbox_sender, t0 + 1250, lambda: fb2)
+    assert forced == [5, 8], forced  # not 6 (a same-name stranger), not 7 ("forceful"), not 9 (no force yet)
+    assert me.state("facebook")["psid"] == "U-REAL"  # the fake one never replaced it
+    me.tick_one("facebook", settings.get().inbox_sender, t0 + 1300,  # the "force" comes in the next check
+                lambda: fb2 + [{"id": "f7", "created_time": iso(t0 + 1230), "from": R, "message": "Force"}])
+    assert forced == [5, 8, 9], forced
+    forced.clear()
+    me.tick_one("instagram", settings.get().inbox_ig_sender, t0 + 400, lambda: [
+        {"id": "g1", "created_time": iso(t0 + 330), "from": {"username": "main.acct", "id": "77"}, "message": "force https://www.instagram.com/reel/Q/"}])
+    assert forced == [10]
     settings.save({"inbox_enabled": False}); me.tick(t0 + 240)
     assert "since" not in me.state("facebook") and "since" not in me.state("instagram")  # off forgets the start time
     print("inbox ok")

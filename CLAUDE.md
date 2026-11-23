@@ -29,8 +29,11 @@ gotchas, current state, and what's next.
    - Push to the branch the owner uses (`lib` on the Windows PC historically; check `git branch`). If the push is
      rejected, fetch and merge (a collaborator also pushes), then push.
 5. **Decline features meant to evade copyright detection** (flipping, pitch-shifting, cropping to dodge Content ID).
-6. **The daily limit applies to every upload** (changed 2026-11-21): slots, Post now, Retry, Auto, Live. The only way
-   past it is the owner's explicit **Force upload** button (warned first, logged `FORCE UPLOAD`).
+6. **The daily limit applies to every upload** (changed 2026-11-21): slots, Post now, Retry, Auto, Live. The only ways
+   past it are the owner's explicit **Force upload** button (warned first, logged `FORCE UPLOAD`) and the word
+   **"force"** in a reel DM from the owner (`inbox.FORCE`, paired with a reel within `FORCE_PAIR` 90s: Messenger sends
+   a share and its text as two messages; Facebook only from the locked PSID; `worker.force_reposts` -> `_force_post`:
+   every connected platform at once, logged `FORCE UPLOAD`).
 7. **Don't put the owner's email or private addresses in pages or commits** (e.g. the Ollama machine's IP).
 
 ## 2. How the owner works
@@ -189,6 +192,10 @@ scream_hook, opening, closing, piece), `status`, `path`, `uploads` (JSON per pla
 ## 7. AI prompts
 
 - Every call: `ai.ask(task, system, key, full)`; every prompt + reply saved in `data/logs/prompts/<day>/` and linked.
+- **Every AI step has a non-AI fallback (the owner's rule): an AI failure never stops a job.** Clip picking ->
+  `pick.fallback` (hype windows); queries -> the topic itself; the video judge -> stats only; trends -> the top
+  video's subject / the niche; daily decisions -> skipped; Cheat titles -> the cleaned original title + credit.
+  Keep it that way for any new AI call.
 - **scout.py:** `QUERIES_SYSTEM` (category, launch, 8-10 queries, angles), `JUDGE_SYSTEM` (clippability 0-10, drop
   reasons incl. non-English / official channels / re-uploads, copyright risk, better queries), `TREND_SYSTEM`. Stats
   are computed in code, never by the AI.
