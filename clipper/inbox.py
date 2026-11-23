@@ -25,6 +25,7 @@ URL = re.compile(r"https?://[^\s<>\"']+", re.I)
 KEEP_SEEN = 500
 FORCE = re.compile(r"\bforce\b", re.I)  # "force" in your message: post it now everywhere (worker.add_reposts force=)
 FORCE_PAIR = 90  # seconds: a "force" message and a reel this close belong together
+REPORT = re.compile(r"^\s*(send( me)?( the)? )?(daily )?reports?\s*[.!?]*\s*$", re.I)  # a DM that is just "report"
 GRACE = 300  # seconds before turning it on that still count (you send the reel, then flip the switch)
 INBOXES = {"facebook": "inbox_state", "instagram": "inbox_state_ig"}
 NEEDS = {"facebook": "pages_messaging", "instagram": "instagram_manage_messages"}
@@ -151,8 +152,16 @@ def tick_one(platform, sender, now=None, fetch=None):
             st.update(psid=fid, psid_at=max(_at(m), st.get("psid_at") or 0))  # from your name; never replaced)
         # force goes past the daily limit: on Facebook only from the Messenger account already seen as you (a name
         # can be shared; the id can't); Instagram usernames are unique
-        if FORCE.search(m.get("message") or "") and (platform == "instagram" or (fid and fid == st.get("psid"))):
+        mine = platform == "instagram" or bool(fid and fid == st.get("psid"))  # really you (see above)
+        if FORCE.search(m.get("message") or "") and mine:
             force_at.append(_at(m))
+        if REPORT.match(m.get("message") or "") and mine and fid:  # "report": the report, back in this chat
+            try:
+                from . import notify
+                notify.reply_report(fid, platform)
+            except Exception as e:
+                db.syslog(f"report by DM failed: {e!r}")
+            continue
         links = links_of(m)
         if not links:
             continue
@@ -253,6 +262,18 @@ if __name__ == "__main__":  # self-test: CLIPPER_DATA=<tmp> python -m clipper.in
     me.tick_one("instagram", settings.get().inbox_ig_sender, t0 + 400, lambda: [
         {"id": "g1", "created_time": iso(t0 + 330), "from": {"username": "main.acct", "id": "77"}, "message": "force https://www.instagram.com/reel/Q/"}])
     assert forced == [10]
+    # "report": the report back in that chat; only from you (Facebook: the locked id; Instagram: the username)
+    from clipper import notify
+    asked = []
+    notify.reply_report = lambda to, platform="facebook": asked.append((to, platform))
+    me.tick_one("facebook", settings.get().inbox_sender, t0 + 1500, lambda: [
+        {"id": "r1", "created_time": iso(t0 + 1400), "from": R, "message": "Report"},
+        {"id": "r2", "created_time": iso(t0 + 1410), "from": {"name": "Main Account", "id": "U-FAKE"}, "message": "report"},
+        {"id": "r3", "created_time": iso(t0 + 1420), "from": R, "message": "report this reel please"}])
+    me.tick_one("instagram", settings.get().inbox_ig_sender, t0 + 1500, lambda: [
+        {"id": "r4", "created_time": iso(t0 + 1430), "from": {"username": "main.acct", "id": "77"}, "message": "send me the report"},
+        {"id": "r5", "created_time": iso(t0 + 1440), "from": {"username": "stranger", "id": "88"}, "message": "report"}])
+    assert asked == [("U-REAL", "facebook"), ("77", "instagram")], asked
     settings.save({"inbox_enabled": False}); me.tick(t0 + 240)
     assert "since" not in me.state("facebook") and "since" not in me.state("instagram")  # off forgets the start time
     print("inbox ok")

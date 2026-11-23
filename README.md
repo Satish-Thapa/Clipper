@@ -353,6 +353,10 @@ the daily limit and posts it to **every connected platform** as soon as it's rea
 FORCE UPLOAD; the Cheat page tags it FORCE). On Facebook it only works from the Messenger account Clipper first saw
 with your name (someone with the same name can't force); on Instagram from your username.
 
+**Ask for the report: write "report"** (just that, or "send me the report") to your Page in Messenger or to your
+Instagram account: the report comes back in that chat (views yesterday and all-time, what was posted yesterday and
+today so far, the best clip, today's slots, the AI's latest summary). Only from you, like force.
+
 **Messages to you in Messenger** (replaces WhatsApp): tick **the daily report** (views yesterday and all-time, clips
 posted, today's slots, the AI's summary and suggestions) and/or **every upload** (where it went up, with the links, and
 what failed). Your Page sends them to the Facebook sender. Messenger lets a Page write freely for 24 hours after your

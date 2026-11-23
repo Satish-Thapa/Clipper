@@ -85,14 +85,16 @@ def _chunks(text):
     return [x for x in out + [cur] if x.strip()]
 
 
-def send_now(text, post=None):
-    """Send `text` to you now (blocking). -> True when Messenger took it. post: a stand-in for httpx.post (tests)."""
+def send_now(text, post=None, to=None):
+    """Send `text` to you now (blocking). -> True when Messenger took it. post: a stand-in for httpx.post (tests).
+    to: reply to this sender id (Messenger PSID or Instagram IGSID) who just wrote (the 24h window is open);
+    default: your Messenger (recipient())."""
     post = post or httpx.post
     if not FB_PAGE_ID or not FB_PAGE_TOKEN:
         _save(error="Facebook isn't connected (FB_PAGE_ID / FB_PAGE_TOKEN in .env)", error_at=time.time())
         return False
     try:
-        psid, last_from = recipient()
+        psid, last_from = (to, time.time()) if to else recipient()
         open_window = time.time() - (last_from or 0) < 23.5 * 3600
         for part in _chunks(text):
             body = {"recipient": {"id": psid}, "message": {"text": part}, "access_token": FB_PAGE_TOKEN,
@@ -109,8 +111,8 @@ def send_now(text, post=None):
         return False
 
 
-def send(text):
-    threading.Thread(target=send_now, args=(text,), daemon=True).start()
+def send(text, to=None):
+    threading.Thread(target=send_now, args=(text,), kwargs={"to": to}, daemon=True).start()
 
 
 def uploaded(c, done):
@@ -130,13 +132,25 @@ def uploaded(c, done):
 
 
 def report(decisions=None):
-    """The daily report (after autopilot.daily_report): views, what was posted, today's slots, the AI's summary."""
-    if not settings.get().notify_reports:
-        return
+    """The daily report (after autopilot.daily_report), when Settings notify_reports is on."""
+    if settings.get().notify_reports:
+        send(report_text(decisions))
+
+
+def reply_report(to, platform="facebook"):
+    """You wrote "report" in a DM: the report now, back in that chat (whatever the notify setting says)."""
+    from . import insights
+    db.syslog(f"report asked in a {platform} DM: sending it")
+    send(report_text(insights.decisions(), asked=True), to=to)
+
+
+def report_text(decisions=None, asked=False):
+    """The report: views (yesterday + all-time), what was posted, the best clip, today's slots, the AI's summary.
+    asked: on demand (a DM said "report"): also what went up today so far."""
     from . import quota, stats
     clips, today = db.all("clips"), date.today()
     yday = today - timedelta(days=1)
-    lines = [f"Clipper daily report, {today.strftime('%a %d %b')}"]
+    lines = [f"Clipper report, {time.strftime('%a %d %b, %I:%M %p')}" if asked else f"Clipper daily report, {today.strftime('%a %d %b')}"]
     try:
         row = next((r for r in reversed(stats.series(3)) if r["day"] == yday.isoformat()), None) or {}
         got = {p: v for p, v in row.items() if p != "day" and v}
@@ -150,6 +164,11 @@ def report(decisions=None):
     posted = [c for c in clips if any(u.get("id") and u.get("at") and date.fromtimestamp(u["at"]) == yday
                                       for u in json.loads(c.get("uploads") or "{}").values())]
     lines.append(f"Posted yesterday: {len(posted)} clip(s)")
+    if asked:
+        now_posted = [c for c in clips if any(u.get("id") and u.get("at") and date.fromtimestamp(u["at"]) == today
+                                              for u in json.loads(c.get("uploads") or "{}").values())]
+        lines.append(f"Posted today so far: {len(now_posted)} clip(s)"
+                     + "".join(f"\n- {c.get('title')}" for c in now_posted[:8]))
     views = lambda c: sum((json.loads(c.get("views") or "{}") or {}).values() or [0])
     best = max(clips, key=views, default=None)
     if best and views(best):
@@ -163,7 +182,7 @@ def report(decisions=None):
         lines.append(f"AI: {d['summary']}")
     for s in d.get("suggestions") or []:
         lines.append(f"- {s}")
-    send("\n".join(lines))
+    return "\n".join(lines)
 
 
 if __name__ == "__main__":  # self-test: CLIPPER_DATA=<tmp> python -m clipper.notify

@@ -154,6 +154,8 @@ scream_hook, opening, closing, piece), `status`, `path`, `uploads` (JSON per pla
   (`inbox_ig_sender`, username, `platform=instagram`) conversations; new messages (after `since`) with reels (links or
   Meta CDN video files + caption hint) -> `worker.add_reposts(links, inbox_fill, source=)` (jobs.via). States: settings
   `inbox_state` / `inbox_state_ig`. `worker.DL` = live download progress -> `/api/state.downloads` (Cheat page).
+- DM "report" (`inbox.REPORT`, the whole message; only from the owner) -> `notify.reply_report(sender id)`: the
+  report (`notify.report_text(asked=True)`) back in that chat (Messenger or Instagram), whatever the notify setting.
 - Notify (`notify.report` after `autopilot.daily_report`, `notify.uploaded` at the end of `upload_clip`): Settings
   `notify_reports` / `notify_uploads`; sent in a thread; state `notify_state`.
 - Upload progress: `social.track/_prog/untrack` (thread-local, per clip + platform) -> `/api/state.progress`.
