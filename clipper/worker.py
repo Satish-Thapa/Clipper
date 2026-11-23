@@ -167,6 +167,37 @@ def _run(job_id):
 
 
 REPOST_MAX_MIN = 15  # a reel / short, not a whole stream
+# reel pages + the video files a shared reel arrives as in an Instagram / Messenger DM (Meta's CDN)
+REEL_LINK = re.compile(r"^https?://([\w-]+\.)*(facebook\.com|fb\.watch|instagram\.com|youtube\.com|youtu\.be|"
+                       r"lookaside\.fbsbx\.com|fbcdn\.net|cdninstagram\.com)/\S+$", re.I)
+DL = {}  # job id -> {"pct", "done", "total", "speed", "eta"}: the Cheat page's download bar (repost jobs)
+
+
+def add_reposts(links, fill, via="", source="pasted"):
+    """Cheat page / reels sent in a DM: one repost job per new link. links: urls, or {"url", "title"} (a DM's video
+    file has no title of its own: the message's caption is the hint). -> (started job ids, [{link, why}] skipped).
+    via: where the links came from, for the job's log; source: pasted / facebook / instagram (the Cheat page shows it)."""
+    started, skipped, seen = [], [], set()
+    for raw in links:
+        hint = (raw.get("title") or "")[:300] if isinstance(raw, dict) else ""
+        url = str((raw.get("url") if isinstance(raw, dict) else raw) or "").strip()
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        if not REEL_LINK.match(url):
+            skipped.append({"link": url[:200], "why": "not a Facebook / Instagram / YouTube link"})
+            continue
+        busy = [x for x in db.all("jobs", "url=? AND mode='repost'", (url,)) if x["status"] not in FINISHED]
+        if busy:
+            skipped.append({"link": url[:200], "why": f"already being fetched (job #{busy[0]['id']})"})
+            continue
+        jid = db.insert("jobs", url=url, mode="repost", shorts=1, longs=0, layout="", header=0, subtitles=0,
+                        notes="", fill=int(fill), auto_upload=0, created=time.time(), via=source, title=hint or None)
+        if via:
+            db.log(jid, f"sent in {via}")
+        start(jid)
+        started.append(jid)
+    return started, skipped
 REPOST_SCORE = 90  # every Cheat-page video gets virality 90 (your pick: they win slots over most AI clips)
 
 
@@ -183,15 +214,32 @@ def _repost(job, d):
     dur = float(i.get("duration") or 0)
     if dur > REPOST_MAX_MIN * 60:
         raise ValueError(f"it's {dur / 60:.0f} min long: the Cheat page is for reels and shorts (up to {REPOST_MAX_MIN} min)")
-    # the video's own title first (cleaned); a generic one ("Facebook", "Video by ...") -> the caption's first line
-    title = (pick.clean_title(job.get("title")) or pick.clean_title(i.get("title"))
-             or pick.clean_title((i.get("description") or "").strip().split("\n")[0]) or "Reel")
+    # the video's own title first (cleaned); a generic one ("Facebook", "Video by ...") -> the caption's first line.
+    # A DM's video file (Meta's CDN) has no title of its own: then the message's caption (the job's title hint).
+    cdn = bool(re.match(r"^https?://([\w-]+\.)*(lookaside\.fbsbx\.com|fbcdn\.net|cdninstagram\.com)/", job["url"], re.I))
     who = i.get("uploader") or i.get("channel") or ""
+    # Facebook / Instagram: the creator's caption (the description) IS the reel's title; the page title around it is
+    # "66K views · 1.6K reactions | <caption> | <page>" or just "Facebook"
+    meta = bool(re.match(r"^https?://([\w-]+\.)*(facebook\.com|fb\.watch|instagram\.com)/", job["url"], re.I))
+    caption = pick.clean_title((i.get("description") or "").strip(), who)
+    own = "" if cdn else (caption if meta and caption else pick.clean_title(i.get("title"), who))
+    title = own or pick.clean_title(job.get("title")) or caption or "Reel"
     db.update("jobs", jid, title=title, channel=who)
     db.log(jid, f"reel: {title} | by {who or '?'} | {dur:.0f}s | {i.get('width') or '?'}x{i.get('height') or '?'} source")
     db.update("jobs", jid, status="downloading")
-    with db.step(jid, "downloading (best quality, up to 4K)"):
-        lang, note = download.download_vod(job["url"], d / "source.%(ext)s", 2160, STOPS.get(jid))
+    DL[jid] = {"pct": 0, "done": 0, "total": 0, "speed": 0, "eta": None, "part": 1, "file": ""}
+
+    def prog(p):  # yt-dlp's progress (video and audio come as two files, one after the other: each counts from 0)
+        tot = p.get("total_bytes") or p.get("total_bytes_estimate") or 0
+        f, cur = p.get("filename") or "", DL.get(jid) or {}
+        part = cur.get("part", 1) + (1 if cur.get("file") and f != cur.get("file") else 0)
+        DL[jid] = {"pct": round(p.get("downloaded_bytes", 0) / tot * 100, 1) if tot else 0, "done": p.get("downloaded_bytes", 0),
+                   "total": tot, "speed": p.get("speed") or 0, "eta": p.get("eta"), "part": part, "file": f}
+    try:
+        with db.step(jid, "downloading (best quality, up to 4K)"):
+            lang, note = download.download_vod(job["url"], d / "source.%(ext)s", 2160, STOPS.get(jid), progress=prog)
+    finally:
+        DL.pop(jid, None)
     db.log(jid, f"audio track: {lang}{f' ({note})' if note else ''}")
     src = next(x for x in d.glob("source.*") if x.suffix not in (".part", ".ytdl"))
     dur = render._duration(src) or dur
@@ -199,8 +247,9 @@ def _repost(job, d):
         re.findall(r"#(\w+)", f"{i.get('title') or ''} {i.get('description') or ''}")[:5]
     kind = "short" if dur <= 180 else "long"
     # the AI writes the title from the original title + caption (the original stays if every AI fails)
+    db.update("jobs", jid, status="writing title")
     with db.step(jid, "AI writing the title"):
-        a = pick.repost_title(i.get("title"), i.get("description"), who, dur)
+        a = pick.repost_title(title if title != "Reel" else "", "" if cdn else i.get("description"), who, dur)
     if a:
         db.log(jid, f"AI title: \"{a['title']}\" (original: \"{title}\")")
         tags = a["hashtags"] or tags
@@ -787,6 +836,7 @@ def upload_clip(cid, platforms=None, force=False, bypass=False):
     bypass (the Clips page's Force upload, your explicit choice): skips the daily quota too; it's logged as such."""
     c = db.get("clips", cid)
     s = settings.get()
+    run_at = time.time()  # the Messenger message tells only what this run did
     platforms = platforms or settings.platforms_for(c["kind"], s)
     done = json.loads(c.get("uploads") or "{}")
     limited = social.limit_timers()
@@ -831,6 +881,11 @@ def upload_clip(cid, platforms=None, force=False, bypass=False):
               "upload failed" if done else "rendered")
     db.update("clips", cid, status=status, youtube_id=done.get("youtube", {}).get("id"),
               **({} if ok else {"post_at": None}))  # nothing went up: the slot is free again
+    try:
+        from . import notify
+        notify.uploaded(c, {p: u for p, u in done.items() if (u.get("at") or 0) >= run_at})  # your Messenger
+    except Exception as e:
+        db.log(c["job_id"], f"the Messenger message failed: {e!r}")
     if not ok:
         db.log(c["job_id"], f"#{cid} went up nowhere: it waits in Clips again"
                             + (" and its slot is free" if c.get("post_at") else ""))

@@ -23,6 +23,17 @@ app.threading = types.SimpleNamespace(Thread=Inline, Lock=threading.Lock)
 sent = []
 social.upload = lambda p, path, *a, **k: sent.append(p) or {"id": f"{p}-id", "url": f"https://x/{p}"}
 c = TestClient(app.app)
+# login: everything is locked until /api/login gives the 24h cookie
+from clipper import auth
+auth.PASSWORD, auth.USER = "test-pw", "tester"
+assert c.get("/api/state").status_code == 401, "the API must be locked"
+assert c.get("/", follow_redirects=False).status_code == 302, "the page must send you to /login"
+assert c.get("/media/clipper.db").status_code == 404, "the database must never be served"
+assert c.post("/api/login", json={"user": "tester", "password": "nope"}).status_code == 401
+assert c.post("/api/login", json={"user": "tester", "password": "test-pw"}).status_code == 200
+assert c.get("/api/state").status_code == 200 and c.get("/api/me").json()["user"] == "tester"
+assert c.get("/media/clipper.db").status_code == 404 and c.get("/media/youtube_token.json").status_code == 404
+print("login OK")
 
 
 def ok(r):

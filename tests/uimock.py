@@ -15,6 +15,8 @@ from clipper.config import DATA, FFMPEG
 OUT = Path(tempfile.mkdtemp())
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
 worker.start = lambda jid: None
+from clipper import auth
+auth.DISABLED = True  # screenshots only: no login
 c = TestClient(app.app)
 now = time.time()
 t = lambda h: time.strftime("%H:%M", time.localtime(now + h * 3600))
@@ -64,6 +66,21 @@ db.insert("auto_rounds", at=now - 600, data=json.dumps({"at": now - 600, "day": 
           "log": ["[09:00:01 AM] research started (daily): 2 topic(s)", "[09:00:02 AM] today's plan: 3 short + 1 long slot(s)",
                   "[09:00:40 AM] topic 1: the AI picked 'GTA 6 first look' (score 8/10): 5 big channels this week",
                   "[09:01:10 AM]    topic 1: OK  86/100 IShowSpeed GTA 6 | 1.2M views ..."]}))
+# the Cheat page: a reel from an Instagram DM downloading, one from Messenger ready in a slot, a pasted one that failed
+settings.save({"inbox_enabled": True, "inbox_sender": "Main Account", "inbox_ig_sender": "main.acct", "notify_uploads": True})
+from clipper import inbox
+inbox._save("facebook", {"since": now - 7200, "checked_at": now - 20, "last": {"at": now - 900, "links": ["x"], "jobs": [1], "skipped": []}})
+inbox._save("instagram", {"since": now - 7200, "checked_at": now - 20})
+r1 = J(url="https://lookaside.fbsbx.com/ig_messaging_cdn/?asset_id=1", title="Speed crashes the cop car", mode="repost", shorts=1,
+       longs=0, layout="", header=0, subtitles=0, fill=1, status="downloading", via="instagram", log="")
+worker.DL[r1] = {"pct": 46.3, "done": 61_000_000, "total": 132_000_000, "speed": 4_200_000, "eta": 17, "part": 1, "file": "v"}
+r2 = J(url="https://www.facebook.com/reel/123", title="Kai Cenat Finally Meets Drake", mode="repost", shorts=1, longs=0, layout="",
+       header=0, subtitles=0, fill=1, status="done", via="facebook", log="")
+db.insert("clips", job_id=r2, kind="short", start=0, end=41, score=90, title="Kai Cenat Finally Meets Drake", headline="",
+          description="Credit: kaicenat", tags="[]", reason="Reposted", path=str((DATA / "jobs" / str(j2) / "clips" / "m0.mp4").relative_to(DATA)),
+          status="scheduled", post_at=now + 5400, why=json.dumps({"by": "repost"}))
+J(url="https://www.instagram.com/reel/abc/", title=None, mode="repost", shorts=1, longs=0, layout="", header=0, subtitles=0, fill=1,
+  status="failed", via="pasted", log="[10:00] ERROR: Instagram needs you to be logged in to download this reel")
 FIX = {"state": "/api/state", "slots": "/api/slots?days=7", "settings": "/api/settings", "auto": "/api/auto", "reports": "/api/reports",
        "fillers": "/api/fillers", "logs": "/api/logs?lines=800", "curves": f"/api/jobs/{j1}/curves"}
 for name, path in FIX.items():

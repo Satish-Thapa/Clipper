@@ -350,10 +350,20 @@ _GENERIC = re.compile(r"^\s*((facebook|instagram|youtube|reels?|videos?|watch|un
                       r"|(video|reel|post)\s+by\s+.+|.+\s+on\s+instagram.*)\s*$", re.I)
 
 
-def clean_title(title):
-    """The video's own title, tidied (no hashtags, @handles, links, emoji, " | Facebook" tails); '' when it's a
-    generic one ("Facebook", "Video by ...")."""
-    t = re.sub(r"https?://\S+|[#@]\w+|[\U0001F000-\U0001FAFF☀-➿️‍]", " ", str(title or ""))
+# Facebook's page title for a reel: "66K views · 1.6K reactions | <the caption> | <the page's name>"
+_FB_STATS = re.compile(r"^\s*[\d.,]+\s*[KMB]?\s+(views?|plays?|reactions?|likes?|comments?|shares?)"
+                       r"(\s*·\s*[\d.,]+\s*[KMB]?\s+(views?|plays?|reactions?|likes?|comments?|shares?))*\s*\|\s*", re.I)
+
+
+def clean_title(title, uploader=""):
+    """The video's own title, tidied: no "66K views · 1.6K reactions |" in front, no "| <page name>" / "| Facebook"
+    at the end, no hashtags, @handles, links or emoji; the first line only. '' when it's a generic one ("Facebook",
+    "Video by ...")."""
+    t = str(title or "").strip().split("\n")[0]
+    t = _FB_STATS.sub("", t)
+    if uploader:
+        t = re.sub(r"\s*\|\s*" + re.escape(uploader.strip()) + r"\s*$", "", t, flags=re.I)
+    t = re.sub(r"https?://\S+|[#@]\w+|[\U0001F000-\U0001FAFF☀-➿️‍]", " ", t)
     t = re.sub(r"\s*[|\-–]\s*(facebook|instagram|youtube)\s*$", "", " ".join(t.split()), flags=re.I).strip(" -|·")
     return "" if not t or _GENERIC.match(t) else t[:100]
 

@@ -123,8 +123,45 @@ class Settings(BaseModel):
                                "first, so today's decisions use yesterday's views.")
     auto_rows: list[AutoRow] = Field([AutoRow()], max_length=3, description="Up to three topics.")
     face_check: bool = Field(True, description="Skip videos that are mostly a face on camera (talking heads, close-up podcasts).")
+    # ---- Cheat page: reels you send to the Page in Messenger ----
+    inbox_enabled: bool = Field(False, description="Every minute, read your Facebook Page's messages: a reel link (or a "
+                                "shared reel) sent by the sender below goes to the Cheat page by itself (downloaded in 4K, "
+                                "put in a slot). Only messages that arrive after you turn this on. Needs the Page token's "
+                                "pages_messaging permission.")
+    inbox_sender: str = Field("", max_length=100, description="Facebook: the sender's name exactly as Facebook shows it "
+                              "(your main account). Empty = Facebook messages are not read.")
+    inbox_ig_sender: str = Field("", max_length=60, description="Instagram: the sender's username (your main account, "
+                                 "without @). DMs to your Instagram account from it are read too. Empty = not read. "
+                                 "Needs the instagram_manage_messages permission.")
+    inbox_fill: int = Field(1, description="Where those reels go: 1 = today's free slots, 7 = this week, 30 = this month, "
+                            "0 = wait in Clips.")
+    # ---- messages to you in Messenger (replaces WhatsApp) ----
+    notify_reports: bool = Field(False, description="Send the daily report (views, what was posted, today's slots, the "
+                                 "AI's summary) to your Messenger: your Page writes to the Facebook sender set on the Cheat page.")
+    notify_uploads: bool = Field(False, description="Send a message to your Messenger after every upload: where it went "
+                                 "up (with the links) and what failed.")
     # ---- switched off for now ----
     news_enabled: bool = Field(False, description="News & facts posts (switched off for now).")
+
+    @field_validator("inbox_fill")
+    @classmethod
+    def _inbox_fill(cls, v):
+        if v not in (0, 1, 7, 30):
+            raise ValueError("0 (wait in Clips), 1 (today), 7 (this week) or 30 (this month)")
+        return v
+
+    @field_validator("inbox_sender")
+    @classmethod
+    def _inbox_sender(cls, v):
+        return " ".join(v.split())
+
+    @field_validator("inbox_ig_sender")
+    @classmethod
+    def _inbox_ig_sender(cls, v):
+        v = v.strip().lstrip("@").lower()
+        if v and not re.fullmatch(r"[a-z0-9._]{1,30}", v):
+            raise ValueError("an Instagram username: letters, numbers, . and _ (no spaces)")
+        return v
 
     @field_validator("short_times", "long_times")
     @classmethod

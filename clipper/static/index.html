@@ -138,6 +138,8 @@ input[type=checkbox] { width: auto; accent-color: var(--green); }
 .slot img { width: 34px; height: 60px; object-fit: cover; border-radius: 4px; background: #000; vertical-align: middle; margin-right: 10px; }
 .slot .what { min-width: 0; display: flex; align-items: center; }
 .slot .what div { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.slot .slotplay { cursor: pointer; } .slot div.slotplay:hover { color: var(--yellow); text-decoration: underline; }
+.slot img.slotplay:hover { outline: 2px solid var(--yellow); outline-offset: 1px; }
 .timeline { display: flex; gap: 6px; flex-wrap: wrap; }
 .tl { flex: 1 1 90px; border: 1px solid var(--line2); border-radius: var(--r); padding: 8px 10px; background: var(--surface); }
 .tl b { display: block; font-size: 15px; }
@@ -259,6 +261,20 @@ pre.log { background: #141414; border: 1px solid var(--line); border-radius: 6px
 @keyframes upbusy { from { background-position: -50% 0; } to { background-position: 150% 0; } }
 @media (prefers-reduced-motion: reduce) { .upbar.busy i { animation: none; background: var(--blue); opacity: .5; } }
 .reel .upprog .row span { color: #ddd; }
+/* Cheat page: incoming reels (where from, steps, live download bar) */
+.crow { display: grid; grid-template-columns: 44px 1fr auto; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.crow:last-child { border-bottom: 0; }
+.crow img { width: 44px; height: 78px; object-fit: cover; border-radius: 5px; }
+.crow .cico { width: 44px; height: 78px; display: grid; place-items: center; border-radius: 5px; background: var(--surface); color: var(--muted); }
+.crow.running .cico { color: var(--blue); }
+.crow .cbody { min-width: 0; display: grid; gap: 5px; }
+.crow .ctitle { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.crow .cact { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.csteps { display: flex; gap: 4px; flex-wrap: wrap; font-size: 10px; }
+.csteps span { padding: 2px 7px; border-radius: 10px; border: 1px solid var(--line2); color: var(--muted); }
+.csteps span.ok { color: var(--green); border-color: rgba(118,185,0,.45); }
+.csteps span.on { color: #111; background: var(--blue); border-color: var(--blue); }
+@media (max-width: 640px) { .crow { grid-template-columns: 44px 1fr; } .crow .cact { grid-column: 1 / -1; justify-content: flex-start; } }
 /* reels: seek bar (drag to skip parts), always on; it only dims while playing */
 .reel .info, .reel .ra { bottom: 58px; }
 .reel .seek { position: absolute; left: 12px; right: 12px; bottom: 14px; display: flex; align-items: center; gap: 10px; font-size: 12px;
@@ -337,7 +353,8 @@ pre.log { background: #141414; border: 1px solid var(--line); border-radius: 6px
     <a href="#settings"><svg class="i"><use href="#i-set"/></svg>Settings</a>
     <a href="#logs"><svg class="i"><use href="#i-term"/></svg>Logs</a>
   </nav>
-  <div class="side-foot"><div class="dots" id="pdots"></div><div id="aiName"></div></div>
+  <div class="side-foot"><div class="dots" id="pdots"></div><div id="aiName"></div>
+    <div class="row small" style="margin-top:8px;gap:8px"><span class="dim" id="meTxt"></span><button class="btn plain sm" onclick="logout()" title="Log out of this browser"><svg class="i"><use href="#i-x"/></svg>Log out</button></div></div>
 </aside>
 
 <div>
@@ -464,7 +481,20 @@ pre.log { background: #141414; border: 1px solid var(--line); border-radius: 6px
       <span class="sp"></span><button class="btn" id="cheatGo"><svg class="i"><use href="#i-plus"/></svg>Add to slots</button></div>
     <p class="small dim" style="margin-top:8px">Up to 3 min = a short (short slots), longer = a long (up to 15 min). The title is the reel's own, with a credit line for its creator: edit it in Clips. Instagram may need you to be logged in (cookies); if a link fails, its reason shows below. Reposting other people's videos can get copyright claims on your accounts.</p>
   </div>
-  <div class="card"><h2><svg class="i"><use href="#i-act"/></svg>Added links</h2><div id="cheatList"></div></div>
+  <div class="card"><h2><svg class="i"><use href="#i-share"/></svg>Reels from your messages</h2>
+    <p class="small dim" style="margin-top:-6px">Send a reel from your main account to your Facebook Page in Messenger, or to your Instagram account in a DM: within a minute it shows up below and downloads by itself (4K, into a slot). Only messages after you turn this on, only from these senders. Leave a sender empty to skip that app.</p>
+    <div class="row" style="align-items:flex-end">
+      <label class="check" style="margin-bottom:10px"><span class="switch"><input type="checkbox" id="ibOn"><span></span></span>On</label>
+      <label class="f" style="flex:1;min-width:190px">Facebook sender (the name as Facebook shows it)<input id="ibWho" maxlength="100" placeholder="your main account's name" autocomplete="off"></label>
+      <label class="f" style="flex:1;min-width:190px">Instagram sender (username)<input id="ibIg" maxlength="31" placeholder="username, without @" autocomplete="off" autocapitalize="none" spellcheck="false"></label>
+      <label class="f" style="min-width:180px">Slots<select id="ibFill"><option value="1">Today's free slots</option><option value="7">This week</option><option value="30">This month</option><option value="0">Wait in Clips</option></select></label>
+      <button class="btn" id="ibSave"><svg class="i"><use href="#i-check"/></svg>Save</button></div>
+    <div class="row small" style="margin-top:10px;gap:16px"><b>Messages to you in Messenger</b>
+      <label class="check"><input type="checkbox" id="ntRep"> the daily report</label>
+      <label class="check"><input type="checkbox" id="ntUp"> every upload (links + what failed)</label>
+      <span class="dim">sent by your Page to the Facebook sender above (replaces WhatsApp)</span></div>
+    <div class="stack small" id="ibState" style="margin-top:10px;gap:4px"></div></div>
+  <div class="card"><h2><svg class="i"><use href="#i-act"/></svg>Incoming reels<span class="sp"></span><span class="small dim" id="cheatSum"></span></h2><div id="cheatList"></div></div>
 </section>
 
 <section class="page" id="p-slots">
@@ -535,10 +565,13 @@ let S = null, SET = null, page = "home";
 async function api(method, url, body) {
   const r = await fetch(url, {method, headers: body && !(body instanceof Blob) && !(body instanceof File) ? {"Content-Type": "application/json"} : {},
                               body: body instanceof Blob || body instanceof File ? body : body !== undefined ? JSON.stringify(body) : undefined});
+  if (r.status === 401) { location.href = `/login?next=${encodeURIComponent(location.pathname + location.hash)}`; throw new Error("log in first"); }
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(typeof j.detail === "string" ? j.detail : Array.isArray(j.detail) ? j.detail.map(d => `${(d.loc || []).slice(1).join(".")}: ${d.msg}`).join("; ") : `HTTP ${r.status}`);
   return j;
 }
+async function logout() { await fetch("/api/logout", {method: "POST"}).catch(() => {}); location.href = "/login"; }
+api("GET", "/api/me").then(m => { if (m.expires) $("#meTxt").textContent = `${m.user} · until ${new Date(m.expires * 1000).toLocaleTimeString("en-US", {hour: "numeric", minute: "2-digit"})}`; }).catch(() => {});
 function toast(msg, bad = false) {
   const t = document.createElement("div"); t.className = "toast" + (bad ? " bad" : ""); t.textContent = msg;
   $("#toasts").append(t); setTimeout(() => t.remove(), bad ? 7000 : 3500);
@@ -606,6 +639,7 @@ function render() {
   if (page === "slots" && !dragCid && Date.now() - slotsAt > 15000) loadSlots();
   reelSync();
   paintProgress();
+  cheatNotify();
 }
 // upload progress: patched in place every poll (the clip grid / reels never re-render for it)
 const PHASE = {starting: "starting", preparing: "making its copy", uploading: "uploading", processing: "processing on the platform"};
@@ -1137,6 +1171,11 @@ document.addEventListener("keydown", e => {
 // Only clips already in the schedule are dragged: from one slot onto another of the same kind (it moves; onto a
 // taken one: they swap). A passed slot never takes a clip. On a phone: the Move button.
 let slotsAt = 0, slotDays = [], dragCid = null, dragKind = null;
+function slotWatch(id) {  // a slot's clip -> the reels, starting on it (the rest of the clips follow, as on Clips)
+  const c = S && S.clips.find(x => x.id === id);
+  if (!c || !c.path) return toast("This clip has no video", true);
+  openReels(id);
+}
 function clearDay(day, name) {
   const now = Date.now() / 1000, n = (slotDays.find(d => d.day === day)?.slots || []).filter(x => x.state === "scheduled" && x.at > now + 60).length;
   confirmDo(`Clear ${name}'s slots? ${n} clip(s) go back to Clips (the ones already posted stay). Auto or a finishing job may fill the free slots again.`,
@@ -1156,7 +1195,7 @@ async function loadSlots() {
     ${d.slots.length ? d.slots.map(x => { const open = x.at > now + 60 && ["free", "scheduled"].includes(x.state), c = x.clip;
       return `<div class="slot ${open ? "drop" : ""}" data-at="${x.at}" data-kind="${x.kind}" ${open && c && x.state === "scheduled" ? `draggable="true" data-cid="${c.id}"` : ""}>
       <span class="t">${esc(t12(x.time))}</span><span class="chip ${x.kind === "long" ? "b" : "g"}">${x.kind}${x.extra ? " +1" : ""}</span>
-      <div class="what">${c ? `${c.path ? `<img loading="lazy" src="/api/clips/${c.id}/poster?v=${ver(c)}" alt="">` : ""}<div><div>${esc(c.title)}</div><div class="small dim">${esc(c.headline || "")} · virality ${Math.round(c.score || 0)}</div></div>` : `<span class="dim">${x.state === "missed" ? "passed, nothing posted" : x.reserved ? "free · kept for an Auto topic today" : "free · drop a clip here"}</span>`}</div>
+      <div class="what">${c ? `${c.path ? `<img loading="lazy" src="/api/clips/${c.id}/poster?v=${ver(c)}" alt="" class="slotplay" title="Watch it in the reels" onclick="slotWatch(${c.id})">` : ""}<div><div class="slotplay" title="Watch it in the reels" onclick="slotWatch(${c.id})">${esc(c.title)}</div><div class="small dim">${esc(c.headline || "")} · virality ${Math.round(c.score || 0)}</div></div>` : `<span class="dim">${x.state === "missed" ? "passed, nothing posted" : x.reserved ? "free · kept for an Auto topic today" : "free · drop a clip here"}</span>`}</div>
       <div class="acts row">${{posted: `<span class="chip ok">${ico("check")}posted</span>`, uploading: `<span class="chip b">posting</span>`, missed: `<span class="chip">passed</span>`,
         scheduled: open ? `<button class="btn plain sm" title="Move to another slot" onclick="movePicker(${c?.id}, '${x.kind}')">Move</button><button class="btn plain sm" title="Take the clip off this slot" onclick="act(this, () => api('POST','/api/clips/${c?.id}/unassign'), 'Freed').then(loadSlots)">${ico("x")}</button>` : `<span class="chip b">scheduled</span>`,
         free: open ? `<button class="btn ghost sm" onclick="clipPicker('${x.kind}', ${x.at})">${ico("plus")}Choose clip</button>` : ""}[x.state] || ""}</div></div>`; }).join("") : `<p class="dim" style="padding:12px 16px">No slots.</p>`}</div>`).join("");
@@ -1301,26 +1340,84 @@ $("#cheatGo").onclick = async e => {
   if (r) { $("#cheatLinks").value = r.skipped.map(s => s.link).join("\n");
     r.skipped.forEach(s => toast(`${s.link.slice(0, 50)}: ${s.why}`, true)); }
 };
-const CHEAT_ST = {queued: "waiting", "fetching info": "reading the link", downloading: "downloading", rendering: "making the 4K copy",
-                  done: "done", failed: "failed", stopped: "stopped", interrupted: "interrupted"};
+const CHEAT_ST = {queued: "received", "fetching info": "reading the link", downloading: "downloading", "writing title": "AI writing the title",
+                  rendering: "making the 4K copy", done: "ready", failed: "failed", stopped: "stopped", interrupted: "interrupted"};
+// the steps a reel goes through (the job's status -> how far it is)
+const CHEAT_STEPS = [["queued", "Received"], ["fetching info", "Reading"], ["downloading", "Downloading"], ["writing title", "AI title"], ["rendering", "4K copy"], ["done", "Ready"]];
+const VIA = {facebook: ["Messenger", "share"], instagram: ["Instagram DM", "share"], pasted: ["Pasted", "link"]};
+let ibLoaded = false;
+$("#ibSave").onclick = async e => {
+  const body = {inbox_enabled: $("#ibOn").checked, inbox_sender: $("#ibWho").value.trim(), inbox_ig_sender: $("#ibIg").value.trim().replace(/^@/, ""), inbox_fill: +$("#ibFill").value,
+                notify_reports: $("#ntRep").checked, notify_uploads: $("#ntUp").checked};
+  if ((body.notify_reports || body.notify_uploads) && !body.inbox_sender) return toast("Messenger messages go to the Facebook sender: type your Facebook name first", true);
+  if (body.inbox_enabled && !body.inbox_sender && !body.inbox_ig_sender) return toast("Type a Facebook name or an Instagram username first", true);
+  if (await act(e.target, () => api("POST", "/api/settings", body), body.inbox_enabled ? `Watching for reels from ${[body.inbox_sender, body.inbox_ig_sender && "@" + body.inbox_ig_sender].filter(Boolean).join(" and ")}` : "Reels from messages: off")) SET = null;
+};
+function renderInbox() {
+  const ib = S.inbox || {};
+  if (!ibLoaded || !["ibWho", "ibIg", "ibFill", "ibOn", "ntRep", "ntUp"].includes(document.activeElement?.id)) {  // never overwrite what you're typing
+    $("#ibOn").checked = !!ib.enabled; $("#ibWho").value = ib.sender || ""; $("#ibIg").value = ib.ig_sender || ""; $("#ibFill").value = String(ib.fill ?? 1);
+    $("#ntRep").checked = !!ib.notify_reports; $("#ntUp").checked = !!ib.notify_uploads; ibLoaded = true;
+  }
+  const nt = ib.notify || {};
+  const ntLine = !(ib.notify_reports || ib.notify_uploads) ? "" : nt.error && (nt.error_at || 0) > (nt.sent_at || 0)
+    ? `<div style="color:var(--bad)">${ico("alert")} Messenger: ${esc(nt.error)}</div>`
+    : `<div class="dim">Messenger: ${nt.sent_at ? `last message sent ${when(nt.sent_at)}` : "nothing sent yet"}.</div>`;
+  const one = (name, who, st) => {
+    st = st || {};
+    if (!who) return `<div class="dim">${name}: not read (no sender).</div>`;
+    const last = st.last ? ` Last reel message ${hhmm(st.last.at)}: ${st.last.jobs.length} added${st.last.skipped.length ? `, ${st.last.skipped.length} skipped` : ""}.` : "";
+    return st.error ? `<div style="color:var(--bad)">${ico("alert")} ${name}: ${esc(st.error)}</div>`
+      : st.checked_at ? `<div><span style="color:var(--green)">${ico("check")} ${name}: watching ${esc(who)}, checked ${hhmm(st.checked_at)}.</span>${esc(last)}</div>`
+      : `<div class="dim">${name}: starting, the first check is within a minute.</div>`;
+  };
+  $("#ibState").innerHTML = (!ib.enabled ? `<div class="dim">Reels from messages: off.</div>`
+    : one("Facebook", ib.sender, ib.facebook) + one("Instagram", ib.ig_sender && "@" + ib.ig_sender, ib.instagram)) + ntLine;
+}
+function cheatRow(j) {
+  const c = S.clips.find(x => x.job_id === j.id), run = !FINISHED.includes(j.status), [vn, vi] = VIA[j.via] || VIA.pasted;
+  const err = j.status === "failed" ? ((j.log || "").split("\n").reverse().find(l => /ERROR:/.test(l)) || "").replace(/^.*?ERROR:\s*/, "") : "";
+  const at = CHEAT_STEPS.findIndex(([s]) => s === j.status), stepN = j.status === "done" ? CHEAT_STEPS.length : at;
+  const steps = `<div class="csteps">${CHEAT_STEPS.map(([s, n], i) => `<span class="${i < stepN || j.status === "done" ? "ok" : i === stepN && run ? "on" : ""}">${n}</span>`).join("")}</div>`;
+  return `<div class="crow ${run ? "running" : ""}" data-j="${j.id}">
+    ${c && c.path ? `<img loading="lazy" src="/api/clips/${c.id}/poster?v=${ver(c)}" alt="" class="slotplay" onclick="openReels(${c.id})" title="Watch">` : `<span class="cico">${ico(run ? "refresh" : j.status === "failed" ? "alert" : vi)}</span>`}
+    <div class="cbody">
+      <div class="row" style="gap:6px;flex-wrap:nowrap;min-width:0"><span class="chip ${j.via === "pasted" || !j.via ? "" : "y"}">${vn}</span><span class="small dim" title="${esc(new Date(j.created * 1000).toLocaleString())}">${when(j.created)}</span>
+        <b class="ctitle">${esc(j.title || j.url)}</b></div>
+      ${run ? steps : ""}
+      <div class="upprog" data-dl="${j.id}"></div>
+      ${err ? `<div class="small" style="color:var(--bad)">${esc(err.slice(0, 220))}</div>` : ""}
+      <div class="small dim ctitle"><a href="${esc(j.url)}" target="_blank" rel="noopener">${esc(j.url)}</a></div></div>
+    <div class="cact">${c ? `${statusChip(c)}${c.status === "scheduled" && c.post_at ? `<span class="small dim">${when(c.post_at)}</span>` : ""}${c.path ? `<button class="btn plain sm" title="Watch" onclick="openReels(${c.id})">${ico("play")}</button>` : ""}`
+        : `<span class="chip ${j.status === "failed" ? "bad" : run ? "b" : ""}">${esc(CHEAT_ST[j.status] || j.status)}</span>`}
+      ${j.status === "failed" && !/retried as job #/.test(j.log || "") ? `<button class="btn ghost sm" onclick="act(this, () => api('POST','/api/jobs/${j.id}/retry'), r => 'Retrying as job #' + r.id)">${ico("refresh")}Retry</button>` : ""}</div>
+  </div>`;
+}
 function renderCheat() {
+  renderInbox();
   const jobs = S.jobs.filter(j => j.mode === "repost");
+  const busy = jobs.filter(j => !FINISHED.includes(j.status)).length;
+  $("#cheatSum").textContent = jobs.length ? `${busy ? `${busy} in progress · ` : ""}${jobs.length} reel(s)` : "";
   const key = JSON.stringify(jobs.map(j => [j.id, j.status, j.title]).concat(S.clips.filter(c => J(c.why, {}).by === "repost").map(c => [c.id, c.status, c.post_at, c.uploads, c.title])));
-  if ($("#cheatList").dataset.k === key) return; $("#cheatList").dataset.k = key;
-  if (!jobs.length) { $("#cheatList").innerHTML = `<p class="dim small">Nothing yet: paste links above.</p>`; return; }
-  $("#cheatList").innerHTML = jobs.slice(0, 60).map(j => {
-    const c = S.clips.find(x => x.job_id === j.id), run = !FINISHED.includes(j.status);
-    const err = j.status === "failed" ? ((j.log || "").split("\n").reverse().find(l => /ERROR:/.test(l)) || "").replace(/^.*?ERROR:\s*/, "") : "";
-    return `<div class="slot" style="align-items:center">
-      ${c && c.path ? `<img loading="lazy" src="/api/clips/${c.id}/poster?v=${ver(c)}" alt="" style="width:40px;height:70px;object-fit:cover;border-radius:4px">` : `<span class="t">${ico(run ? "refresh" : j.status === "failed" ? "alert" : "link")}</span>`}
-      <div class="what" style="display:block;min-width:0"><div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(j.title || j.url)}</div>
-        <div class="small dim" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><a href="${esc(j.url)}" target="_blank" rel="noopener">${esc(j.url)}</a></div>
-        ${err ? `<div class="small" style="color:var(--bad)">${esc(err.slice(0, 220))}</div>` : ""}</div>
-      ${c ? `${statusChip(c)}${c.status === "scheduled" && c.post_at ? `<span class="small dim">${when(c.post_at)}</span>` : ""}${c.path ? `<button class="btn plain sm" title="Watch" onclick="openReels(${c.id})">${ico("play")}</button>` : ""}`
-          : `<span class="chip ${j.status === "failed" ? "bad" : run ? "b" : ""}">${esc(CHEAT_ST[j.status] || j.status)}</span>`}
-      ${j.status === "failed" && !/retried as job #/.test(j.log || "") ? `<button class="btn ghost sm" onclick="act(this, () => api('POST','/api/jobs/${j.id}/retry'), r => 'Retrying as job #' + r.id)">${ico("refresh")}Retry</button>` : ""}
-    </div>`;
-  }).join("");
+  if ($("#cheatList").dataset.k !== key) {
+    $("#cheatList").dataset.k = key;
+    $("#cheatList").innerHTML = jobs.length ? jobs.slice(0, 60).map(cheatRow).join("") : `<p class="dim small">Nothing yet: paste links above, or send a reel in a DM.</p>`;
+  }
+  paintDownloads();
+}
+function paintDownloads() {  // the live download bar of each reel downloading (patched in place every poll)
+  $$("[data-dl]").forEach(el => {
+    const d = (S.downloads || {})[el.dataset.dl];
+    const h = !d ? "" : `<div class="up1"><div class="row"><b>${d.part > 1 ? "Downloading the audio" : "Downloading the video"}</b><span>${[`${Math.floor(d.pct)}%`, d.total ? `${fsize(d.done)} / ${fsize(d.total)}` : "", d.speed ? `${fsize(d.speed)}/s` : "", d.eta > 1 ? `~${mmss(d.eta)} left` : ""].filter(Boolean).join(" · ")}</span></div>
+      <div class="upbar ${d.total ? "" : "busy"}"><i style="width:${d.pct.toFixed(1)}%"></i></div></div>`;
+    if (el._h !== h) { el._h = h; el.innerHTML = h; }
+  });
+}
+let cheatSeen = null;  // a pop-up when a reel arrives from a DM (whatever page is open)
+function cheatNotify() {
+  const dm = S.jobs.filter(j => j.mode === "repost" && ["facebook", "instagram"].includes(j.via));
+  if (cheatSeen === null) { cheatSeen = new Set(dm.map(j => j.id)); return; }
+  dm.filter(j => !cheatSeen.has(j.id)).forEach(j => { cheatSeen.add(j.id); toast(`Got a reel from ${(VIA[j.via] || VIA.pasted)[0]}: downloading it (Cheat page)`); });
 }
 
 // ---------- socials ----------

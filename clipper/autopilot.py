@@ -100,10 +100,16 @@ def daily_report():
     except Exception as e:
         db.syslog(f"daily report: refreshing the stats failed ({e!r})", exc=True)
     try:
-        return insights.decide()
+        d = insights.decide()
     except Exception as e:
         db.syslog(f"daily report: deciding what works failed ({e!r})", exc=True)
-        return None
+        d = None
+    try:
+        from . import notify
+        notify.report(d)  # to your Messenger (Settings: notify_reports)
+    except Exception as e:
+        db.syslog(f"daily report: the Messenger message failed ({e!r})")
+    return d
 
 
 def run_day(reason="daily"):
@@ -282,8 +288,23 @@ def loop():
         time.sleep(60)
 
 
+INBOX_EVERY = 60  # seconds between two checks of your DMs (Messenger + Instagram)
+
+
+def inbox_loop():
+    """Its own loop (not in loop(): a slot's upload can take minutes, the DMs must not wait for it)."""
+    from . import inbox
+    while True:
+        try:
+            inbox.tick()  # reels you sent in a DM -> the Cheat page
+        except Exception as e:
+            db.syslog(f"reels from messages: {e!r}", exc=True)
+        time.sleep(INBOX_EVERY)
+
+
 def start_loop():
     threading.Thread(target=loop, daemon=True).start()
+    threading.Thread(target=inbox_loop, daemon=True).start()
 
 
 if __name__ == "__main__":

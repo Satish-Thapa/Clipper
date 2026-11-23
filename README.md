@@ -34,7 +34,7 @@ Everything runs on your PC. It uses the NVIDIA GPU for transcription and encodin
 
 ## Contents
 
-- [Setup](#setup)
+- [Setup](#setup) (incl. [Login](#login))
 - [The pages](#the-pages)
 - [Slots and the daily limit](#slots-and-the-daily-limit)
 - [Auto mode](#auto-mode)
@@ -90,6 +90,24 @@ Open **http://127.0.0.1:8000** (works on a phone too, e.g. over a tunnel).
 - **Changing `.env`:** stop the server (Ctrl+C) and start it again. Everything else is changed on the Settings page.
 - **Options:** `--port 8080`, or `--no-reload` for a plain server. macOS: `.venv/bin/python -m clipper`.
 
+### Login
+
+Every page, API call, video and file needs a login (also on this PC). Put the user and a strong password in `.env`
+and restart:
+
+```
+CLIPPER_USER=admin
+CLIPPER_PASSWORD=<a long password>
+```
+
+- A login lasts **24 hours** (a signed JWT in an HttpOnly cookie; Secure over https), then it asks again. The sidebar
+  shows until when; **Log out** ends it in that browser.
+- Without `CLIPPER_PASSWORD` the site stays locked (the login page says so). Changing the password logs every browser
+  out.
+- 5 wrong passwords in 10 minutes from one address: that address waits 10 minutes.
+- Files: only clips, background videos and logs are served (`/media/jobs|fillers|logs/...`); the database, tokens,
+  cookies and the login secret never are, logged in or not.
+
 **GPU:** with an NVIDIA card, Whisper runs on CUDA and clips are encoded with NVENC (the log says
 `render: GPU encoder (h264_nvenc)`). Without one, both fall back to the CPU: slower, same result.
 
@@ -108,8 +126,8 @@ it does.
 | **Jobs** | Every video being clipped: a step bar (download / recording → transcribe → AI pick → render → done), its clips (with virality), the reason when it failed, the log, the **hype curves** with the picked clips marked (hover or tap the graph to see the time, each line's value and the clip there; tick or untick each line in the legend to show or hide it, remembered per browser), Stop, Retry; a live job's piece length / pieces / clips per piece can change while it records. Select several to delete. |
 | **Clips** | Every clip with its length, the 4K file's size, its virality score, moment type and the AI's five scores (hook, flow, emotion, share, trend), **upload progress** while it posts (per platform: percent, MB sent, speed, time left, or the step it's on: making its copy, processing on the platform; also in the reels), and **why an upload failed** (hide the message with ×). **Post** (pick where; the next free slot today), **Slot** (any free slot ahead), Unslot, **Retry** (pick the platforms; the failed ones are ticked), **Force** (post now to the platforms you pick, past every limit, warnings first), Edit, Why this clip?, Delete. Filters: Ready, In a slot, Posted, Failed; **search**; **sort** by newest (the default), virality, latest posted, most views or length. Select several to delete. Only one video plays at a time. |
 | **Reels** | (Clips → Watch as reels) Full-screen, swipe / up-down arrow keys, a **quality** picker at the top (**Fast** = the light 540p copy, the default and quickest over a tunnel; **HD** = a 1080p copy, made the first time; **4K** = the full file; remembered per browser, switching keeps your place), a **seek bar** at the bottom (drag it to skip parts; left / right arrows jump 5s), the clip's length and file size, **search** at the top (the same as Clips'), the details fade after 2 seconds of playing and come back when you pause, all the clip's info, and Post / Slot / Force / Info / Delete right there. Only the reels near the one you watch keep a video loaded, so scrolling stays smooth. |
-| **Slots** | The next 7 days: every slot with its clip and state (free, kept for an Auto topic, scheduled, posted, passed). Where **shorts** post and where **longs** post (ticked here). **Drag** a scheduled clip onto another slot of its kind to move it (onto a taken one: they swap); on a phone use **Move**. **Choose clip** (with thumbnails) fills a free slot. A slot whose time has passed never takes a clip. **Clear** on a day takes every clip off that day's slots still ahead (back to Clips; posted ones stay). |
-| **Cheat** | Paste reel links from **Facebook, Instagram or YouTube** (one per line). Each one is downloaded at the best quality there is (up to 4K), made into a **4K copy as it is** (vertical 2160x3840 / wide 3840x2160, fitted, never cropped, no text added) and put in a free slot (today / this week / this month, or wait in Clips). Up to 3 min = a short, longer = a long (15 min max). The **AI writes the title** (and a one-line description + hashtags) **built on the video's own title**: it keeps its subject and key words and just cleans it up (hashtags, emoji, @handles, "| Facebook" tails, caps); the caption only fills gaps, or is used when the title is generic ("Facebook", "Video by ..."); the description ends with a credit line for its creator; if every AI is down the original title is kept (edit in Clips). Every Cheat video gets **virality 90**, so it wins slots over most AI-picked clips. The daily limit still applies. Each link shows its state, its slot and why it failed. Reposting other people's videos can bring copyright claims. |
+| **Slots** | The next 7 days: every slot with its clip and state (free, kept for an Auto topic, scheduled, posted, passed). Where **shorts** post and where **longs** post (ticked here). **Drag** a scheduled clip onto another slot of its kind to move it (onto a taken one: they swap); on a phone use **Move**. **Choose clip** (with thumbnails) fills a free slot. A slot whose time has passed never takes a clip. Click a clip's thumbnail or title to **watch it in the reels** (starting on it). **Clear** on a day takes every clip off that day's slots still ahead (back to Clips; posted ones stay). |
+| **Cheat** | Paste reel links from **Facebook, Instagram or YouTube** (one per line). Each one is downloaded at the best quality there is (up to 4K), made into a **4K copy as it is** (vertical 2160x3840 / wide 3840x2160, fitted, never cropped, no text added) and put in a free slot (today / this week / this month, or wait in Clips). Up to 3 min = a short, longer = a long (15 min max). The **AI writes the title** (and a one-line description + hashtags) **built on the video's own title**: it keeps its subject and key words and just cleans it up (hashtags, emoji, @handles, "| Facebook" tails, caps); the caption only fills gaps, or is used when the title is generic ("Facebook", "Video by ..."); the description ends with a credit line for its creator; if every AI is down the original title is kept (edit in Clips). Every Cheat video gets **virality 90**, so it wins slots over most AI-picked clips. The daily limit still applies. Each link shows its state, its slot and why it failed. Reposting other people's videos can bring copyright claims. **Reels from your messages**: send a reel to your Page in Messenger or your Instagram in a DM and it's added by itself; **Incoming reels** shows each one downloading live; your daily report and uploads can come to your Messenger (see Facebook below). |
 | **Reports** | Every number from the platforms, views per day, breakdowns (platform, category, moment type, length, posting hour, weekday, shorts vs longs, topic), YouTube channel analytics, best and weakest clips, the day's decisions. |
 | **Socials** | Connected platforms, uploads in the last 24h, limit timers and errors; Connect / Reconnect YouTube; YouTube cookies. |
 | **Settings** | Slots and limits, how new clips look, Tell the AI, clip lengths, sources, the researcher, background videos, AI models (with tests), **Reset** (erases jobs, their videos, Auto's runs, reports, numbers and logs; one checkbox, **Keep the clips** (ticked by default): only the clips stay and their slots are cleared; type RESET. Always kept: your Settings, background videos, logins, the platforms' limit timers and today's upload count, so the daily limit still holds). |
@@ -317,6 +335,30 @@ Clipper posts to a **Facebook Page**. If you don't have one: facebook.com → **
 
 Clips up to 90s go up as **Reels**; longer ones as normal Page videos.
 
+#### Reels from your messages (Cheat page)
+
+Send a reel from your main account in a DM and it's added by itself within a minute (downloaded in 4K, put in a slot):
+- **Facebook:** to your **Page** in Messenger. Cheat page → **Facebook sender** = your name exactly as Facebook shows it.
+- **Instagram:** to your **Instagram account** in a DM. Cheat page → **Instagram sender** = your username (no @).
+
+Turn it **On**, pick the slots, Save. Leave a sender empty to skip that app. Only messages from those senders, only the
+ones that arrive after you turn it on (or up to 5 minutes before), each once. A shared reel can come as a reel link or as the video file itself
+(Instagram); both work (a file's title comes from the message's caption). **Incoming reels** on the Cheat page shows each
+one: where it came from (Messenger / Instagram DM / pasted), when, its step (Received → Reading → Downloading → AI title →
+4K copy → Ready) with a live download bar (MB, speed, time left), then its slot; a pop-up says when a reel arrives.
+
+**Messages to you in Messenger** (replaces WhatsApp): tick **the daily report** (views yesterday and all-time, clips
+posted, today's slots, the AI's summary and suggestions) and/or **every upload** (where it went up, with the links, and
+what failed). Your Page sends them to the Facebook sender. Messenger lets a Page write freely for 24 hours after your
+last message to it; after that Clipper sends with the "account update" tag, and if Meta refuses, the Cheat page says so:
+send your Page any message to open the window again.
+
+Permissions: the Page token needs **`pages_messaging`** (Facebook inbox + messages to you) and
+**`instagram_manage_messages`** (Instagram inbox); in the Instagram app also turn on Settings → Messages → Connected
+tools → **Allow access to messages**. Make a new Page token the same way as above with those ticked too (plus
+`pages_show_list`, `pages_read_engagement`, `pages_manage_posts`, `instagram_basic`, `instagram_content_publish`), put it
+in `FB_PAGE_TOKEN` and restart. Until then the Cheat page shows which permission is missing.
+
 ### Instagram
 
 Same Meta app and token as Facebook. Switch the Instagram account to **Business or Creator** and link it to the Page
@@ -372,6 +414,8 @@ Only keys, logins and paths:
 
 | Key | What |
 |---|---|
+| `CLIPPER_USER`, `CLIPPER_PASSWORD` | The site's login (see **Login**). No password = nobody can log in. |
+| `CLIPPER_JWT_SECRET` | Optional: the key that signs logins (else one is made once in `data/jwt_secret`). |
 | `FFMPEG` | Full path to ffmpeg (with libass). |
 | `DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL` | DeepSeek. |
 | `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL` | Any OpenAI-compatible AI, e.g. Ollama on another machine (`http://192.168.1.20:11434/v1`). |

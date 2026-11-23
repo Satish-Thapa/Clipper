@@ -5,6 +5,7 @@ import re
 import shutil
 import threading
 import time
+import urllib.parse
 from datetime import date
 from pathlib import Path
 from typing import Literal
@@ -14,7 +15,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import ai, autopilot, db, download, insights, news, quota, render, settings, social, stats, upload, worker
+from . import ai, auth, autopilot, inbox, db, download, insights, news, quota, render, settings, social, stats, upload, worker
 from .config import DATA, YT_COOKIES
 
 app = FastAPI(title="Clipper")
@@ -32,6 +33,81 @@ def _start():
 
 app.mount("/media", StaticFiles(directory=DATA), name="media")
 INDEX = Path(__file__).parent / "static" / "index.html"
+LOGIN = Path(__file__).parent / "static" / "login.html"
+
+# ---------- login (auth.py): every page, API call, video and file needs the 24h token ----------
+OPEN = {"/login", "/api/login", "/api/logout", "/privacy", "/favicon.ico"}
+MEDIA_OK = ("/media/jobs/", "/media/fillers/", "/media/logs/")  # never the database, tokens, cookies or secrets
+
+
+def _https(request):
+    return request.url.scheme == "https" or request.headers.get("x-forwarded-proto", "").split(",")[0].strip() == "https"
+
+
+def _ip(request):
+    fwd = request.headers.get("cf-connecting-ip") or request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    return fwd or (request.client.host if request.client else "?")
+
+
+@app.middleware("http")
+async def _guard(request: Request, call_next):
+    from fastapi.responses import JSONResponse, RedirectResponse
+    path = request.url.path
+    if path.startswith("/media/") and (not path.startswith(MEDIA_OK) or ".." in path):
+        return JSONResponse({"detail": "not found"}, status_code=404)
+    if path in OPEN:
+        return await call_next(request)
+    tok = request.cookies.get(auth.COOKIE) or request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+    if auth.check(tok):
+        return await call_next(request)
+    if path.startswith(("/api/", "/media/")):
+        return JSONResponse({"detail": "log in first"}, status_code=401)
+    nxt = path + (f"?{request.url.query}" if request.url.query else "")
+    return RedirectResponse(f"/login?next={urllib.parse.quote(nxt)}", status_code=302)
+
+
+class LoginIn(BaseModel):
+    user: str = Field("", max_length=200)
+    password: str = Field("", max_length=500)
+
+
+@app.get("/login")
+def login_page():
+    return FileResponse(LOGIN)
+
+
+@app.post("/api/login")
+def login(b: LoginIn, request: Request):
+    """The user + password from .env -> a 24h token in an HttpOnly cookie (the page never sees it)."""
+    from fastapi.responses import JSONResponse
+    ip = _ip(request)
+    try:
+        tok, exp = auth.login(b.user, b.password, ip)
+    except PermissionError as e:
+        _bad(429, str(e))
+    except ValueError as e:
+        db.syslog(f"login failed from {ip}: {e}")
+        _bad(401, str(e))
+    db.syslog(f"logged in from {ip} (valid {auth.HOURS}h)")
+    r = JSONResponse({"ok": True, "user": auth.USER, "expires": exp})
+    r.set_cookie(auth.COOKIE, tok, max_age=auth.HOURS * 3600, httponly=True, samesite="lax", secure=_https(request),
+                 path="/")
+    return r
+
+
+@app.post("/api/logout")
+def logout():
+    from fastapi.responses import JSONResponse
+    r = JSONResponse({"ok": True})
+    r.delete_cookie(auth.COOKIE, path="/")
+    return r
+
+
+@app.get("/api/me")
+def me(request: Request):
+    """Who is logged in and until when (the sidebar shows it)."""
+    c = auth.check(request.cookies.get(auth.COOKIE) or "") or {}
+    return {"user": c.get("sub") or auth.USER, "expires": c.get("exp")}
 Platform = Literal["youtube", "facebook", "instagram", "tiktok"]
 YOUTUBE = re.compile(r"^https?://(www\.|m\.)?(youtube\.com/(watch\?.*v=|live/|shorts/)|youtu\.be/)[\w-]{6,}", re.I)
 VIDEO_EXT = (".mp4", ".mkv", ".mov", ".webm", ".ts", ".avi", ".m4v")
@@ -114,7 +190,7 @@ def create_job(j: NewJob):
 
 # ---------- Cheat page: repost reels as they are ----------
 
-REEL_LINK = re.compile(r"^https?://([\w-]+\.)*(facebook\.com|fb\.watch|instagram\.com|youtube\.com|youtu\.be)/\S+$", re.I)
+REEL_LINK = worker.REEL_LINK  # (the Cheat page's links; the check lives in worker.add_reposts)
 
 
 class RepostIn(BaseModel):
@@ -128,23 +204,7 @@ def create_reposts(b: RepostIn):
     is, then it takes a free slot (the daily limit still applies). Bad or duplicate links are skipped and named."""
     if b.fill not in (0, 1, 7, 30):
         _bad(400, "fill is 0 (off), 1 (today), 7 (this week) or 30 (this month)")
-    started, skipped, seen = [], [], set()
-    for raw in b.links:
-        url = raw.strip()
-        if not url or url in seen:
-            continue
-        seen.add(url)
-        if not REEL_LINK.match(url):
-            skipped.append({"link": url[:200], "why": "not a Facebook / Instagram / YouTube link"})
-            continue
-        busy = [x for x in db.all("jobs", "url=? AND mode='repost'", (url,)) if x["status"] not in worker.FINISHED]
-        if busy:
-            skipped.append({"link": url[:200], "why": f"already being fetched (job #{busy[0]['id']})"})
-            continue
-        jid = db.insert("jobs", url=url, mode="repost", shorts=1, longs=0, layout="", header=0, subtitles=0, notes="",
-                        fill=b.fill, auto_upload=0, created=time.time())
-        worker.start(jid)
-        started.append(jid)
+    started, skipped = worker.add_reposts(b.links, b.fill)
     if not started and not skipped:
         _bad(400, "paste at least one link")
     return {"started": started, "skipped": skipped}
@@ -296,7 +356,8 @@ def state():
             "today": today, "auto": {"enabled": s.auto_enabled, "running": autopilot.LOCK.locked(),
                                      "stage": autopilot.STAGE[0]},
             "post_to": {"short": s.platforms, "long": s.long_platforms}, "ig_max_seconds": s.ig_max_seconds, "now": time.time(),
-            "reset_at": db.get_setting("reset_at") or ""}
+            "reset_at": db.get_setting("reset_at") or "",
+            "inbox": inbox.summary(), "downloads": {str(k): {x: y for x, y in v.items() if x != "file"} for k, v in dict(worker.DL).items()}}
 
 
 # ---------- clips ----------

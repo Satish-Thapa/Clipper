@@ -42,8 +42,12 @@ def use_cookies(name):
     db.set_setting("yt_cookie_set", name)
 
 
-def ydl(opts):
-    """yt_dlp.YoutubeDL with the YouTube cookies added, when there are any (every YouTube call goes through this)."""
+def ydl(opts, url=""):
+    """yt_dlp.YoutubeDL with the YouTube cookies added, when there are any (every YouTube call goes through this).
+    url: the link it's for; the YouTube cookies go to YouTube ONLY (sent to Facebook they make it serve a page with no
+    caption: every Facebook reel came out titled "Facebook")."""
+    if url and not re.match(r"^https?://([\w-]+\.)*(youtube\.com|youtu\.be)/", url, re.I):
+        return yt_dlp.YoutubeDL(opts)
     f = None if YT_COOKIES_FROM_BROWSER else cookie_file()
     if YT_COOKIES_FROM_BROWSER:
         opts = {**opts, "cookiesfrombrowser": (YT_COOKIES_FROM_BROWSER,)}
@@ -102,7 +106,7 @@ def fmt(height):
 def info(url, comments=False):
     opts = {"quiet": True, "skip_download": True, "getcomments": comments,
             "extractor_args": {"youtube": {"max_comments": ["500"]}}}
-    with ydl(opts) as y:
+    with ydl(opts, url) as y:
         return y.extract_info(url, download=False)
 
 
@@ -122,17 +126,23 @@ def search(query, n=20, recent=RECENT[0]):
     return [e for e in es if e and e.get("id") and e.get("ie_key") == "Youtube"]  # videos only, no channels/playlists
 
 
-def download_vod(url, out_path, height=1080, stop=None):
-    """stop: a threading.Event; when it's set the download is aborted at the next progress update."""
+def download_vod(url, out_path, height=1080, stop=None, progress=None):
+    """stop: a threading.Event; when it's set the download is aborted at the next progress update.
+    progress: called with yt-dlp's progress dict while it downloads (the Cheat page's bar)."""
     form, sort = fmt(height)
 
-    def hook(_):
+    def hook(p):
         if stop is not None and stop.is_set():
             raise yt_dlp.utils.DownloadCancelled("stopped by you")
+        if progress and p.get("status") == "downloading":
+            try:
+                progress(p)
+            except Exception:
+                pass
     opts = {"quiet": True, "noprogress": True, "outtmpl": str(out_path), "merge_output_format": "mp4", "format": form,
             "format_sort": sort, "concurrent_fragment_downloads": FRAGMENTS, "ffmpeg_location": FFMPEG,
             "progress_hooks": [hook]}
-    with ydl(opts) as y:
+    with ydl(opts, url) as y:
         i = y.extract_info(url, download=True)
     a = [f for f in (i or {}).get("requested_formats") or [i or {}] if f.get("acodec") not in (None, "none")]
     return (a[0].get("language") or "?", a[0].get("format_note") or "") if a else ("?", "")  # the audio track it got

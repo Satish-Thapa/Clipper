@@ -96,6 +96,10 @@ clipper/
                 youtube_copy, reencode (Instagram 1080 copy), save_master; news_* (switched off)
   download.py   yt-dlp: info, search (US, English), download (always up to 4K), live recording (+A/V align), chat, cookies
   signals.py transcribe.py vision.py upload.py social.py db.py config.py news.py (switched off, kept)
+  auth.py       the site login (JWT, 24h)
+  inbox.py      reels you DM the Page (Messenger) / the Instagram account -> Cheat (minute loop; pages_messaging,
+                instagram_manage_messages); remembers your PSID for notify.py
+  notify.py     messages to the owner in Messenger (daily report, every upload): Page -> PSID, 24h window / ACCOUNT_UPDATE tag
   static/index.html  the whole UI: Overview, Create, Auto, Jobs, Clips (+ reels viewer), Slots, Reports, Socials,
                      Settings, Logs
 tests/          apitest.py, autotest.py, cuttest.py: standalone regression scripts (temp data, never upload)
@@ -139,6 +143,16 @@ scream_hook, opening, closing, piece), `status`, `path`, `uploads` (JSON per pla
 - Reset (`POST /api/reset`, Settings): erases jobs, files, Auto runs, reports, stats, logs (+ clips unless kept: kept
   ones lose their slots and move to `data/jobs/0`, their layout/subtitles copied into `why`). Keeps Settings, fillers, logins, `limit_hits`, and
   today's upload count (`quota.carry_posted` -> setting `posted_carry`, added in `quota.posted`: the limit holds).
+- Login (`auth.py` + `app._guard` middleware): everything needs the 24h HS256 JWT cookie `clipper_auth` (user /
+  password from .env `CLIPPER_USER` / `CLIPPER_PASSWORD`; key = `data/jwt_secret` + the password's hash). Open: /login,
+  /api/login, /api/logout, /privacy. `/media` serves only jobs/ fillers/ logs/. Tests: log in (apitest) or
+  `auth.DISABLED = True` (uimock).
+- Inbox (`inbox.tick`, every `INBOX_EVERY` 60s in its own `autopilot.inbox_loop`, never behind a slot upload): Facebook (`inbox_sender`, by name) and Instagram
+  (`inbox_ig_sender`, username, `platform=instagram`) conversations; new messages (after `since`) with reels (links or
+  Meta CDN video files + caption hint) -> `worker.add_reposts(links, inbox_fill, source=)` (jobs.via). States: settings
+  `inbox_state` / `inbox_state_ig`. `worker.DL` = live download progress -> `/api/state.downloads` (Cheat page).
+- Notify (`notify.report` after `autopilot.daily_report`, `notify.uploaded` at the end of `upload_clip`): Settings
+  `notify_reports` / `notify_uploads`; sent in a thread; state `notify_state`.
 - Upload progress: `social.track/_prog/untrack` (thread-local, per clip + platform) -> `/api/state.progress`.
 - `upload_clip(cid, platforms=None, force=False, bypass=False)`: default platforms = `settings.platforms_for(kind)`;
   every platform passes `quota.can_post` unless `bypass` (Force upload); platform limit timers skipped unless force;
